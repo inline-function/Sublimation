@@ -1,0 +1,21 @@
+struct A(
+    str : Str
+)
+
+class B {
+    @unpure
+    fun printMyself()
+}
+
+impl B for A {
+    @unpure
+    fun printMyself() {
+        print(str)
+    }
+}
+
+@unpure
+fun main() {
+    var v = A("test")
+    v.printMyself()
+}

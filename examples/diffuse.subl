@@ -1,0 +1,37 @@
+// ============================================================
+// 上下文弥散示例：下文给出命题 → 调用后弥散进作用域 → 上文自动消费
+// 预期 stdout：7
+// ============================================================
+
+// test1 的下文 <p> 由体内 axiom 兑现；调用后 p 进入作用域
+fun test1(): Null <p> {
+    unchecked.axiom[p]
+}
+
+// test2 的上文 <p> 由作用域中弥散的 p 自动供给
+fun test2()<p>: Null {}
+
+// $ 指代返回值：显式 return 形态同样参与后件核对（get7 唯一 return 的是 7）
+fun get7(): Int <$ = 7> {
+    return 7
+}
+
+// 全称命题经合一自动实例化：need7 需要 tagged<7>，由 forall n. tagged<n> 供给
+fun needTagged()<tagged<7>>: Null {}
+
+// 命题参数：@q 由调用点显式供给
+fun witness[@q]<q>: Null {}
+
+fun main() {
+    unchecked.axiom[forall n. tagged<n>]
+    test1()
+    test2()
+    unchecked print(get7())     // 7
+    needTagged()
+    witness<tagged<7>>()
+}
+
+// 邻接规则的语法演示：带空格的 < 是比较中缀（构成命题 a < b），紧贴的 < 是命题施加
+fun cmp(a: Int, b: Int)<a < b>: Bool {
+    return true
+}

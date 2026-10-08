@@ -1,0 +1,36 @@
+// ============================================================
+// Optional 解构端到端：Some(x) 绑定字段、嵌套模式、穷尽 when
+// 预期 stdout：7 / none / 3 / 1
+// ============================================================
+
+// 穷尽：Some/None 覆盖律可证，无需 else
+fun unwrapOr(o: Optional<Nat>, d: Nat): Nat {
+    return when(o) {
+        Some(x) -> x
+        None -> d
+    }
+}
+
+// 通配 `_` 分支：不绑定字段
+fun describe(o: Optional<Nat>): Str {
+    return when(o) {
+        Some(_) -> "have"
+        None -> "none"
+    }
+}
+
+// 嵌套解构：Optional<Optional<Nat>>（决策 64：嵌套 ∃ 展开后三层分支判穷尽）
+fun flatten(oo: Optional<Optional<Nat>>): Nat {
+    return when(oo) {
+        Some(Some(y)) -> y
+        Some(None) -> 0
+        None -> 0
+    }
+}
+
+fun main() {
+    unchecked print(unwrapOr(Some(7), 0))       // 7
+    unchecked print(describe(None))             // none
+    unchecked print(flatten(Some(Some(3))))     // 3
+    unchecked print(flatten(Some(None)) + 1)    // 1
+}

@@ -1,0 +1,134 @@
+// ============================================================
+// Sublimation 特性巡礼（第四轮返工：Kotlin 风格定稿语法）
+// 语法铁律：函数体两种形态**互斥**——`= 表达式`（不带花括号）或 `{ 语句… }`（不带等号）；
+//          顶层只能写声明，执行代码全部放进 `fun main()`（脚本模式将来支持）。
+// 覆盖：struct 默认值/命名字段构造、type 别名、枚举 ADT、Optional 嵌套解构、
+//       元组、函数类型与 lambda、when 全形态（守卫引用绑定变量）、提前 return、
+//       class/impl 隐式 self、双形态调用、@mut、上下文弥散、$ 返回值指代、
+//       合一供给、pure 命题驱动纯度、main 入口
+// 预期 stdout 见 main 内行尾注释
+// ============================================================
+
+// ---------- 结构体：字段默认值 + 两种构造 ----------
+struct User(name: Str = "unknown", age: Nat = 0)
+
+// ---------- 类型别名 ----------
+type Id = Nat
+
+// ---------- 枚举 + ADT 解构（穷尽无需 else） ----------
+enum Role { Admin(), Editor(Id), Guest() }
+
+fun roleText(r: Role): Str {
+    return when(r) {
+        Admin -> "admin"
+        Editor(_) -> "editor"
+        Guest -> "guest"
+    }
+}
+
+// ---------- Optional 嵌套解构（决策 64） ----------
+fun flatten(oo: Optional<Optional<Nat>>): Nat {
+    return when(oo) {
+        Some(Some(y)) -> y
+        Some(None) -> 0
+        None -> 0
+    }
+}
+
+// ---------- 元组：字面量 + 解构 ----------
+fun label(t: (Nat, Str)): Str {
+    return when(t) {
+        (n, s) -> "pair"
+        else -> "no"
+    }
+}
+
+// ---------- 函数类型 + lambda（单表达式体：`= ` 不带花括号） ----------
+fun applyTwice(f: (Nat) => Nat, x: Nat): Nat = f(f(x))
+
+// ---------- when 守卫：引用绑定变量 m；守卫是运行期值位，用 !=/& 而非命题算符 ----------
+fun classify(n: Nat): Str {
+    return when(n) {
+        0 -> "zero"
+        m if !=(m, 0) & !=(m, 1) -> "many"
+        else -> "small"
+    }
+}
+
+// ---------- 提前 return（决策 75：语句位 if 里可直接 return 退出函数） ----------
+fun abs(n: Int): Nat {
+    if n < 0 { return 0 - n }
+    return n
+}
+
+// ---------- when 绑定主题 ----------
+fun signOf(n: Int): Str = when(var m = n * 2) {
+    0 -> "origin"
+    else -> "moved"
+}
+
+// ---------- 型类 + impl + 隐式 self（体内裸用字段 name ≡ self.name） ----------
+class Named {
+    fun describe(): Str
+}
+
+impl Named for User {
+    fun describe(): Str {
+        return name
+    }
+}
+
+// ---------- @mut 累加 + 提前 return ----------
+@unpure fun counterDemo(): Nat {
+    @mut var sum = 0
+    sum = sum + 1
+    sum = sum + 41
+    return sum
+}
+
+// ---------- 上下文弥散：下文 <answered> 兑现后弥散进作用域，<answered> 上文自动消费 ----------
+fun fact(): Null <answered> {
+    unchecked.axiom[answered]
+}
+fun usesFact()<answered>: Null {}
+
+// ---------- $ 指代返回值（唯一带值 return 参与后件核对） ----------
+fun get7(): Id <$ = 7> {
+    return 7
+}
+fun needTagged()<tagged<7>>: Null {}
+
+// ---------- pure 命题改变代码行为（决策 54/55） ----------
+@unpure fun side(): Null {}
+fun pureCaller()<pure<side>>: Null {
+    side()          // 上下文持 pure<side> ⇒ 纯作用域调非纯函数放行
+}
+
+// ---------- 入口：顶层不许放语句，一切执行代码在 main ----------
+@unpure
+fun main() {
+    var u1 = User("alice", 30)          // 位置式构造
+    var u2 = User(name = "bob")         // 命名字段构造，age 取默认值 0
+    unchecked.axiom[forall n. tagged<n>]
+    unchecked.axiom[pure<side>]          // @unpure 函数不自动注册 pure，前件需显式供给
+
+    unchecked print(u1.name)                    // alice
+    unchecked print(u2.age)                     // 0
+    unchecked print(roleText(Admin()))          // admin
+    unchecked print(flatten(Some(Some(9))))     // 9
+    unchecked print(label((1, "a")))            // pair
+    unchecked print(applyTwice(\(x) => x + 1, 10))  // 12
+    unchecked print(classify(0))                // zero
+    unchecked print(classify(7))                // many
+    unchecked print(abs(0 - 5))                 // 5（提前 return）
+    unchecked print(signOf(3))                  // moved
+    unchecked print(u1.describe())              // alice（点号调用）
+    unchecked print(describe(u2))               // bob（自由式，双形态等价）
+    unchecked print(counterDemo())              // 42
+    fact()
+    usesFact()
+    pureCaller()                                // pure<side> 由调用点公理供给
+    unchecked print(get7())                     // 7
+    needTagged()
+    unchecked print("done")                     // done
+}

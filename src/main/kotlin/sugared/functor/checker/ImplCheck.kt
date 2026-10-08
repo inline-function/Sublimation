@@ -1,0 +1,113 @@
+package sugared.functor.checker
+
+import sugared.functor.ast.*
+
+/** impl 完整性检查（决策 7/25）。**注意**：方法名只有在存在 `impl` 时才进入 syms.methods——
+ *  仅有 class 声明而无任何实例时，调用它应报 E-NO-INSTANCE（决策 60），而不是未定义函数。
+ *  P0（M2）：多文件收集；MethodEntry 记录所属模块（字典名模块前缀用）。 */
+internal fun Checker.checkImpls() = checkImplsFrom(listOf(file))
+
+internal fun Checker.checkImplsFrom(files: List<FileAst>) {
+    for (fa in files) {
+        for (e in fa.entries) {
+            if (e !is DeclEntry) continue
+            val impl = e.decl as? ImplDecl ?: continue
+            val cls = syms.classes[impl.trait.name]
+            if (cls == null) {
+                d.error("E-UNBOUND-NAME", impl.pos, "impl 型类 ${impl.trait.render()} 未声明")
+                continue
+            }
+            // 登记型类的候选方法名（即使尚无实例）；实例匹配仍只认 impl 里的条目
+            cls.members.forEach { m -> syms.traitMethods.add(m.name) }
+            val sub = tpNamesOf(cls).zip(impl.self.args.ifEmpty { listOf(impl.self) }).toMap()
+            val classMethods = cls.members.associateBy { it.name }
+            val implNames = impl.members.map { it.name }.toSet()
+            for ((mname, msig) in classMethods) {
+                if (mname !in implNames) {
+                    d.error("E-IMPL-INCOMPLETE", impl.pos, "impl ${impl.trait.render()} for ${impl.self.render()} 缺方法 $mname")
+                    continue
+                }
+                val mfn = impl.members.first { it.name == mname }
+                if (!signatureMatch(msig, mfn, sub))
+                    d.error("E-IMPL-MISMATCH", mfn.pos, "方法 $mname 签名与类声明不一致")
+            }
+            for (mfn in impl.members) {
+                if (mfn.name !in classMethods && "new" !in mfn.annotations)
+                    d.error("E-IMPL-EXTRA", mfn.pos, "方法 ${mfn.name} 不属于类 ${cls.name}，需标 @new")
+                syms.methods.getOrPut(mfn.name) { ArrayList() }
+                    .add(MethodEntry(impl.self, mfn, mfn.annotations, impl.trait.name, modulePath))
+            }
+            // P6（决策 82）：登记「型类 → impl 条目」（约束解析用；含声明模块供跨模块可见性过滤）
+            syms.implsByTrait.getOrPut(cls.name) { ArrayList() }
+                .add(ImplEntry(cls.name, impl.self, impl.trait.name, modulePath))
+        }
+    }
+}
+
+/** 字典名（codegen 用）：dict_<模块前缀>_<型类>_<自类型>（P0 文档钉死单下划线分隔），非字母数字统一压成下划线。
+ *  无模块前缀（单文件/根模块）时保持旧名 dict_<Trait>_<Type>，向后兼容既有产物。 */
+internal fun dictNameOf(trait: String, self: Type, modulePath: String = ""): String {
+    val p = mangleModule(modulePath)
+    return if (p.isEmpty()) "dict_${trait}_${sanitize(self.render())}"
+           else "dict_${p}_${trait}_${sanitize(self.render())}"
+}
+
+internal fun sanitize(s: String): String = s.map { if (it.isLetterOrDigit()) it else '_' }.joinToString("")
+
+/** 型类字典解析（决策 60，T5）：按方法名 + 实参类型在 impl 表中找唯一匹配实例。
+ *  v1 的 Int/Nat 等数值类型经 TypeInfer.join 提升，故用 typeLooseEq 做宽松匹配（Nat↔Int 放行）。
+ *  零匹配 → E-NO-INSTANCE；多匹配 → E-AMBIGUOUS-INSTANCE。返回 null 表示已报错。
+ *  P0（M6，impl 也要挂载）：visible 非空时按可见路径集合跨模块收集 impl；
+ *  单文件模式（visible=null）保持旧行为：只看本模块 impl 表。
+ *  多父挂载天然去重：同一 impl 只在其所属模块出现一次，visible 是集合。 */
+internal fun Checker.resolveDict(name: String, argT: Type, visible: Set<String>? = null): DictResolution? {
+    val entries = if (visible == null) syms.methods[name]
+        else visible.mapNotNull { allSymbols[it]?.methods?.get(name) }.flatten().toMutableList()
+    val raw = entries ?: emptyList()
+    // P6（决策 82）：合成目标（如 lambda 首检的未定型参数）不参与实例匹配——
+    // 无任何 impl 条目时仍报 E-NO-INSTANCE（保持既有诊断，M6：不挂载即无实例）；
+    // 有条目时静默放行（调用方返回 synthetic，二次检查带真实类型重查，多实例不会误报歧义）。
+    if (argT.isSynthetic()) {
+        if (raw.isEmpty()) {
+            d.error("E-NO-INSTANCE", "", "方法 $name 对类型 ${argT.render()} 无 impl 实例")
+            return null
+        }
+        return null
+    }
+    val cands = raw.filter { typeLooseEq(it.self, argT) }
+    return when {
+        cands.isEmpty() -> { d.error("E-NO-INSTANCE", "", "方法 $name 对类型 ${argT.render()} 无 impl 实例"); null }
+        cands.size > 1 -> { d.error("E-AMBIGUOUS-INSTANCE", "", "方法 $name 对类型 ${argT.render()} 有 ${cands.size} 个实例"); null }
+        else -> {
+            // 字典名以 **impl 声明的自类型** 为准（codegen 按它生成 const），
+            // 实参类型可能因数值提升而不同（如 Nat→Int），不能拿它拼名字。
+            DictResolution(cands.first(), dictNameOf(cands.first().trait, cands.first().self, cands.first().modulePath))
+        }
+    }
+}
+
+/** P6（决策 82）：约束解析 `T: Trait` → 具体类型 t 的字典名（I-22：与命题参数同构、复用可见性过滤）。
+ *  零匹配 → E-NO-INSTANCE；多匹配 → E-AMBIGUOUS-INSTANCE。返回 null 表示已报错。 */
+internal fun Checker.resolveConstraint(trait: String, t: Type, visible: Set<String>?): String? {
+    val entries = if (visible == null) syms.implsByTrait[trait].orEmpty()
+        else visible.mapNotNull { allSymbols[it]?.implsByTrait?.get(trait) }.flatten()
+    val cands = entries.filter { typeLooseEq(it.self, t) }
+    return when {
+        cands.isEmpty() -> { d.error("E-NO-INSTANCE", "", "约束 $trait 对类型 ${t.render()} 无 impl 实例"); null }
+        cands.size > 1 -> { d.error("E-AMBIGUOUS-INSTANCE", "", "约束 $trait 对类型 ${t.render()} 有 ${cands.size} 个实例"); null }
+        else -> dictNameOf(cands.first().traitName, cands.first().self, cands.first().modulePath)
+    }
+}
+
+internal fun Checker.signatureMatch(sig: FunDecl, impl: FunDecl, sub: Map<String, Type>): Boolean {
+    if (sig.params.size != impl.params.size) return false
+    val sret = sig.retType ?: return impl.retType == null
+    val iret = impl.retType ?: return false
+    if (!typeEq(sret.substT(sub), iret)) return false
+    return sig.params.zip(impl.params).all { typeEq(it.first.type.substT(sub), it.second.type) }
+}
+
+internal fun StructDecl.typeArgsSub(t: Type): Map<String, Type> {
+    val tps = theory.filterIsInstance<TypeParam>().map { it.name }
+    return tps.zip(t.args).toMap()
+}

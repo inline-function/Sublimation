@@ -1,0 +1,21 @@
+// stdlib/result.subl —— 错误处理（v1.0 P5，用户拍板：候选 A Result[T,E] 枚举 + Optional 并存）
+// Result[T, E]：Ok(T) 成功携带值；Err(E) 失败携带错误信息
+// Optional[T]（Some/None）表达「有/无」；需要错误信息时用 Result
+// 注：类型实参用尖括号（v1.0 计划 §7.3 示例的方括号系文档笔误，与 §4.2 List[T] 同款）
+
+enum Result[T, E] { Ok(T), Err(E) }
+
+fun isOk[T, E](r: Result<T, E>): Bool = when(r) {
+    Ok(_) -> true
+    Err(_) -> false
+}
+
+fun unwrapOr[T, E](r: Result<T, E>, d: T): T = when(r) {
+    Ok(x) -> x
+    Err(_) -> d
+}
+
+fun mapResult[T, U, E](f: (T) => U, r: Result<T, E>): Result<U, E> = when(r) {
+    Ok(x) -> Ok(f(x))
+    Err(e) -> Err(e)
+}
