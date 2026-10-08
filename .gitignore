@@ -54,3 +54,6 @@ show/sublimation.jar
 
 ### Internal docs (not for public repo) ###
 doc2/
+
+### Local wiki clone (keep out of main repo) ###
+Sublimation.wiki/
