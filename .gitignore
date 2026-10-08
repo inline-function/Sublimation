@@ -51,3 +51,6 @@ show/show.js
 show/show.log
 show/sublimation.jar
 **/build/libs/*.jar
+
+### Internal docs (not for public repo) ###
+doc2/
