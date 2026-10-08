@@ -265,9 +265,10 @@ fun sumPairs(p: JList<Pair>): Rat = when(p) {
     _ -> 0.0
 }
 
-// 元组：返回 (最小值, 最大值)，展示元组字面量 + 调用方解构
+// 元组：返回 (最小值, 最大值)，展示元组字面量 + 调用方解构（单元素分支避免 0 污染）
 fun jMinMax(xs: JList<Rat>): (Rat, Rat) = when(xs) {
     JNil() -> (0.0, 0.0)
+    JCons(h, JNil()) -> (h, h)
     JCons(h, t) -> {
         var p = jMinMax(t)
         when(p) { (lo, hi) -> (min(lo, h), max(hi, h)); _ -> (h, h) }
@@ -276,9 +277,9 @@ fun jMinMax(xs: JList<Rat>): (Rat, Rat) = when(xs) {
 }
 fun min(a: Rat, b: Rat): Rat = if a < b { a } else { b }
 
-// when 守卫 + 绑定主题展示（无 % token：n/2*2==n 判偶，Rat 精确整除）
+// when 守卫 + 绑定主题展示（% 运算符判偶）
 fun classify(n: Nat): Str = when(n) {
-    _ if ==(n / 2 * 2, n) -> "even"
+    _ if ==(n % 2, 0) -> "even"
     _ if n > 10 -> "big-odd"
     _ -> "odd"
 }
@@ -304,14 +305,19 @@ when(parse(js)) {
     }
     Fail(e) -> print("ERR: $e")
 }
-when(findKey(parse(js), "pi")) {   // findKey 直接吃 parse 返回值（Ret）？—— 需解开
-    Some(x) -> print("找到 pi = ${showFull(x)}")
-    None -> print("没找到 pi")
+when(parse(js)) {
+    Ok(v, _) -> when(findKey(v, "pi")) {
+        Some(x) -> print("找到 pi = ${showFull(x)}")
+        None -> print("没找到 pi")
+        _ -> print("?")
+    }
+    Fail(e) -> print("ERR: $e")
 }
 when(parse(js)) {
     Ok(v, _) -> when(findKey(v, "tags")) {
         Some(x) -> print("tags = ${showFull(x)}")
         None -> print("没找到 tags")
+        _ -> print("?")
     }
     Fail(e) -> print("ERR: $e")
 }
