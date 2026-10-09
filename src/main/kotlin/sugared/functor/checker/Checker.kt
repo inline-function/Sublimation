@@ -140,6 +140,8 @@ class Checker(
         for (fa in files) for (e in fa.entries) if (e is DeclEntry) checkDeclTypes(e.decl)
         checkImplsFrom(files)
         registerPureFacts()
+        registerImmutableFacts()   // v2.0 可变性（§4.2）：immutable<T> 自动判定
+        registerUntouchFacts()     // v2.0 可变性（§6.2）：非 @mut 形参自动 untouch<param>
     }
 
     /** 阶段 C：全部声明体 + 顶层语句（多文件=本模块合并后的一份 FileAst） */

@@ -621,4 +621,41 @@ class ModuleE2ETest {
             assertTrue(bag.report().contains("E-NEED-ASYNC"), "诊断应含 E-NEED-ASYNC，实际:\n${bag.report()}")
         } finally { dir.deleteRecursively() }
     }
+
+    // ============ v2.0 可变性自然命题（副作用 §4.2 immutable + §6.2 untouch） ============
+
+    @Test
+    fun `v2 可变性 - immutable 自动注入可被证明`() {
+        assumeTrue(nodeAvailable())
+        // Point 无 @mut 字段 → 编译器自动注入 immutable<Point>，后置条件可证明
+        val main = "struct Point(x: Nat, y: Nat)\n" +
+            "fun f() : Null <immutable<Point>> {}\n" +
+            "@unpure fun main() { print(\"ok\") }\n"
+        assertEquals("ok", runTree(mapOf("main.subl" to main)))
+    }
+
+    @Test
+    fun `v2 可变性 - @mut 字段结构体不注入 immutable`() {
+        assumeTrue(nodeAvailable())
+        val main = "struct Test(a: Nat, @mut b: Nat)\n" +
+            "fun f() : Null <immutable<Test>> {}\n" +
+            "@unpure fun main() { print(\"ok\") }\n"
+        val dir = Files.createTempDirectory("subl-immutable-neg").toFile()
+        try {
+            File(dir, "main.subl").writeText(main)
+            val mm = MultiModule(dir)
+            val bag = mm.checkAll()
+            assertTrue(bag.hasError, "应报 E-POST-UNPROVEN，实际通过")
+            assertTrue(bag.report().contains("E-POST-UNPROVEN"), "诊断应含 E-POST-UNPROVEN，实际:\n${bag.report()}")
+        } finally { dir.deleteRecursively() }
+    }
+
+    @Test
+    fun `v2 可变性 - untouch 非mut形参自动注入`() {
+        assumeTrue(nodeAvailable())
+        // x 非 @mut 形参 → 编译器自动注入 untouch<x>，后置条件可证明
+        val main = "fun g(x: Nat) : Null <untouch<x>> {}\n" +
+            "@unpure fun main() { print(\"ok\") }\n"
+        assertEquals("ok", runTree(mapOf("main.subl" to main)))
+    }
 }

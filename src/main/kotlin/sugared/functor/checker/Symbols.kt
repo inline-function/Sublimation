@@ -26,6 +26,66 @@ internal fun Checker.registerPureFacts() {
     }
 }
 
+internal fun Checker.registerImmutableFacts() {
+    // v2.0 可变性（副作用 §4.2，I-1..I-7）：immutable<T> 自动注入——不动点传播。
+    // 基础类型天然 immutable（I-1）；基本类型名之外的 Bool/Null/Optional…由 prelude 注册，此处只算结构/枚举。
+    // 规则：
+    //  - I-2/I-3：struct/enum 无 @mut 字段 且 所有字段类型 immutable → 该类型 immutable
+    //  - I-4：Array 默认可变；I-5：Any 默认可变；I-7：@mut T 不变（类型维度未引入，先以字段 @mut 近似）
+    //  - 类型参数（NamedType 无实参且首字母小写/在 theory 中）与未知类型 → 保守可变
+    val immutable = mutableSetOf<String>(*BASE_TYPES.filter { it != "Array" && it != "Any" && it != "Task" && it != "Channel" }.toTypedArray())
+    immutable += "Bool"; immutable += "Null"; immutable += "Nothing"
+    // 函数类型恒 immutable（I-6）已由类型位处理；此处只算名义类型名。
+    fun reprImm(t: Type): Boolean = when (t) {
+        is NamedType -> if (t.args.isEmpty()) immutable.contains(t.name) else {
+            // 容器类型：名字 immutable 且**全部实参** immutable（如 List[Nat] → 看 List 名；Optional[Test] → Test）
+            // 保守：Args 当中含不可判定项则不可变失败
+            t.name in immutable && t.args.all { reprImm(it) }
+        }
+        is QualifiedType -> immutable.contains(t.name)
+        is TupleType -> t.items.all { reprImm(it) }
+        is FunType -> true
+    }
+    fun declImmutable(fields: List<Param>): Boolean =
+        fields.none { "mut" in it.annotations } && fields.all { reprImm(it.type) }
+    // 不动点：每次迭代把新判定的 struct/enum 加入 immutable，直到收敛（支持相互/多层引用）
+    var changed = true
+    val guard = 0
+    while (changed) {
+        changed = false
+        for (st in syms.structs.values) {
+            if (st.name in immutable) continue
+            if (declImmutable(st.fields)) { immutable += st.name; changed = true }
+        }
+        for (en in syms.enums.values) {
+            if (en.name in immutable) continue
+            val fs = en.ctors.flatMap { it.fields }.map { Param("_", it) }
+            if (declImmutable(fs)) { immutable += en.name; changed = true }
+        }
+    }
+    // 用 guard 避免编译器报"赋值永不被使用"——实际是（不变式，可安全忽略）
+    check(guard == 0)
+    // 注入 immutable<T> 命题（仅名义类型名；参数化类型如 List[T] 以名注册——实参合规性由 reprImm 保守把关）
+    for (name in immutable) if (name !in BASE_TYPES || name == "Bool" || name == "Null" || name == "Nothing")
+        globalFacts += PAtom("immutable", listOf(NameRef(name)))
+}
+
+/** v2.0 可变性（副作用 §6.2）：非 @mut 形参自动获得 untouch<param>——函数不修改该参数。
+ *  与 pure<f> 同机制，注册到 globalFacts 供调用点/函数体推理引用。 */
+internal fun Checker.registerUntouchFacts() {
+    for ((name, fn) in syms.funs) {
+        fn.params.forEach { p ->
+            // 非 @mut 参数 → untouch<p.name>；@mut 参数默认不获得（§6.2：调用者保守假设"会被改"）
+            if ("mut" !in p.annotations) globalFacts += PAtom("untouch", listOf(NameRef(p.name)))
+        }
+    }
+    for ((_, entries) in syms.methods) for (e in entries) {
+        e.fn.params.forEach { p ->
+            if ("mut" !in p.annotations && p.name != "self") globalFacts += PAtom("untouch", listOf(NameRef(p.name)))
+        }
+    }
+}
+
 internal fun Checker.registerEnum(decl: EnumDecl) {
     if (syms.enums.putIfAbsent(decl.name, decl) != null && decl.name !in setOf("Bool", "Null", "Optional"))
         d.error("E-DUP-DECL", decl.pos, "枚举 ${decl.name} 重复声明")
