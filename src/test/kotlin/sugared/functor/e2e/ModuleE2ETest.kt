@@ -283,4 +283,76 @@ class ModuleE2ETest {
             "print(printAll(stdlib.Cons(\"x\", stdlib.Nil())))\n}"
         assertEquals("x", runTree(mapOf("stdlib/list.subl" to std, "main.subl" to main)))
     }
+
+    // ============ v2.0 同名方法重载（决策 92 配套：跨容器共用方法名，按接收者路由） ============
+
+    @Test
+    fun `v2 同名重载 - List Set Map Optional 的 size map contains get 各归各桶`() {
+        assumeTrue(nodeAvailable())
+        val list = File("stdlib/list.subl").readText()
+        val res = File("stdlib/result.subl").readText()
+        val col = File("stdlib/collection.subl").readText()
+        val main = "@unpure fun main() {\n" +
+            "var xs = stdlib.Cons(1, stdlib.Cons(2, stdlib.Nil()))\n" +
+            "@mut var s: Set[Nat] = stdlib.setEmpty()\n" +
+            "s = s.add(3)\n" +
+            "s = s.add(3)\n" +   // add 判重：不会重复插入
+            "@mut var m: Map[Str, Nat] = stdlib.mapEmpty()\n" +
+            "m = stdlib.put(m, \"a\", 1)\n" +
+            "m = stdlib.put(m, \"b\", 2)\n" +
+            "print(\"listSize=\${xs.size()}\")\n" +
+            "print(\"setSize=\${s.size()}\")\n" +
+            "print(\"mapSize=\${m.size()}\")\n" +
+            "print(\"mapLen=\${xs.map({ x -> x * 2 }).listLength()}\")\n" +
+            "print(\"setHas=\${s.contains(3)}\")\n" +
+            "print(\"listHas=\${xs.contains(2)}\")\n" +
+            "var g = m.get(\"a\").getOrElse(0)\n" +
+            "print(\"mapGet=\${g}\")\n" +
+            "print(\"optMap=\${Some(5).map({ x -> x + 1 }).getOrElse(0)}\")\n" +
+            "}"
+        assertEquals(
+            "listSize=2\nsetSize=1\nmapSize=2\nmapLen=2\nsetHas=true\nlistHas=true\nmapGet=1\noptMap=6",
+            runTree(mapOf(
+                "stdlib/list.subl" to list,
+                "stdlib/result.subl" to res,
+                "stdlib/collection.subl" to col,
+                "main.subl" to main,
+            )),
+        )
+    }
+
+    @Test
+    fun `v2 新集合 API - sum maxNat minNat union intersect keys values`() {
+        assumeTrue(nodeAvailable())
+        val std = File("stdlib/list.subl").readText()
+        val col = File("stdlib/collection.subl").readText()
+        val main = "@unpure fun main() {\n" +
+            "var xs = stdlib.Cons(4, stdlib.Cons(1, stdlib.Cons(3, stdlib.Nil())))\n" +
+            "@mut var s: Set[Nat] = stdlib.setEmpty()\n" +
+            "s = s.add(1)\n" +
+            "s = s.add(2)\n" +
+            "@mut var t: Set[Nat] = stdlib.setEmpty()\n" +
+            "t = t.add(2)\n" +
+            "t = t.add(3)\n" +
+            "@mut var m: Map[Str, Nat] = stdlib.mapEmpty()\n" +
+            "m = stdlib.put(m, \"a\", 1)\n" +
+            "m = stdlib.put(m, \"b\", 2)\n" +
+            "print(\"sum=\${xs.sum()}\")\n" +
+            "print(\"max=\${xs.maxNat().getOrElse(0)}\")\n" +
+            "print(\"min=\${xs.minNat().getOrElse(0)}\")\n" +
+            "print(\"uni=\${s.union(t).size()}\")\n" +
+            "print(\"inter=\${s.intersect(t).size()}\")\n" +
+            "print(\"keys=\${m.keys().listLength()}\")\n" +
+            "print(\"vals=\${m.values().listLength()}\")\n" +
+            "}"
+        assertEquals(
+            "sum=8\nmax=4\nmin=1\nuni=3\ninter=1\nkeys=2\nvals=2",
+            runTree(mapOf(
+                "stdlib/list.subl" to File("stdlib/list.subl").readText(),
+                "stdlib/result.subl" to File("stdlib/result.subl").readText(),
+                "stdlib/collection.subl" to col,
+                "main.subl" to main,
+            )),
+        )
+    }
 }
