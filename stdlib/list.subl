@@ -104,7 +104,16 @@ fun drop[T](xs: List[T], n: Nat): List[T] = when(xs) {
     Cons(h, t) -> if (n == 0) { xs } else { unchecked var r = drop(t, n - 1); r }
 }
 
-// zip 暂缓：元素为元组时 Cons 泛型推断因类型参数撞名（occurs check）误判——见 v2.0 记录，待命名空间 alpha 化后启用。
+// zip 恢复（v2.0 记录：#基础库）：类型参数命名 **A/B** 而非 T/U——Cons 构造子的枚举类型参数也叫 T，
+// 提取绑定 `T := (T,U)` 触发 occurs check 自指误判（TypeInfer 只按名字统计类型变量）。
+// 编译器哲学"用户避开重名"——改名即修复，无需 alpha 化。
+fun zip[A, B](xs: List[A], ys: List[B]): List[(A, B)] = when(xs) {
+    Nil -> Nil()
+    Cons(h, t) -> when(ys) {
+        Nil -> Nil()
+        Cons(h2, t2) -> Cons((h, h2), zip(t, t2))
+    }
+}
 
 fun joinToString[T](xs: List[T], sep: Str): Str =
     fold(xs, "", { x, acc -> if (acc == "") { toStr(x) } else { concat(acc, concat(sep, toStr(x))) } })

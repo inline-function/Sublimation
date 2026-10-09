@@ -728,4 +728,21 @@ class ModuleE2ETest {
             "}\n"
         assertEquals("v=42", runTree(mapOf("main.subl" to main)))
     }
+
+    // ============ v2.0 基本库：zip 恢复（类型参数 A/B 避开 Cons 的 T 撞名） ============
+
+    @Test
+    fun `v2 基本库 - zip 恢复可用 类型参数撞名绕过 occurs check`() {
+        assumeTrue(nodeAvailable())
+        // Cons 构造子枚举类型参数名 T 与 zip 自用 T 撞名 → extracted 绑定 `T := (T,U)` 触发 occurs
+        // check 自指误判。zip 类型参数改名 A/B（用户避开重名，编译器哲学）后 stdlib 可编译运行。
+        val src = "@unpure fun main() {\n" +
+            "  var xs: List[Nat] = stdlib.range(1, 4)\n" +
+            "  var z = stdlib.zip(xs, xs)\n" +
+            "  print(\"zip ok\")\n" +
+            "}\n"
+        // 内联 stdlib/list.subl（含 range + zip）——runTree 不自动挂载真实 stdlib
+        val list = File("stdlib/list.subl").readText()
+        assertEquals("zip ok", runTree(mapOf("main.subl" to src, "stdlib/list.subl" to list)))
+    }
 }
