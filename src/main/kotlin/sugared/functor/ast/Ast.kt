@@ -165,6 +165,7 @@ data class VarStmt(
     val annotations: List<String>,
     val type: Type?,
     val value: Expr,
+    val destruct: List<String>? = null,
     override val pos: String = "",
 ) : Stmt
 

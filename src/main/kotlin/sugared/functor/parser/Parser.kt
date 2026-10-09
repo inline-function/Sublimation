@@ -368,17 +368,30 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
 
     private fun parseVar(anns: List<String>): VarStmt {
         at(Kind.VAR)
-        val name = nameToken()
+        val destruct = parseVarDestruct()
+        val name = if (destruct != null) destruct.first() else nameToken()
         val ty = if (peek(Kind.COLON)) { pos++; parseType() } else null
         at(Kind.ASSIGN)
         val v = parseExpr(angle = false)
-        return VarStmt(name, anns, ty, v)
+        return VarStmt(name, anns, ty, v, destruct)
+    }
+
+    /** 元组解构声明 `var (a, b) = e`：`var` 后紧跟 `(` 则读扁平分量名列表。 */
+    private fun parseVarDestruct(): List<String>? {
+        if (!peek(Kind.LPAREN)) return null
+        pos++
+        val names = ArrayList<String>()
+        names += nameToken()
+        while (peek(Kind.COMMA)) { pos++; names += nameToken() }
+        at(Kind.RPAREN)
+        return names
     }
 
     /** var 声明即表达式（A3）：值为初值，支持 `var n = var m = 0` 嵌套 */
     private fun parseVarExpr(anns: List<String>): VarExpr {
         at(Kind.VAR)
-        val name = nameToken()
+        val destruct = parseVarDestruct()
+        val name = if (destruct != null) destruct.first() else nameToken()
         val ty = if (peek(Kind.COLON)) { pos++; parseType() } else null
         at(Kind.ASSIGN)
         val v = parseExpr(angle = false)

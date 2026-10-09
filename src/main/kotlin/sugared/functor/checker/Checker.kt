@@ -326,7 +326,29 @@ class Checker(
     internal fun checkStmt(s: Stmt, f: Frame, pure: Boolean, flow: Boolean = false): Type {
         return when (s) {
             is VarStmt -> {
-                val t0 = checkExpr(s.value, f, pure)   // 初值是值位（flow 默认 false）
+                // 元组解构声明 `var (b, c) = e`：初值须为元组，逐分量声明变量（决策 91 声明版）
+                if (s.destruct != null) {
+                    val t0 = checkExpr(s.value, f, pure)
+                    val tup = syms.expand(t0) as? TupleType
+                    if (tup == null) {
+                        d.error("E-TUPLE-DESTRUCT", s.pos, "元组解构初值须为元组，实际 ${t0.render()}")
+                    } else if (s.destruct.size != tup.items.size) {
+                        d.error("E-TUPLE-ARITY", s.pos, "解构分量 ${s.destruct.size} ≠ 元组元素 ${tup.items.size}")
+                    } else {
+                        val mut = "mut" in s.annotations
+                        s.destruct.forEachIndexed { i, nm ->
+                            f.declareVar(nm, tup.items[i])
+                            if (mut) f.declareMut(nm)
+                            d.supplement("D-TYPE-INFERRED", s.pos, "var $nm 推导为 ${tup.items[i].render()}")
+                        }
+                    }
+                    return namedT("Null", emptyList())   // 解构不产值（与语句级对齐）
+                }
+                // 有类型标注且初值是 lambda 时，把标注类型作 expect 传入——
+                // lambda 参数类型可从 `(Nat)=>Nat` 反推（T2 双向推导，决策 55/57）
+                val t0 = if (s.type != null && s.value is LambdaExpr)
+                    checkExpr(s.value, f, pure, expect = syms.expand(s.type))
+                else checkExpr(s.value, f, pure)   // 初值是值位（flow 默认 false）
                 var t = t0
                 if (s.type != null) {
                     checkTypeResolvable(s.type, emptyList())

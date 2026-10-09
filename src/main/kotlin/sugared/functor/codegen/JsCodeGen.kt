@@ -356,7 +356,7 @@ class JsCodeGen {
 
     private fun binderStmt(s: Stmt, out: MutableSet<String>) {
         when (s) {
-            is VarStmt -> { out.add(s.name); binderExpr(s.value, out) }
+            is VarStmt -> { s.destruct?.let { out += it } ?: out.add(s.name); binderExpr(s.value, out) }
             is AssignStmt -> binderExpr(s.value, out)
             is ExprStmt -> binderExpr(s.expr, out)
             is UncheckedStmt -> binderStmt(s.inner, out)
@@ -454,8 +454,13 @@ class JsCodeGen {
     private fun genStmt(s: Stmt) {
         when (s) {
             is VarStmt -> {
-                val kw = if ("mut" in s.annotations) "let" else "const"
-                line("$kw ${mangle(s.name)} = ${expr(s.value)};")
+                if (s.destruct != null) {
+                    val kw = if ("mut" in s.annotations) "let" else "const"
+                    line("$kw [${s.destruct.joinToString(", ") { mangle(it) }}] = ${expr(s.value)};")
+                } else {
+                    val kw = if ("mut" in s.annotations) "let" else "const"
+                    line("$kw ${mangle(s.name)} = ${expr(s.value)};")
+                }
             }
             is AssignStmt -> line("${expr(s.target)} = ${expr(s.value)};")
             // 命题逃逸：擦除为注释，可 grep 审计
@@ -751,7 +756,9 @@ class JsCodeGen {
 
     /** 语句转单行字符串（供 IIFE 内联；var/assign/expr 足够，axiom/by 擦除为空） */
     private fun stmtStr(s: Stmt): String = when (s) {
-        is VarStmt -> "${if ("mut" in s.annotations) "let" else "const"} ${mangle(s.name)} = ${expr(s.value)};"
+        is VarStmt -> if (s.destruct != null)
+            "${if ("mut" in s.annotations) "let" else "const"} [${s.destruct.joinToString(", ") { mangle(it) }}] = ${expr(s.value)};"
+        else "${if ("mut" in s.annotations) "let" else "const"} ${mangle(s.name)} = ${expr(s.value)};"
         is AssignStmt -> "${expr(s.target)} = ${expr(s.value)};"
         is ExprStmt -> "${expr(s.expr)};"
         is UncheckedStmt -> stmtStr(s.inner)
@@ -798,7 +805,9 @@ class JsCodeGen {
     /** lambda 体内单条语句 → 缩进行（if 展平为真语句，return 原样发射） */
     private fun lambdaStmtToLines(s: Stmt, out: MutableList<String>, ind: String) {
         when (s) {
-            is VarStmt -> out += "$ind${if ("mut" in s.annotations) "let" else "const"} ${mangle(s.name)} = ${expr(s.value)};"
+            is VarStmt -> if (s.destruct != null)
+                out += "$ind${if ("mut" in s.annotations) "let" else "const"} [${s.destruct.joinToString(", ") { mangle(it) }}] = ${expr(s.value)};"
+            else out += "$ind${if ("mut" in s.annotations) "let" else "const"} ${mangle(s.name)} = ${expr(s.value)};"
             is AssignStmt -> out += "$ind${expr(s.target)} = ${expr(s.value)};"
             is ExprStmt -> if (s.expr is IfExpr) lambdaIfLines(s.expr as IfExpr, out, ind) else out += "$ind${expr(s.expr)};"
             is ReturnStmt -> out += "$ind${if (s.expr != null) "return ${expr(s.expr)};" else "return;"}"

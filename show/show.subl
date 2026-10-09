@@ -10,7 +10,8 @@
 //   v2.0 三大系统：**空安全**（T?/?:/>:/?T 智能转换）·
 //         **可变性控制**（immutable<T>/untouch<param> 自然命题）· **异步**（@async/Task/Channel/sleep）
 //   v1.1 语法：if (cond) 强制括号 / a == b 中缀 / { x -> } lambda + 尾随 lambda /
-//              表达式体返回类型推导 / 块式显式 return / 接收者风格 xs.map {}
+//              表达式体返回类型推导 / 块式显式 return / 接收者风格 xs.map {} /
+//              变量元组解构 `var (b, c) = a`（决策 91 声明版）/ 有标注 lambda 参数类型反推
 //   型类：class Show + impl（Grade/Student）+ 字典自动推理
 //   模式：when 解构 / 守卫 / else 兜底；元组；命题前后件
 // ============================================================
@@ -64,7 +65,7 @@ struct Point(x: Nat, y: Nat)
 
 // T? = Optional[T]；?: 空替代（Some/None）—— 复用 v1.1 Optional 工具
 @unpure fun nullSafety() {
-    var age: Optional[Nat] = Some(20)
+    var age: Nat? = Some(20)
     print("空安全 elvis(Some) = ${age ?: 0}")
     var none: Optional[Nat] = None()
     print("空安全 elvis(None) = ${none ?: 7}")
@@ -172,4 +173,11 @@ fun main() {
     sanitize(3)
     print("可变性自然命题 (immutable/untouch) = OK")
     asyncDemo()
+    //变量上的解构
+    var a = (1,2)
+    var (b,c) = a
+    print("元组解构 = $b..$c")
+    //默认单参
+    var lambda : (Nat)=>Nat = { x -> x + 1 }
+    print("lambda(41) = ${lambda(41)}")
 }

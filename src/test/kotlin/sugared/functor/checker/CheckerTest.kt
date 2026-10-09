@@ -343,6 +343,21 @@ class CheckerTest {
     }
 
     @Test
+    fun `解构 var 元组声明绑定分量`() {
+        assertTrue(ok("fun main() { var a = (1, 2)\nvar (b, c) = a\nb }"))
+    }
+
+    @Test
+    fun `解构 var 非元组初值报 E-TUPLE-DESTRUCT`() {
+        assertTrue(errs("fun main() { var n = 5\nvar (b, c) = n }").contains("E-TUPLE-DESTRUCT"))
+    }
+
+    @Test
+    fun `解构 var 分量数不符报 E-TUPLE-ARITY`() {
+        assertTrue(errs("fun main() { var a = (1, 2, 3)\nvar (b, c) = a }").contains("E-TUPLE-ARITY"))
+    }
+
+    @Test
     fun `T4 含 Any 成员的结构体禁直接构造`() {
         assertTrue(errs("struct P(v: Any)\nfun mk(): P = P(1)").contains("E-ANY-STRUCT"))
         assertTrue(ok("struct P(v: Any)\nfun mk(): P { unchecked var p = P(1)\nreturn p }"))
