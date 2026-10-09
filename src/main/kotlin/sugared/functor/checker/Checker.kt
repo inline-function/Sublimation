@@ -209,7 +209,8 @@ class Checker(
         curFunName = fn.name
         curFunParams = fn.params.map { it.name }
         structSub = LinkedHashMap()
-        curFunAsync = "async" in fn.annotations
+        // v2.0 异步（决策 93）：main 天然 @async（异步 §2/§5.2）——无需注解即可调 async 函数并 await
+        curFunAsync = "async" in fn.annotations || fn.name == "main"
         // P6（决策 82）：设置约束字典槽——`fun f[T: Show]` 体内 `x.show()`（x: T）指向槽 d_Show_T
         val savedConsSlots = funConsSlots
         funConsSlots = fn.theory.filterIsInstance<TypeParam>()

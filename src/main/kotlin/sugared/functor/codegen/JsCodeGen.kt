@@ -358,8 +358,8 @@ class JsCodeGen {
         // v2.0 重载：本模块内同名 >1 的函数按首参标签唯一化（`stdlib__map$List`），与 Checker 侧 moduleHits 同名规则一致
         val base = moduleJsName(currentPrefix, fn.name)
         val jsName = if (overloadsByUnit[currentPrefix]?.contains(fn.name) == true) "$base\$${fnTag(fn)}" else base
-        // v2.0 异步（决策 93）：@async 函数生成 `async function`——体内挂起点（awaitHits）生成 await
-        val asyncKw = if ("async" in fn.annotations) "async " else ""
+        // v2.0 异步（决策 93）：@async 函数与 main（天然 @async，异步 §5.2）生成 `async function`——体内挂起点（awaitHits）生成 await
+        val asyncKw = if ("async" in fn.annotations || fn.name == "main") "async " else ""
         line("${asyncKw}function $jsName($ps) {")
         indent++
         when (body) {

@@ -464,10 +464,15 @@ class ModuleE2ETest {
     @Test
     fun `v2 异步 - 同步上下文调用 async 函数报错`() {
         assumeTrue(nodeAvailable())
+        // main 天然 @async（§5.2）→ 不报错；普通具名函数（非 main）同步上下文调 @async 函数 → E-NEED-ASYNC
         val main = "@async fun tick(): Nat = 1\n" +
-            "@unpure fun main() {\n" +
+            "fun helper(): Nat {\n" +
             "  var x = tick()\n" +
-            "  print(\"x=\$x\")\n" +
+            "  return x\n" +
+            "}\n" +
+            "@unpure fun main() {\n" +
+            "  var y = helper()\n" +
+            "  print(\"y=\$y\")\n" +
             "}"
         // 编译必须失败：E-NEED-ASYNC（同步上下文调 @async 函数）
         val dir = Files.createTempDirectory("subl-async-neg").toFile()
