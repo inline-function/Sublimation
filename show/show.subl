@@ -48,8 +48,10 @@ fun minmax2(p: (Nat, Nat)): (Nat, Nat) = when(p) {
 fun greet(name: Str, exclaim: Str): Str = concat("Hello, ", concat(name, exclaim))
 
 // ---------- 4. 命题前后件（unchecked.axiom + 自动供给） ----------
-fun giveP(): Null <p> { unchecked.axiom[p] }
-fun takeP()<p> : Null{}
+// v1.1（主人拍板）：`:` 前是上文（前置，调用需已证明）、后是下文（后置，调用产出）；
+// 返回类型可省略——giveP 后置 p 写 `: <p>`，takeP 前置 p 写 `<p>` 并省略 () 与返回类型
+fun giveP: <p> { unchecked.axiom[p] }
+fun takeP<p> {}
 
 // ---------- 5. main ----------
 @unpure

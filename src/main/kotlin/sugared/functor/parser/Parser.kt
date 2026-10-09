@@ -122,9 +122,20 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         val name = nameToken()
         val theory = if (peek(Kind.LBRACKET)) parseTheory() else emptyList()
         val params = if (peek(Kind.LPAREN)) parseParams() else emptyList()
+        // 用户拍板（v1.1）：`:` 是上下（前后置）上下文的分界——
+        // 冒号**前**的 `<...>` = 上文（前置，调用需已证明）；返回类型**后**的 `<...>` = 下文（后置，调用产出）。
+        // 返回类型可省略：冒号后直接 `<...>` / 无返回类型（此前后置须写 `: Null <p>`，现可写 `: <p>`）。
         val preps = if (peek(Kind.LT)) parseAngleList() else emptyList()
-        val ret = if (peek(Kind.COLON)) { pos++; parseType() } else null
-        val posts = if (peek(Kind.LT)) parseAngleList() else emptyList()
+        var ret: Type? = null
+        var posts: List<Expr> = emptyList()
+        if (peek(Kind.COLON)) {
+            pos++
+            if (peek(Kind.LT)) posts = parseAngleList()        // `: <q>`：无返回类型的后置上下文
+            else {
+                ret = parseType()
+                if (peek(Kind.LT)) posts = parseAngleList()    // `: T <q>`：旧形态
+            }
+        }
         // 决策 73（Kotlin 铁律）：函数体两形态互斥——`= 表达式` 或 `{ 语句… }`；
         // `=` 后直接跟 `{` 是混用，报错指向改法。
         val body = when {

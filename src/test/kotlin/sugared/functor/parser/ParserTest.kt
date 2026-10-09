@@ -40,6 +40,23 @@ class ParserTest {
     }
 
     @Test
+    fun `冒号分界上下文 - 后置可省略返回类型 前置可省略括号`() {
+        // 用户拍板（v1.1）：`:` 前是上文（前置）、后是下文（后置）。
+        // `: <p>` 无返回类型的后置上下文；`<p>` 前置上下文可省略 () 与返回类型。
+        val f = parseSource(
+            "fun giveP: <p> { unchecked.axiom[p] }\nfun takeP<p> {}",
+            "t",
+        )
+        val d1 = (f.entries[0] as DeclEntry).decl as FunDecl
+        assertEquals(listOf(NameRef("p")), d1.posts)
+        assertNull(d1.retType, "后置上下文可省略返回类型")
+        assertEquals(0, d1.preps.size)
+        val d2 = (f.entries[1] as DeclEntry).decl as FunDecl
+        assertEquals(listOf(NameRef("p")), d2.preps)
+        assertNull(d2.retType, "前置上下文可省略 () 与返回类型")
+    }
+
+    @Test
     fun `嵌套尖括号显式供给`() {
         val call = (stmtsOf("witness<valid<7>>()")[0] as ExprStmt).expr as CallExpr
         val inst = call.callee as InstExpr
