@@ -720,6 +720,9 @@ class Checker(
                     // P2（决策 78）：synthetic 操作数（如未定型的 lambda 参数 x）时 builtinOp 无从定型——
                     // 返回 synthetic 而非兜底 Bool，否则 `x + 1` 会被定型为 Bool 污染 lambda 返回类型推断
                     if (l.isSynthetic() || r.isSynthetic()) return syntheticT("中缀${e.op}")
+                    // 类型变量形操作数（如 lambda 参数期望类型是裸 `T`，见 compose`(B)=>C` 的 B）：
+                    // 与 synthetic 同列——它由调用点合一反推（P7 决策 83），此刻无从定型，宽松放行而非误报 E-TYPE-MISMATCH。
+                    if (isTypeVarForm(l) || isTypeVarForm(r)) return syntheticT("中缀${e.op}")
                     // P6（决策 82）：字符串拼接——`+` 对 (Str, Str) 即 concat（JS 原生 `a + b` 对字符串天然拼接）。
                     // 此前 checkBin 对 builtinOp 不认识的合法组合兜底 Bool，使 `acc + x.show()` 这类拼接
                     // 类型为 Bool（print 宽松放行掩盖了它）；这里显式给 Str。
@@ -737,6 +740,12 @@ class Checker(
         is NameRef -> if (syms.baseOf(namedT(e.name, emptyList())) != null) namedT(e.name, emptyList()) else null
         else -> null
     }
+
+    /** 类型变量形：空参的大写 NamedType，且非内建/枚举/结构体/合成——即 lambda 参数期望类型里的裸类型变量（如 `(B)=>C` 的 B）。
+     *  与 retIsTp 同判据（Checker.kt 543-545）：判为「待合一反推」而非具体类型，供 checkBin 等宽松放行。 */
+    private fun isTypeVarForm(t: Type): Boolean =
+        t is NamedType && t.args.isEmpty() && t.name !in BASE_TYPES &&
+            t.name !in syms.enums && t.name !in syms.structs && !t.isSynthetic()
 
     // ============ v2.0 空安全运算符（决策 88-92） ============
 

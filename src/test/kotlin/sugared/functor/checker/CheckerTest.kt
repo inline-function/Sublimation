@@ -358,6 +358,11 @@ class CheckerTest {
     }
 
     @Test
+    fun `多层泛型 lambda 反推 compose 通过`() {
+        assertTrue(ok("fun compose[A, B, C](f: (B) => C, g: (A) => B, x: A): C = f(g(x))\nfun main() { compose({ n -> n * 2 }, { m -> m + 1 }, 20) }"))
+    }
+
+    @Test
     fun `解构 var 非元组初值报 E-TUPLE-DESTRUCT`() {
         assertTrue(errs("fun main() { var n = 5\nvar (b, c) = n }").contains("E-TUPLE-DESTRUCT"))
     }

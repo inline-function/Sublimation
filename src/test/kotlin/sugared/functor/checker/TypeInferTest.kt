@@ -68,4 +68,59 @@ class TypeInferTest {
         assertTrue(unifyInto(f1, f2, setOf("T"), sub))
         assertEquals("Nat", sub["T"]?.render())
     }
+
+    // ---- 推导器补强：元组合一 / occurs 嵌套 / builtinOp 签名 ----
+
+    @Test
+    fun `unifyInto 元组类型逐项合一`() {
+        val sub = mutable()
+        val want = sugared.functor.ast.TupleType(listOf(namedT("T"), namedT("U")))
+        val got = sugared.functor.ast.TupleType(listOf(namedT("Nat"), namedT("Str")))
+        assertTrue(unifyInto(want, got, setOf("T", "U"), sub))
+        assertEquals("Nat", sub["T"]?.render())
+        assertEquals("Str", sub["U"]?.render())
+    }
+
+    @Test
+    fun `unifyInto 分量数不符返回 false`() {
+        val sub = mutable()
+        val want = sugared.functor.ast.TupleType(listOf(namedT("T"), namedT("U")))
+        val got = sugared.functor.ast.TupleType(listOf(namedT("Nat")))
+        assertFalse(unifyInto(want, got, setOf("T", "U"), sub))
+    }
+
+    @Test
+    fun `unifyInto occurs check 嵌套拒绝自指`() {
+        val sub = mutable()
+        val f = FunType(listOf(namedT("T")), namedT("T"))   // (T) => T
+        val got = FunType(listOf(namedT("T")), namedT("T"))
+        // 两层嵌套：T 想绑到 (T)=>T——occurs check 应拒绝
+        assertFalse(unifyInto(namedT("T"), got, setOf("T"), sub))
+        assertFalse(sub.containsKey("T"))
+    }
+
+    @Test
+    fun `unifyInto 数值类型变量升格到较大`() {
+        val sub = mutable()
+        // T 先绑 Nat，再遇 Rat：已绑定一致性走宽松，但数值应取较大
+        assertTrue(unifyInto(namedT("T"), namedT("Nat"), setOf("T"), sub))
+        assertTrue(unifyInto(namedT("T"), namedT("Rat"), setOf("T"), sub))
+        // 保持首个绑定（与现有 TypeInferTest 一致：静默不覆盖，报错走 E-TYPE-MISMATCH）
+        assertEquals("Nat", sub["T"]?.render())
+    }
+
+    @Test
+    fun `builtinOp 数值算符返回数值 join`() {
+        assertTrue(TypeInfer.builtinOp("+", listOf(namedT("Nat"), namedT("Rat")))?.render()?.startsWith("Rat") == true)
+        assertEquals("Bool", TypeInfer.builtinOp("=", listOf(namedT("Nat"), namedT("Nat")))?.render())
+        assertEquals("Bool", TypeInfer.builtinOp("->", emptyList())?.render())
+        assertEquals(null, TypeInfer.builtinOp("+", listOf(namedT("Str"), namedT("Nat"))))
+    }
+
+    @Test
+    fun `unify 数值升格取较大`() {
+        assertEquals("Rat", TypeInfer.unify(namedT("Nat"), namedT("Rat"))?.render())
+        assertEquals("Nat", TypeInfer.unify(namedT("Nat"), namedT("Nat"))?.render())
+        assertEquals("Str", TypeInfer.unify(namedT("Str"), namedT("Str"))?.render())
+    }
 }
