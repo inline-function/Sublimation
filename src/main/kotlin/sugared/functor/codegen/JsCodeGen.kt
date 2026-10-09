@@ -466,6 +466,9 @@ class JsCodeGen {
         is SafeCallExpr -> safeCallJs(e)
         is CastExpr -> { val t = expr(e.target); "(() => { const _v = $t; return __isa(_v, \"${e.type.name}\") ? Some(_v) : None(); })()" }
         is TypeTestExpr -> "(__isa(${expr(e.target)}, \"${e.type.name}\"))"
+        // v2.0 异步（决策 93，异步 §5.3）：Task { … } → 惰性任务对象。start() 惰性创建 async 函数并执行；
+        // join() 返回 Promise（await 在调用点）；isAlive() 简化为「是否已 start」。
+        is TaskExpr -> taskJs(e)
         is SymbolCallExpr -> symbolCall(e)
         is FieldExpr -> moduleHits[e] ?: "${expr(e.target)}.${mangle(e.name)}"   // P0：跨模块限定引用走留痕名
         is CallExpr -> call(e)
@@ -538,6 +541,29 @@ class JsCodeGen {
         val argJs = e.args.joinToString(", ") { expr(it) }
         val callJs = "$fn($inner${if (argJs.isNotEmpty()) ", $argJs" else ""})"
         return "(() => { const _v = $t; return _v.tag === \"None\" ? None() : Some($callJs); })()"
+    }
+
+    /** v2.0 异步（决策 93，异步 §5.3）：Task { … } → 惰性任务对象。
+     *  start() 惰性建 async 函数执行体并持有 Promise；join() 返回该 Promise；isAlive() 是否已 start。 */
+    private fun taskJs(e: TaskExpr): String {
+        val bodyJs = taskBodyStr(e.body)
+        return "(() => {\n" +
+            "  let promise = null;\n" +
+            "  return {\n" +
+            "    start: () => { promise = (async () => {\n$bodyJs\n    })(); },\n" +
+            "    join: () => promise,\n" +
+            "    isAlive: () => promise !== null,\n" +
+            "  };\n" +
+            "})()"
+    }
+
+    /** Task 体 → async 函数体字符串（语句逐条 + return 尾表达式；无尾时 return null） */
+    private fun taskBodyStr(b: BlockExpr): String {
+        val tail = b.stmts.lastOrNull() as? ExprStmt
+        val lines = ArrayList<String>()
+        for (s in b.stmts) if (s !== tail) { val t = stmtStr(s); if (t.isNotEmpty()) lines += "    $t" }
+        val ret = if (tail != null) "    return ${expr(tail.expr)};" else "    return null;"
+        return (lines + ret).joinToString("\n")
     }
 
     private fun unop(op: String): String = when (op) {

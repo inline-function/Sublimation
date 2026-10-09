@@ -56,6 +56,8 @@ class Checker(
     internal var curFunAsync = false
     /** v2.0 异步：@async 函数体内对 @async 函数的**挂起点**调用留痕（调用点 → true），codegen 处生成 await */
     internal val asyncAwaitHits = java.util.IdentityHashMap<CallExpr, Boolean>()
+    /** v2.0 异步（TASK-7）：当前函数体内已 start() 的任务变量名集合（checkFun 进出清空）——join 处比对 */
+    internal var startedTasks: MutableSet<String> = LinkedHashSet()
     /** P9：变量血缘（子 → 父）：when 解构绑定变量 → 主题变量（`when(xs){Cons(_,t)->...}` ⇒ t→xs）。checkFun 进出清空恢复。 */
     internal var structSub: MutableMap<String, String> = LinkedHashMap()
     /**
@@ -206,9 +208,11 @@ class Checker(
         // P9（决策 44）：设置递归停机上下文（函数名/形参/解构血缘按函数隔离）
         val savedFunName = curFunName; val savedFunParams = curFunParams; val savedStructSub = structSub
         val savedFunAsync = curFunAsync
+        val savedStarted = startedTasks
         curFunName = fn.name
         curFunParams = fn.params.map { it.name }
         structSub = LinkedHashMap()
+        startedTasks = LinkedHashSet()
         // v2.0 异步（决策 93）：main 天然 @async（异步 §2/§5.2）——无需注解即可调 async 函数并 await
         curFunAsync = "async" in fn.annotations || fn.name == "main"
         // P6（决策 82）：设置约束字典槽——`fun f[T: Show]` 体内 `x.show()`（x: T）指向槽 d_Show_T
@@ -276,6 +280,7 @@ class Checker(
         funConsSlots = savedConsSlots
         curFunName = savedFunName; curFunParams = savedFunParams; structSub = savedStructSub
         curFunAsync = savedFunAsync
+        startedTasks = savedStarted
     }
 
     /** O2（决策 68）：结构体自类型的裸字段名集合（枚举/基类型无裸字段） */
@@ -550,6 +555,16 @@ class Checker(
             }
         }
         is WhenExpr -> checkWhen(e, f, pure)
+        is TaskExpr -> {
+            // v2.0 异步（决策 93）：`Task { … }` 创建任务（TASK-1，仅创建不启动）。
+            // 体天然 @async（TASK-5）——临时置 async 上下文，体内可自由调用挂起函数（await）。
+            val savedAsync = curFunAsync
+            curFunAsync = true
+            val bt = try { checkExpr(e.body, f, pure) }
+            finally { curFunAsync = savedAsync }
+            // Task[T]：T = 任务体尾表达式类型（块语义同 BlockExpr：尾表达式，无尾则 Null）
+            namedT("Task", listOf(bt))
+        }
         is ByExpr -> {
             val t = checkExpr(e.target, f, pure)
             e.props.forEach { f.inject(PropLogic.fromExpr(it)) }

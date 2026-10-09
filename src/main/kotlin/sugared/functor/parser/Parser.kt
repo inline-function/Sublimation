@@ -610,6 +610,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                     val lam = parseBraceLambda()
                     e = if (e is CallExpr) e.copy(args = e.args + lam) else CallExpr(e, listOf(lam))
                 }
+                t.kind == Kind.LBRACE && e is NameRef && e.name == "Task" -> {
+                    // v2.0 异步（决策 93）：`Task { … }` 创建任务（TASK-1）——体是代码块，非 lambda
+                    val body = parseBlock()
+                    e = TaskExpr(body)
+                }
                 else -> break
             }
         }

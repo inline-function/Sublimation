@@ -4,6 +4,15 @@ import sugared.functor.ast.*
 
 // ============ 调用 ============
 
+/** v2.0 异步（决策 93）：Task 对象方法名（taskJs 生成的 JS 对象字段） */
+internal val taskMethods = setOf("start", "join", "isAlive")
+
+/** 任务调用的目标变量名：`t.start()` → "t"（NameRef 直接取；其他形态不做跨表达追踪） */
+private fun taskTargetName(e: Expr): String? = when (e) {
+    is NameRef -> e.name
+    else -> null
+}
+
 /** O3（决策 69）：命名字段构造 `A(name = e, age = e2)`——按字段名核对，缺省字段须有声明默认值 */
 internal fun Checker.checkStructCtor(e: StructCtorExpr, f: Frame, pure: Boolean): Type {
     val st = syms.structs[e.struct] ?: run {
@@ -42,7 +51,9 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
     // 方法路径上自由形态的首实参是 self，剩余实参才是形参表。
     // 自由形态仅在"是方法名且不是具名函数/构造子/结构体"时成立——具名函数优先（现行解析顺序）。
     // P0（M6，impl 也要挂载）：方法名判定跨可见模块（含兄弟/挂载模块的 impl），不再只看本模块。
-    val fieldCallee: FieldExpr? = (c.callee as? FieldExpr)?.takeIf { isMethodName(it.name) || hasFreeFun(it.name) }
+    // v2.0 异步（决策 93）：Task 对象方法（start/join/isAlive）需纳入方法路径——它们不是型类方法/自由函数，
+    // 但必须是接收者形态（o.start()）走 Task 特判；裸名 start(...) 不会被误解析。
+    val fieldCallee: FieldExpr? = (c.callee as? FieldExpr)?.takeIf { isMethodName(it.name) || hasFreeFun(it.name) || it.name in taskMethods }
     val freeName = (c.callee as? NameRef)?.name
         ?: ((c.callee as? InstExpr)?.target as? NameRef)?.name
     val isFreeFormMethod = fieldCallee == null && freeName != null &&
@@ -79,6 +90,26 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
 
     // v1.1 集合方法糖提前路径：`o.m(args)` 且 m 是「同名自由函数」（非 typeclass 方法名）→ 脱糖为 m(o, args)。
     // 自由函数名（map/filter/forEach…）不进 isMethodName 分支，须在 fn 解析链（含 E-UNBOUND 回退）之前截获。
+    // v2.0 异步（决策 93）：Task 对象方法（start/join/isAlive）在方法糖**之前**特判——它们是 taskJs 生成的
+    // JS 对象字段（codegen 天然生成 `t.start`），不登记 moduleHits/methodSugarArgs（避免覆盖字段访问形态）。
+    if (fieldCallee != null && name in taskMethods && selfT is NamedType && selfT.name == "Task" && selfT.args.size == 1) {
+        // E-NOT-STARTED 检查（TASK-7，异步 §1.6）：函数体内无 t.start() 而 t.join() → 报错。
+        // startTaskArgs 由 checkFun 在函数体扫描时按「调用目标名」登记；join 处比对同名。
+        when (name) {
+            "start" -> { taskTargetName(fieldCallee.target)?.let { startedTasks += it }; return namedT("Null", emptyList()) }
+            "isAlive" -> return namedT("Bool", emptyList())
+            "join" -> {
+                val tn = taskTargetName(fieldCallee.target)
+                if (tn != null && tn !in startedTasks)
+                    d.error("E-NOT-STARTED", c.pos, "任务 $tn 未 start() 即 join()（TASK-7：函数体内先 t.start() 再 t.join()）")
+                // join 是挂起操作（异步 §5.3 `await t.join()`）：async 上下文登记挂起点生成 await；
+                // 同步上下文同 E-NEED-ASYNC（挂起操作不得出现在同步函数）
+                if (curFunAsync) asyncAwaitHits[c] = true
+                else d.error("E-NEED-ASYNC", c.pos, "t.join() 是挂起操作，需 @async 上下文")
+                return selfT.args[0]
+            }
+        }
+    }
     if (fieldCallee != null && !isMethodName(fieldCallee.name)) {
         val sugarFn = methodSugar(fieldCallee.name, selfT, fieldCallee, c)
         if (sugarFn != null)

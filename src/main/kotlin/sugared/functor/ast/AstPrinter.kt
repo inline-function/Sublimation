@@ -93,6 +93,7 @@ private fun Expr.toTree(): Tree = when (this) {
     is SafeCallExpr -> Tree("safecall .${name}", listOf(target.toTree()) + args.map { it.toTree() })
     is CastExpr -> Tree("cast >: ${type.toTag()}", listOf(target.toTree()))
     is TypeTestExpr -> Tree("typetest ? ${type.toTag()}", listOf(target.toTree()))
+    is TaskExpr -> Tree("task", body.stmts.map { it.toTree() })
     is CallExpr -> Tree("call ${callee.toTag()}(${args.joinToString(", ") { it.toTag() }})")
     is InstExpr -> Tree("inst ${target.toTag()}<${terms.joinToString(", ") { it.toTag() }}>")
     is FieldExpr -> Tree("field ${target.toTag()}.$name")
@@ -132,6 +133,7 @@ private fun Expr.toTag(): String = when (this) {
     is SafeCallExpr -> "${target.toTag()}?.${name}(${args.joinToString(", ") { it.toTag() }})"
     is CastExpr -> "(${target.toTag()} >: ${type.toTag()})"
     is TypeTestExpr -> "(${target.toTag()} ? ${type.toTag()})"
+    is TaskExpr -> "Task {${body.stmts.joinToString("; ") { it.toPlain() }}}"
     is CallExpr -> "${callee.toTag()}(${args.joinToString(", ") { it.toTag() }})"
     is InstExpr -> "${target.toTag()}<${terms.joinToString(", ") { it.toTag() }}>"
     is FieldExpr -> "${target.toTag()}.$name"

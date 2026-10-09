@@ -271,6 +271,9 @@ data class CastExpr(val target: Expr, val type: Type, override val pos: String =
 /** `a ? T` 运行时类型测：结构判定 a 是否为 T，返回 Bool；`if (a ? T)` 分支内智能转换 a : T */
 data class TypeTestExpr(val target: Expr, val type: Type, override val pos: String = "") : Expr
 
+/** `Task { ... }` 创建任务（TASK-1：仅创建不启动）。体是代码块（闭包语义，天然 @async）；类型 Task[T]。 */
+data class TaskExpr(val body: BlockExpr, override val pos: String = "") : Expr
+
 /** 函数调用；尾随 lambda 已并入 args */
 data class CallExpr(
     val callee: Expr,

@@ -484,4 +484,67 @@ class ModuleE2ETest {
             assertTrue(bag.report().contains("E-NEED-ASYNC"), "诊断应含 E-NEED-ASYNC，实际:\n${bag.report()}")
         } finally { dir.deleteRecursively() }
     }
+
+    // ============ v2.0 异步 Task（决策 93，异步 §1/§5.3）：TaskExpr+start/join/isAlive ============
+
+    @Test
+    fun `v2 异步 - Task 创建 start join isAlive`() {
+        assumeTrue(nodeAvailable())
+        val main = "@unpure fun main() {\n" +
+            "var t = Task {\n" +
+            "  print(\"A\")\n" +
+            "  42\n" +
+            "}\n" +
+            "var a0 = t.isAlive()\n" +
+            "t.start()\n" +
+            "var a1 = t.isAlive()\n" +
+            "var j = t.join()\n" +
+            "print(\"alive=\$a0,\$a1 j=\$j\")\n" +
+            "}"
+        assertEquals(
+            "A\nalive=false,true j=42",
+            runTree(mapOf("main.subl" to main)),
+        )
+    }
+
+    @Test
+    fun `v2 异步 - Task 未 start 即 join 报 E-NOT-STARTED`() {
+        assumeTrue(nodeAvailable())
+        val main = "@unpure fun main() {\n" +
+            "  var t = Task { 42 }\n" +
+            "  var j = t.join()\n" +
+            "  print(\"j=\$j\")\n" +
+            "}"
+        val dir = Files.createTempDirectory("subl-task-neg").toFile()
+        try {
+            File(dir, "main.subl").writeText(main)
+            val mm = MultiModule(dir)
+            val bag = mm.checkAll()
+            assertTrue(bag.hasError, "应报 E-NOT-STARTED，实际通过")
+            assertTrue(bag.report().contains("E-NOT-STARTED"), "诊断应含 E-NOT-STARTED，实际:\n${bag.report()}")
+        } finally { dir.deleteRecursively() }
+    }
+
+    @Test
+    fun `v2 异步 - 同步函数 join 报 E-NEED-ASYNC`() {
+        assumeTrue(nodeAvailable())
+        val main = "fun caller(): Nat {\n" +
+            "  var t = Task { 42 }\n" +
+            "  t.start()\n" +
+            "  var j = t.join()\n" +
+            "  return j\n" +
+            "}\n" +
+            "@unpure fun main() {\n" +
+            "  var y = caller()\n" +
+            "  print(\"y=\$y\")\n" +
+            "}"
+        val dir = Files.createTempDirectory("subl-task-sync").toFile()
+        try {
+            File(dir, "main.subl").writeText(main)
+            val mm = MultiModule(dir)
+            val bag = mm.checkAll()
+            assertTrue(bag.hasError, "应报 E-NEED-ASYNC，实际通过")
+            assertTrue(bag.report().contains("E-NEED-ASYNC"), "诊断应含 E-NEED-ASYNC，实际:\n${bag.report()}")
+        } finally { dir.deleteRecursively() }
+    }
 }
