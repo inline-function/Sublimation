@@ -297,4 +297,47 @@ class ParserTest {
         val src = File("examples/diffuse.subl").readText()
         parseSource(src, "diffuse.subl")
     }
+
+    // ============ v2.0 空安全：`T?` 类型后缀语法糖（决策 88-89） ============
+
+    @Test
+    fun `T问号 后缀 desugar 为 Optional`() {
+        // 形参位：`Rat?` → Optional[Rat]
+        val f = parseSource("fun f(x: Rat?): Null = null", "t")
+        val d = (f.entries[0] as DeclEntry).decl as FunDecl
+        val p0 = d.params[0].type
+        assertEquals("Optional", p0.name)
+        assertEquals("Rat", p0.args.single().name)
+        // 返回位：T? 同样生效
+        val f2 = parseSource("fun g(): Str? = null", "t")
+        val r = ((f2.entries[0] as DeclEntry).decl as FunDecl).retType
+        assertEquals("Optional", r!!.name)
+        assertEquals("Str", r.args.single().name)
+    }
+
+    @Test
+    fun `T问号问号 嵌套叠加`() {
+        // `T??` = Optional[Optional[T]]
+        val f = parseSource("fun f(x: Nat??): Null = null", "t")
+        val p0 = ((f.entries[0] as DeclEntry).decl as FunDecl).params[0].type
+        assertEquals("Optional", p0.name)
+        assertEquals("Optional", p0.args.single().name)
+        assertEquals("Nat", p0.args.single().args.single().name)
+    }
+
+    @Test
+    fun `T问号 泛型实参位可用`() {
+        // `List[Nat?]` 内层元素类型也可空
+        val f = parseSource("fun f(xs: List[Nat?]): Null = null", "t")
+        val p0 = ((f.entries[0] as DeclEntry).decl as FunDecl).params[0].type
+        assertEquals("List", p0.name)
+        assertEquals("Optional", p0.args.single().name)
+    }
+
+    @Test
+    fun `T问号 带空格问号是独立token不坐后缀`() {
+        // 带空格的 `?` 不并入类型后缀（LEX 层 precededBySpace 区分）
+        val e = assertFailsWith<ParseFailure> { parseSource("fun f(x: Nat ?): Null = null", "t") }
+        assertTrue(e.message!!.contains("期望"), "实际: ${e.message}")
+    }
 }

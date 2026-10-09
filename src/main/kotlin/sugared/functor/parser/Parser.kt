@@ -218,7 +218,19 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
 
     private fun parseType(): Type {
         // 类型位的 `(`：`(A,B)=>C` 是函数类型；无 `=>` 跟随则按元组类型 `(T,U)`（决策 57/61，T3）
-        if (peek(Kind.LPAREN)) return parseFunOrTupleType()
+        val base = if (peek(Kind.LPAREN)) parseFunOrTupleType() else parseNamedType()
+        // v2.0 空安全（决策 88-89）：`T?` 后缀 = `Optional[T]` 语法糖；`T??` 嵌套 = Optional[Optional[T]]。
+        // `?` 紧贴类型名（无空格）才是后缀；带空格的 `?` 是运行时类型测中缀（由表达式层处理）。
+        var t = base
+        while (peek(Kind.QUEST) && !cur().precededBySpace) {
+            pos++
+            t = namedT("Optional", listOf(t))
+        }
+        return t
+    }
+
+    /** 具名类型：标识符（可带点号链限定）与可选 `[]` 实参 */
+    private fun parseNamedType(): Type {
         val first = nameToken()
         // P0：跨模块限定类型 `core.Point`（点号链，末段为类型名，前缀为模块路径）
         val segs = ArrayList<String>()

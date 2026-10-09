@@ -12,6 +12,12 @@ enum class Kind {
     ARROW, DARROW, IFF, AMP, PIPE, BANG,
     // u-系纯命题算符（粘连书写，可中缀；决策 49/A4）
     U_NEQ, U_IMPLIES, U_IFF, U_AND, U_OR,
+    // v2.0 空安全运算符（多字符优先：`?.`/`?:` 在 `?` 前）
+    // CAST `>:` **不在词法层粘连**——`<valid<7>>: Null` 的 `>>` 终止符序列会误粘连成 `>:`，
+    // 破坏上下文命题解析。`a >: T` 由 parser 表达式层合成（见 parseExpr 的 GT 分支）。
+    QUEST,        // `?` —— 运行时类型测 `a ? T`（前后均须有空格）或类型后缀 `T?`
+    SAFECALL,     // `?.` —— 安全调用 `a?.f(b)` / `a ?.f b`
+    ELVIS,        // `?:` —— 空替代 `a ?: b`
     // Unicode 逻辑符号（固定单 token，不做标识符）
     FORALL, EXISTS, EXISTS1, LAND, LOR, LNOT, IMPLIES, EQUIV, TOP, BOT,
     LT, GT, EOF,
@@ -115,6 +121,10 @@ class Lexer(private val src: String, private val fileName: String) {
         if (c == '>' && peekAt(i + 1) == '=') { adv(2); return Kind.GE to ">=" }
         if (c == '-' && peekAt(i + 1) == '>') { adv(2); return Kind.ARROW to "->" }
         if (c == '∃' && peekAt(i + 1) == '!') { adv(2); return Kind.EXISTS1 to "∃!" }
+        // v2.0 空安全运算符（多字符优先：`?.`/`?:` 在 `?` 前）
+        if (c == '?' && peekAt(i + 1) == '.') { adv(2); return Kind.SAFECALL to "?." }
+        if (c == '?' && peekAt(i + 1) == ':') { adv(2); return Kind.ELVIS to "?:" }
+        if (c == '?') { adv(1); return Kind.QUEST to "?" }
 
         val one = when (c) {
             '(' -> Kind.LPAREN; ')' -> Kind.RPAREN
