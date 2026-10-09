@@ -602,6 +602,10 @@ class JsCodeGen {
         return (lines + ret).joinToString("\n")
     }
 
+    /** v2.0 异步：内建 IO/sleep 挂起点 —— 检查器若登记本调用为挂起点则包 `await`（非挂起点原样） */
+    private fun awaited(e: CallExpr, js: String): String =
+        if (awaitHits[e] == true) "await $js" else js
+
     private fun unop(op: String): String = when (op) {
         "-", "!", "¬" -> op
         else -> "!"
@@ -628,14 +632,18 @@ class JsCodeGen {
         }
         // P3 IO（v1.0 计划 §5）：node 原语，内联 require('fs')（node 模块缓存，无性能问题）
         // P5（决策 81）：readFile/writeFile/readLine 返回 Result[_, Str]——try/catch 包 Ok/Err（stdlib/result.subl）
+        // v2.0 异步（异步 §6 阶段 6）：IO 标 @async——同步实现 + await 挂起点（await 非 Promise 值无害，但保持产物语义一致）
         if (name == "readLine" && e.args.isEmpty())
-            return "(() => { try { const b = Buffer.alloc(4096); const n = require('fs').readSync(0, b, 0, 4096, null); if (n <= 0) return stdlib__Err(\"EOF\"); return stdlib__Ok(b.slice(0, n).toString('utf8').trim()); } catch (x) { return stdlib__Err(x.message); } })()"
+            return awaited(e, "(() => { try { const b = Buffer.alloc(4096); const n = require('fs').readSync(0, b, 0, 4096, null); if (n <= 0) return stdlib__Err(\"EOF\"); return stdlib__Ok(b.slice(0, n).toString('utf8').trim()); } catch (x) { return stdlib__Err(x.message); } })()")
         if (name == "readFile" && e.args.size == 1)
-            return "(() => { try { return stdlib__Ok(require('fs').readFileSync(${expr(e.args[0])}, 'utf8')); } catch (x) { return stdlib__Err(x.message); } })()"
+            return awaited(e, "(() => { try { return stdlib__Ok(require('fs').readFileSync(${expr(e.args[0])}, 'utf8')); } catch (x) { return stdlib__Err(x.message); } })()")
         if (name == "writeFile" && e.args.size == 2)
-            return "(() => { try { require('fs').writeFileSync(${expr(e.args[0])}, ${expr(e.args[1])}); return stdlib__Ok(null); } catch (x) { return stdlib__Err(x.message); } })()"
+            return awaited(e, "(() => { try { require('fs').writeFileSync(${expr(e.args[0])}, ${expr(e.args[1])}); return stdlib__Ok(null); } catch (x) { return stdlib__Err(x.message); } })()")
         if (name == "getArgs" && e.args.isEmpty())
             return "(() => { const a = process.argv.slice(2); let r = stdlib__Nil(); for (let i = a.length - 1; i >= 0; i--) r = stdlib__Cons(a[i], r); return r; })()"
+        // v2.0 异步（异步 §6 阶段 6）：sleep(ms) 显式延时——Promise + setTimeout，恒为挂起点
+        if (name == "sleep" && e.args.size == 1)
+            return awaited(e, "new Promise(r => setTimeout(r, ${expr(e.args[0])}))")
         // P1 字符串内建（v1.0 计划 §3）：JS 原生映射，与 print 同款特判（在内建之上、模块前缀留痕之前）
         if (name == "concat" && e.args.size == 2)
             return "(${expr(e.args[0])} + ${expr(e.args[1])})"

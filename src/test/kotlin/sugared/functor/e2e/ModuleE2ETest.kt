@@ -676,4 +676,35 @@ class ModuleE2ETest {
             "}\n"
         assertEquals("pt.x=3", runTree(mapOf("main.subl" to main)))
     }
+
+    // ============ v2.0 异步 stage 6：IO 集成（readFile/readLine/writeFile @async + sleep 内建） ============
+
+    @Test
+    fun `v2 异步 - sleep 内建生成 await 挂起点并运行`() {
+        assumeTrue(nodeAvailable())
+        // main 天然 @async（决策 93）→ sleep 是挂起点，产物含 await Promise + setTimeout
+        val main = "@unpure fun main() {\n" +
+            "  sleep(10)\n" +
+            "  print(\"done\")\n" +
+            "}\n"
+        assertEquals("done", runTree(mapOf("main.subl" to main)))
+    }
+
+    @Test
+    fun `v2 异步 - IO readFile 标 async：同步函数调用报 E-NEED-ASYNC`() {
+        assumeTrue(nodeAvailable())
+        val main = "fun sync(): Null {\n" +
+            "  var r = readFile(\"x.txt\")\n" +
+            "  Null\n" +
+            "}\n" +
+            "@unpure fun main() { sync() }\n"
+        val dir = Files.createTempDirectory("subl-io-async").toFile()
+        try {
+            File(dir, "main.subl").writeText(main)
+            val mm = MultiModule(dir)
+            val bag = mm.checkAll()
+            assertTrue(bag.hasError, "应报 E-NEED-ASYNC，实际通过")
+            assertTrue(bag.report().contains("E-NEED-ASYNC"), "诊断应含 E-NEED-ASYNC，实际:\n${bag.report()}")
+        } finally { dir.deleteRecursively() }
+    }
 }

@@ -31,18 +31,22 @@ fun builtinUnpure(name: String): FunDecl? = when (name) {
         params = listOf(Param("v", syntheticT("任意"))),
         preps = emptyList(), retType = namedT("Null"), posts = emptyList(), body = null,
     )
-    // ---- P3 IO（v1.0 计划 §5）：全部 @unpure；codegen 用 JS 内联 require('fs') / process.argv ----
+    // ---- P3 IO（v1.0 计划 §5）：全部 @unpure；v2.0 异步（异步 §6 阶段 6）：readFile/readLine/writeFile 也标 @async——挂起操作须在 async 上下文调用（main 天然 async，Task 体天然 async）----
     // P5（决策 81）：IO 失败可携带错误信息——readFile/writeFile/readLine 返回 Result（Ok/Err，stdlib/result.subl）
-    "readLine" -> FunDecl("readLine", listOf("unpure"), emptyList(), emptyList(),
+    "readLine" -> FunDecl("readLine", listOf("unpure", "async"), emptyList(), emptyList(),
         emptyList(), namedT("Result", listOf(namedT("Str"), namedT("Str"))), emptyList(), null)
-    "readFile" -> FunDecl("readFile", listOf("unpure"), emptyList(),
+    "readFile" -> FunDecl("readFile", listOf("unpure", "async"), emptyList(),
         listOf(Param("p", namedT("Str"))), emptyList(),
         namedT("Result", listOf(namedT("Str"), namedT("Str"))), emptyList(), null)
-    "writeFile" -> FunDecl("writeFile", listOf("unpure"), emptyList(),
+    "writeFile" -> FunDecl("writeFile", listOf("unpure", "async"), emptyList(),
         listOf(Param("p", namedT("Str")), Param("s", namedT("Str"))), emptyList(),
         namedT("Result", listOf(namedT("Null"), namedT("Str"))), emptyList(), null)
     "getArgs" -> FunDecl("getArgs", listOf("unpure"), emptyList(), emptyList(),
         emptyList(), namedT("List", listOf(namedT("Str"))), emptyList(), null)
+    // v2.0 异步（异步 §6 阶段 6）：sleep(ms) 显式延时——@async @unpure，codegen 用 JS Promise+setTimeout
+    "sleep" -> FunDecl("sleep", listOf("unpure", "async"), emptyList(),
+        listOf(Param("ms", namedT("Nat"))), emptyList(),
+        namedT("Null"), emptyList(), null)
     else -> null
 }
 
