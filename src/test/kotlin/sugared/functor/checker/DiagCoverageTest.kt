@@ -164,16 +164,16 @@ class DiagCoverageTest {
     // ---------- 显式 return（决策 71/75，返工定稿） ----------
 
     @Test fun `提前return - 语句位if分支合法`() =
-        assertTrue(has("fun f(n: Nat): Nat { if n > 0 { return 1 }\nreturn 0 }", "E-RETURN-OUTSIDE") == false)
+        assertTrue(has("fun f(n: Nat): Nat { if (n > 0) { return 1 }\nreturn 0 }", "E-RETURN-OUTSIDE") == false)
 
     @Test fun `提前return - 尾if全路径合法`() =
-        assertTrue(has("fun f(n: Nat): Nat { if n > 0 { return 1 } else { return 2 } }", "E-RETURN-OUTSIDE") == false)
+        assertTrue(has("fun f(n: Nat): Nat { if (n > 0) { return 1 } else { return 2 } }", "E-RETURN-OUTSIDE") == false)
 
     @Test fun `E-RETURN-OUTSIDE lambda 体内`() =
         assertTrue(has("fun f(): Nat { var g = fun _(x: Nat): Nat { return x }\nreturn 0 }", "E-RETURN-OUTSIDE"))
 
     @Test fun `E-RETURN-OUTSIDE 值位if`() =
-        assertTrue(has("fun f(x: Nat): Nat { var t = if x > 0 { return 9 } else { x }\nreturn t }", "E-RETURN-OUTSIDE"))
+        assertTrue(has("fun f(x: Nat): Nat { var t = if (x > 0) { return 9 } else { x }\nreturn t }", "E-RETURN-OUTSIDE"))
 
     @Test fun `E-RETURN-TYPE 值类型不符`() =
         assertTrue(has("fun f(): Nat { return \"s\" }", "E-RETURN-TYPE"))

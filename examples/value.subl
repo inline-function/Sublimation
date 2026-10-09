@@ -16,7 +16,7 @@ fun classify(n: Nat): Str {
 }
 
 fun isPos(n: Int): Bool {
-    return if n < 0 { false() } else { true() }
+    return if (n < 0) { false() } else { true() }
 }
 
 fun boolToStr(b: Bool): Str {

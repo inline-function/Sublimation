@@ -46,6 +46,8 @@ class JsCodeGen {
     private var dictSubArgs: Map<CallExpr, List<String>> = emptyMap()
     /** P8（决策 84）：命名参数规范化后的实参留痕（调用点实例 → 按形参声明顺序的实参列表） */
     private var namedArgOrders: Map<CallExpr, List<Expr>> = emptyMap()
+    /** v1.1 集合方法糖留痕：调用点实例 → 重排实参（接收者前置），codegen 直接按此生成 */
+    private var sugarArgs: Map<CallExpr, List<Expr>> = emptyMap()
     /** P0（M8）：全局引用的 JS 名留痕（键 = 引用表达式节点；限定方法调用 = MODULE_METHOD_MARKER） */
     private var moduleHits: Map<Expr, String> = emptyMap()
     /** P0（M8）：当前生成单元的模块 absPath（根 = ""） */
@@ -62,10 +64,12 @@ class JsCodeGen {
     fun generate(
         file: FileAst,
         dictHits: Map<CallExpr, String> = emptyMap(),
+        moduleHits: Map<Expr, String> = emptyMap(),
         consHits: Map<CallExpr, String> = emptyMap(),
         dictSubHits: Map<CallExpr, List<String>> = emptyMap(),
         namedArgHits: Map<CallExpr, List<Expr>> = emptyMap(),
-    ): String = generateUnits(listOf("" to file), dictHits, emptyMap(), consHits, dictSubHits, namedArgHits)
+        sugarHits: Map<CallExpr, List<Expr>> = emptyMap(),
+    ): String = generateUnits(listOf("" to file), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits)
 
     /** M8：全部模块合成一个 JS（顶层名字带模块前缀，根无前缀） */
     fun generateUnits(
@@ -75,12 +79,14 @@ class JsCodeGen {
         consHits: Map<CallExpr, String> = emptyMap(),
         dictSubHits: Map<CallExpr, List<String>> = emptyMap(),
         namedArgHits: Map<CallExpr, List<Expr>> = emptyMap(),
+        sugarHits: Map<CallExpr, List<Expr>> = emptyMap(),
     ): String {
         dicts = dictHits
         this.moduleHits = moduleHits
         consDicts = consHits
         dictSubArgs = dictSubHits
         namedArgOrders = namedArgHits
+        sugarArgs = sugarHits
         currentPrefix = ""
         structFields.clear()
         for ((_, fa) in units) for (e in fa.entries) if (e is DeclEntry) {
@@ -335,15 +341,17 @@ class JsCodeGen {
         line("}")
     }
 
-    /** 块体展平进真正的 JS 函数/对象方法：语句逐条发射；尾表达式转 return；
-     *  以显式 return（或全路径发散return 的尾 if）收尾时不补 return null（决策 75） */
+    /** 块体展平进真正的 JS 函数/对象方法：语句逐条发射。
+     *  v1.1 Kotlin 化：块式函数**不隐式返回尾表达式**——返回值只来自显式 return；
+     *  无 return（且省略/Null 返回类型）时补 `return null`。具名函数显式返回类型时，
+     *  checker 已强制全路径 return（diverges），故非发散尾表达式只按语句发射、值丢弃。 */
     private fun genBlockBody(body: BlockExpr) {
         val tail = body.stmts.lastOrNull() as? ExprStmt
         for (s in body.stmts) if (s !== tail) genStmt(s)
         when {
             tail == null -> if (body.stmts.lastOrNull() !is ReturnStmt) line("return null;")
             diverges(tail.expr) -> genStmt(tail)   // 尾 if 全路径 return：展平，各分支已 return
-            else -> line("return ${expr(tail.expr)};")
+            else -> { genStmt(tail); line("return null;") }   // 尾表达式按语句发射（值丢弃）
         }
     }
 
@@ -415,7 +423,12 @@ class JsCodeGen {
         is FieldExpr -> moduleHits[e] ?: "${expr(e.target)}.${mangle(e.name)}"   // P0：跨模块限定引用走留痕名
         is CallExpr -> call(e)
         is InstExpr -> expr(e.target)   // 实例化/供给整体擦除，只留被调名
-        is LambdaExpr -> "(${e.params.joinToString(", ") { mangle(it) }}) => ${expr(e.body)}"
+        is LambdaExpr -> {
+            val ps = e.params.joinToString(", ") { mangle(it) }
+            // v1.1：lambda 体可为语句块（含 return/var/if）；块体默认返回最后表达式
+            if (e.body is BlockExpr) "($ps) => ${lambdaBodyStr(e.body)}"
+            else "($ps) => ${expr(e.body)}"
+        }
         is TupleExpr -> "[" + e.items.joinToString(", ") { expr(it) } + "]"   // 元组→JS 数组（决策 61）
         is StructCtorExpr -> structCtorJs(e)   // O3（决策 69）：命名字段构造→位置实参工厂调用
         is BlockExpr -> blockIIFE(e)
@@ -569,7 +582,7 @@ class JsCodeGen {
             return "$dn.${mangle(name)}(${all.joinToString(", ")})"
         }
         // P8（决策 84）：命名参数调用点用检查后规范化的实参列表（按形参声明顺序重排）
-        val genArgs: List<Expr> = namedArgOrders[e] ?: e.args
+        val genArgs: List<Expr> = sugarArgs[e] ?: (namedArgOrders[e] ?: e.args)
         val args = genArgs.joinToString(", ") { if (it is VarExpr) varExprJs(it) else expr(it) }
         val calleeJs = when (callee) {
             is NameRef -> moduleHits[callee] ?: mangle(callee.name)
@@ -621,6 +634,47 @@ class JsCodeGen {
         for (s in e.stmts) if (s !== tail) { val t = stmtStr(s); if (t.isNotEmpty()) lines += t }
         val ret = if (tail != null) "return ${expr(tail.expr)};" else "return null;"
         return "(() => {\n" + (lines + ret).joinToString("\n") { "  $it" } + "\n})()"
+    }
+
+    // ---------- v1.1：lambda 语句体（Kotlin 风格：块内可 return / var / 嵌套 if） ----------
+
+    /** lambda 块体 → JS 箭头函数体 `{ … }`：尾表达式转 return（lambda 默认返回最后表达式） */
+    private fun lambdaBodyStr(body: BlockExpr): String {
+        val lines = ArrayList<String>()
+        for (i in body.stmts.indices) {
+            val s = body.stmts[i]
+            val isTail = i == body.stmts.lastIndex
+            when {
+                isTail && s is ExprStmt && !diverges(s.expr) -> lines += "  return ${expr(s.expr)};"
+                isTail && s is ExprStmt && diverges(s.expr) -> lambdaStmtToLines(s, lines, "  ")
+                isTail && s is ReturnStmt -> lambdaStmtToLines(s, lines, "  ")
+                else -> lambdaStmtToLines(s, lines, "  ")
+            }
+        }
+        return if (lines.isEmpty()) "{}" else "{\n" + lines.joinToString("\n") + "\n}"
+    }
+
+    /** lambda 体内单条语句 → 缩进行（if 展平为真语句，return 原样发射） */
+    private fun lambdaStmtToLines(s: Stmt, out: MutableList<String>, ind: String) {
+        when (s) {
+            is VarStmt -> out += "$ind${if ("mut" in s.annotations) "let" else "const"} ${mangle(s.name)} = ${expr(s.value)};"
+            is AssignStmt -> out += "$ind${expr(s.target)} = ${expr(s.value)};"
+            is ExprStmt -> if (s.expr is IfExpr) lambdaIfLines(s.expr as IfExpr, out, ind) else out += "$ind${expr(s.expr)};"
+            is ReturnStmt -> out += "$ind${if (s.expr != null) "return ${expr(s.expr)};" else "return;"}"
+            is UncheckedStmt -> lambdaStmtToLines(s.inner, out, ind)
+            is AxiomStmt, is ByStmt -> {}
+        }
+    }
+
+    /** lambda 体内全路径 return 的 if：展平为真 JS if（分支 return 穿透 lambda） */
+    private fun lambdaIfLines(e: IfExpr, out: MutableList<String>, ind: String) {
+        out += "$ind if (${expr(e.cond)}) {"
+        e.thenBlock.stmts.forEach { lambdaStmtToLines(it, out, "$ind  ") }
+        if (e.elseBlock != null) {
+            out += "$ind} else {"
+            e.elseBlock.stmts.forEach { lambdaStmtToLines(it, out, "$ind  ") }
+        }
+        out += "$ind}"
     }
 
     private fun whenExpr(e: WhenExpr): String {

@@ -24,7 +24,7 @@ class E2ETest {
         val chk = Checker(ast)
         val bag = chk.run()
         assertEquals(false, bag.hasError, "语义检查应通过，实际:\n${bag.report()}")
-        val js = JsCodeGen().generate(ast, chk.dictHits, chk.consHits, chk.dictSubHits, chk.namedArgOrder)
+        val js = JsCodeGen().generate(ast, chk.dictHits, chk.moduleHits, chk.consHits, chk.dictSubHits, chk.namedArgOrder, chk.methodSugarArgs)
         val f = File.createTempFile("subl-e2e-", ".js")
         f.writeText(js)
         return try {
@@ -77,7 +77,7 @@ class E2ETest {
     @Test
     fun `if-else 与负数`() {
         assumeTrue(nodeAvailable())
-        val src = "fun sign(n: Int): Str = if n < 0 { \"neg\" } else { \"pos\" }\n" +
+        val src = "fun sign(n: Int): Str = if (n < 0) { \"neg\" } else { \"pos\" }\n" +
             "fun main() { unchecked print(sign(-1))\nunchecked print(sign(1)) }"
         assertEquals("neg\npos", run(src))
     }
@@ -138,7 +138,7 @@ class E2ETest {
     @Test
     fun `字符串与 lambda`() {
         assumeTrue(nodeAvailable())
-        val src = "fun main() { var id = \\(x) => x\nunchecked print(id(\"hi\")) }"
+        val src = "fun main() { var id = { x -> x }\nunchecked print(id(\"hi\")) }"
         assertEquals("hi", run(src))
     }
 
@@ -146,8 +146,8 @@ class E2ETest {
     fun `提前return - 语句位if分支端到端`() {
         assumeTrue(nodeAvailable())
         // 决策 75：语句位 if 分支里的 return 展平成真正的 JS，直接退出函数
-        val src = "fun classify(n: Nat): Str {\n  if n > 100 { return \"big\" }\n" +
-            "  if n > 10 { return \"mid\" }\n  return \"small\"\n}\n" +
+        val src = "fun classify(n: Nat): Str {\n  if (n > 100) { return \"big\" }\n" +
+            "  if (n > 10) { return \"mid\" }\n  return \"small\"\n}\n" +
             "fun main() { unchecked print(classify(200))\nunchecked print(classify(50))\nunchecked print(classify(3)) }"
         assertEquals("big\nmid\nsmall", run(src))
     }
@@ -155,7 +155,7 @@ class E2ETest {
     @Test
     fun `提前return - 尾if全路径分支端到端`() {
         assumeTrue(nodeAvailable())
-        val src = "fun parity(n: Nat): Str { if n > 0 { return \"pos\" } else { return \"nonpos\" } }\n" +
+        val src = "fun parity(n: Nat): Str { if (n > 0) { return \"pos\" } else { return \"nonpos\" } }\n" +
             "fun main() { unchecked print(parity(1))\nunchecked print(parity(0 - 1)) }"
         assertEquals("pos\nnonpos", run(src))
     }

@@ -1,15 +1,16 @@
 // ============================================================
-// Sublimation（凝华）语言 v1.0 特性展示
+// Sublimation（凝华）语言 v1.1 特性展示（Kotlin 风格语法）
 // 模块结构：show/ 为编译入口根目录（根模块 = show.subl），
-//   show/stdlib/ 为自动挂载的标准库（P2 决策 78：目录下存在 stdlib/ 即隐式挂载）。
+//   show/stdlib/ 为自动挂载的标准库。
 // 运行：show\run.bat（compile show 目录 -> show.js，运行并输出 show.log）
 // 覆盖特性：
-//   模块系统：隐式挂载 stdlib + 跨模块限定调用（stdlib.map/range/fold）
-//   集合：List + map / filter / fold / range / listLength（stdlib）
+//   v1.1 语法：if (cond) 强制括号 / a == b 中缀 / { x -> } lambda + 尾随 lambda /
+//              表达式体返回类型推导 / 块式显式 return / 接收者风格 xs.map {}
+//   集合 API：List / Set / Map + map / flatMap / filter / forEach / fold / size
 //   型类：class Show + impl（Grade/Student）+ 字典自动推理
-//   模式：when 解构 / 守卫 / else 兜底
-//   值：Str / Nat / Rat / 元组 / 插值 / 命名参数 / lambda / 高阶
-//   可靠：结构递归（P9 自动停机）；浮点 Rat（P10）；命题前后件（自动供给）
+//   模式：when 解构 / 守卫 / else 兜底；元组
+//   值：Str / Nat / Rat / 插值 / 命名参数 / 高阶
+//   可靠：结构递归（P9 自动停机）；命题前后件（自动供给）
 // ============================================================
 
 // ---------- 1. 学生成绩（结构体 + 列表 + 高阶） ----------
@@ -24,8 +25,9 @@ fun gradeOf(n: Rat): Grade = when(n) {
 }
 
 fun avgOf(s: Student): Rat {
-    var sum = stdlib.fold(0, \(x, acc) => acc + x, s.scores)
-    if ==(stdlib.listLength(s.scores), 0) { 0.0 } else { sum / stdlib.listLength(s.scores) }
+    var n = s.scores.listLength()
+    if (n == 0) { return 0.0 }
+    return s.scores.fold(0) { x, acc -> acc + x } / n
 }
 
 // ---------- 2. 类型类 Show（自有类型 impl + 字典自动推理） ----------
@@ -33,13 +35,14 @@ class Show[T] { fun show(): Str }
 impl Show for Grade { fun show(): Str = when(self) { A() -> "A"; B() -> "B"; C() -> "C"; D() -> "D"; _ -> "?" } }
 impl Show for Student { fun show(): Str = concat(self.name, concat(" 分数: [", concat(showNums(self.scores), "]"))) }
 
-// Nat 列表 -> 逗号串（用 stdlib.fold 拼装，不跨模块解构 List）
-fun showNums(xs: List[Nat]): Str = stdlib.fold("", \(x, acc) =>
-    if ==(acc, "") { toStr(x) } else { concat(acc, concat(",", toStr(x))) }, xs)
+// Nat 列表 -> 逗号串（接收者式 fold + 尾随 lambda）
+fun showNums(xs: List[Nat]): Str = xs.fold("") { x, acc ->
+    if (acc == "") { toStr(x) } else { concat(acc, concat(",", toStr(x))) }
+}
 
 // ---------- 3. 元组 / 解构 / 命名参数 ----------
 fun minmax2(p: (Nat, Nat)): (Nat, Nat) = when(p) {
-    (a, b) -> if a < b { (a, b) } else { (b, a) }
+    (a, b) -> if (a < b) { (a, b) } else { (b, a) }
     _ -> p
 }
 fun greet(name: Str, exclaim: Str): Str = concat("Hello, ", concat(name, exclaim))
@@ -52,23 +55,32 @@ fun takeP()<p> : Null{}
 @unpure
 fun main() {
     var xs = stdlib.range(1, 5)
-    print("range(1,5) 长度 = ${stdlib.listLength(xs)}")
-    var doubled = stdlib.map(\(x) => x * 2, xs)
-    print("stdlib.map 双倍 = ${showNums(doubled)}")
-    var evens = stdlib.filter(\(x) => ==(x % 2, 0), xs)
-    print("stdlib.filter 偶数 = ${showNums(evens)}")
-    var total = stdlib.fold(0, \(x, acc) => acc + x, xs)
-    print("stdlib.fold 求和 = $total")
+    print("range(1,5) 长度 = ${xs.listLength()}")
+    var doubled = xs.map { x -> x * 2 }
+    print("map 双倍 = ${showNums(doubled)}")
+    var evens = xs.filter { x -> x % 2 == 0 }
+    print("filter 偶数 = ${showNums(evens)}")
+    var total = xs.fold(0) { x, acc -> acc + x }
+    print("fold 求和 = $total")
     var s = Student("Alice", stdlib.Cons(90, stdlib.Cons(80, stdlib.Cons(70, stdlib.Nil()))))
     print("学生 = ${s.show()}")
     print("平均分 = ${avgOf(s)}  评级 = ${gradeOf(avgOf(s)).show()}")
     var mm = minmax2((4, 2))
-    when(mm) { 
+    when(mm) {
         (lo, hi) -> print("元组解构 minmax = $lo..$hi")
-         _ -> print("?") 
+        _ -> print("?")
     }
     var g = greet(exclaim = "!", name = "Bob")
     print("命名参数乱序 = $g")
+    // v1.1 新特性：Set / Map（独立枚举）+ 方法式调用（@mut 声明可重绑定）
+    @mut var grades: Set[Nat] = stdlib.setEmpty()
+    grades = grades.add(3)
+    grades = grades.add(7)
+    print("集合 contains(3) = ${grades.contains(3)}  size = ${grades.setSize()}")
+    @mut var phone: Map[Str, Nat] = stdlib.mapEmpty()
+    phone = phone.put("Alice", 12345)
+    var alice = phone.get("Alice").getOrElse(0)
+    print("表 get(Alice) = $alice  size = ${phone.mapSize()}")
     giveP()
     takeP()
     print("命题供给 = OK")

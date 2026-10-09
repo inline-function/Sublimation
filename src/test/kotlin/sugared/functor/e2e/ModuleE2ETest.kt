@@ -145,8 +145,9 @@ class ModuleE2ETest {
         assumeTrue(nodeAvailable())
         val std = File("stdlib/list.subl").readText()
         val main = "@unpure fun main() {\n" +
-            "print(stdlib.listLength(stdlib.map(\\(x) => x + 1, stdlib.Cons(1, stdlib.Cons(2, stdlib.Nil())))))\n" +
-            "print(stdlib.fold(0, \\(x, acc) => acc + x, stdlib.map(\\(x) => x + 1, stdlib.Cons(1, stdlib.Cons(2, stdlib.Nil())))))\n" +
+            "var xs = stdlib.Cons(1, stdlib.Cons(2, stdlib.Nil()))\n" +
+            "print(xs.map({ x -> x + 1 }).listLength())\n" +
+            "print(xs.map({ x -> x + 1 }).fold(0) { x, acc -> acc + x })\n" +
             "}"
         assertEquals("2\n5", runTree(mapOf("stdlib/list.subl" to std, "main.subl" to main)))
     }
@@ -156,7 +157,8 @@ class ModuleE2ETest {
         assumeTrue(nodeAvailable())
         val std = File("stdlib/list.subl").readText()
         val main = "@unpure fun main() {\n" +
-            "print(stdlib.fold(0, \\(x, acc) => acc + x, stdlib.map(\\(x) => x * x, stdlib.range(1, 11))))\n" +
+            "var xs = stdlib.range(1, 11)\n" +
+            "print(xs.map({ x -> x * x }).fold(0) { x, acc -> acc + x })\n" +
             "}"
         assertEquals("385", runTree(mapOf("stdlib/list.subl" to std, "main.subl" to main)))
     }
@@ -247,7 +249,7 @@ class ModuleE2ETest {
         val res = File("stdlib/result.subl").readText()
         // mapResult 的 U 由 lambda 反推（点号方法 x.length），unwrapOr 消费——嵌套泛型调用即 §7.3 用法
         val main = "@unpure fun main() {\nwriteFile(\"p5-mr.txt\", \"hello!\")\n" +
-            "var r = stdlib.mapResult(\\(x) => x.length, readFile(\"p5-mr.txt\"))\n" +
+            "var r = stdlib.mapResult(readFile(\"p5-mr.txt\"), { x -> x.length })\n" +
             "print(stdlib.unwrapOr(r, 0))\n}"
         try {
             assertEquals("6", runTree(mapOf(
@@ -264,7 +266,7 @@ class ModuleE2ETest {
         // 约束 T: Show——类型参数约束经字典槽透传（§8.2：f 的 JS 签名带 d_Show_T 隐藏首参）
         val main = "class Show[T] { fun show(): Str }\n" +
             "impl Show for Nat { fun show(): Str = toStr(self) }\n" +
-            "fun showAll[T: Show](xs: List[T]): Str = stdlib.fold(\"\", \\(x, acc) => acc + x.show(), xs)\n" +
+            "fun showAll[T: Show](xs: List[T]): Str = xs.fold(\"\") { x, acc -> acc + x.show() }\n" +
             "@unpure fun main() {\n" +
             "print(showAll(stdlib.Cons(1, stdlib.Cons(2, stdlib.Nil()))))\n}"
         assertEquals("12", runTree(mapOf("stdlib/list.subl" to std, "main.subl" to main)))
@@ -276,7 +278,7 @@ class ModuleE2ETest {
         val std = File("stdlib/list.subl").readText()
         val main = "class Show[T] { fun show(): Str }\n" +
             "impl Show for Str { fun show(): Str = self }\n" +
-            "fun printAll[T: Show](xs: List[T]): Str = stdlib.fold(\"\", \\(x, acc) => acc + x.show(), xs)\n" +
+            "fun printAll[T: Show](xs: List[T]): Str = xs.fold(\"\") { x, acc -> acc + x.show() }\n" +
             "@unpure fun main() {\n" +
             "print(printAll(stdlib.Cons(\"x\", stdlib.Nil())))\n}"
         assertEquals("x", runTree(mapOf("stdlib/list.subl" to std, "main.subl" to main)))

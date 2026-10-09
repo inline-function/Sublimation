@@ -72,7 +72,7 @@ fun main(args: Array<String>) {
                 val out = bag.report(includeSupplement = verbose)
                 if (out.isNotEmpty()) System.err.println(out)
                 if (bag.hasError) { System.err.println("[错误] 语义检查未通过，拒绝生成 JS"); exitProcess(1) }
-                val js = JsCodeGen().generate(ast, chk.dictHits, chk.consHits, chk.dictSubHits, chk.namedArgOrder)   // 单文件：约束槽/字典实参/命名参数留痕同源
+                val js = JsCodeGen().generate(ast, chk.dictHits, chk.moduleHits, chk.consHits, chk.dictSubHits, chk.namedArgOrder, chk.methodSugarArgs)   // 单文件：约束槽/字典实参/命名参数/方法糖留痕同源
                 val oi = args.indexOf("-o")
                 if (oi >= 0 && oi + 1 < args.size) {
                     val target = File(args[oi + 1])

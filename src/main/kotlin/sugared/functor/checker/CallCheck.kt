@@ -42,7 +42,7 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
     // 方法路径上自由形态的首实参是 self，剩余实参才是形参表。
     // 自由形态仅在"是方法名且不是具名函数/构造子/结构体"时成立——具名函数优先（现行解析顺序）。
     // P0（M6，impl 也要挂载）：方法名判定跨可见模块（含兄弟/挂载模块的 impl），不再只看本模块。
-    val fieldCallee: FieldExpr? = (c.callee as? FieldExpr)?.takeIf { isMethodName(it.name) }
+    val fieldCallee: FieldExpr? = (c.callee as? FieldExpr)?.takeIf { isMethodName(it.name) || hasFreeFun(it.name) }
     val freeName = (c.callee as? NameRef)?.name
         ?: ((c.callee as? InstExpr)?.target as? NameRef)?.name
     val isFreeFormMethod = fieldCallee == null && freeName != null &&
@@ -77,6 +77,15 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
     syms.structs[name]?.let { st -> return checkStructCall(st, name, c, argTypes, modulePath) }
     }
 
+    // v1.1 集合方法糖提前路径：`o.m(args)` 且 m 是「同名自由函数」（非 typeclass 方法名）→ 脱糖为 m(o, args)。
+    // 自由函数名（map/filter/forEach…）不进 isMethodName 分支，须在 fn 解析链（含 E-UNBOUND 回退）之前截获。
+    if (fieldCallee != null && !isMethodName(fieldCallee.name)) {
+        val sugarFn = methodSugar(fieldCallee.name, selfT, fieldCallee, c)
+        if (sugarFn != null)
+            return checkFnCall(sugarFn, fieldCallee.name, c, f, pure,
+                methodSugarArgs[c]!!, listOfNotNull(selfT) + argTypes, isMethodPath = true)
+    }
+
     val fn: FunDecl = (if (fieldCallee != null) null else syms.findFun(name))   // O2：点号形态直指型类方法，不被同名自由函数截胡
         ?: run {
             // 型类方法调用（决策 60，T5；O2 双形态）：按 self 类型解析字典，按调用点留痕给 codegen
@@ -99,9 +108,14 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
                     return sig?.retType ?: syntheticT("约束方法${consSlot.first}.$name")
                 }
                 val res = resolveDict(name, selfT, if (moduleTree == null) null else visiblePaths)
-                    ?: return syntheticT("无实例$name")
-                dictHits[c] = res.dictName
-                res.entry.fn
+                if (res != null) {
+                    dictHits[c] = res.dictName
+                    res.entry.fn
+                } else {
+                    // v1.1 集合方法糖：`o.m(args)` 且 m 是同名自由函数（首参类型匹配接收者）→ 脱糖为 m(o, args)
+                    val sugarFn = methodSugar(name, selfT, fieldCallee, c)
+                    if (sugarFn != null) sugarFn else return syntheticT("无实例$name")
+                }
             } else null
         }
         ?: run {
@@ -112,7 +126,54 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
 
     if (!isMethodPath && syms.funs.containsKey(name))
         moduleHits[c.callee] = moduleJsName(modulePath, name)   // P0：同模块全局调用按模块前缀留痕；内建（syms.funs 之外）不 mangle
+    // v1.1 方法糖：接收者前置重排 `xs.map(f)` → `map(xs, f)`（实参类型首项为接收者类型）
+    val sugar = methodSugarArgs[c]
+    if (sugar != null)
+        return checkFnCall(fn, name, c, f, pure, sugar, listOfNotNull(selfT) + argTypes, isMethodPath)
     return checkFnCall(fn, name, c, f, pure, effArgs, effTypes, isMethodPath)
+}
+
+// ============ v1.1 集合方法糖：`o.m(args)` → 同名自由函数 m(o, args) ============
+
+/** 方法糖命中：找「同名自由函数」（本模块 / 内置 / 可见模块含 stdlib），且其**第一个形参**类型与接收者匹配。
+ *  命中后登记实参重排（methodSugarArgs）与跨模块 JS 名（moduleHits），返回该函数供正常调用检查。 */
+private fun Checker.methodSugar(name: String, selfT: Type?, fieldCallee: FieldExpr?, c: CallExpr): FunDecl? {
+    if (fieldCallee == null || selfT == null) return null
+    val (fn, mod) = findCollectionMethod(name, selfT) ?: return null
+    methodSugarArgs[c] = listOf(fieldCallee.target) + c.args
+    moduleHits[c.callee] = moduleJsName(mod, name)
+    return fn
+}
+
+/** 在「本模块 + 内置 + 可见模块（含 stdlib）」中找同名自由函数且首参类型匹配接收者；返回 (函数, 模块路径)。 */
+private fun Checker.findCollectionMethod(name: String, selfT: Type): Pair<FunDecl, String>? {
+    val cands = ArrayList<Pair<FunDecl, String>>()
+    syms.findFun(name)?.let { cands += it to "" }
+    if (moduleTree != null) visiblePaths.forEach { p ->
+        allSymbols[p]?.findFun(name)?.let { cands += it to p }
+    }
+    if (cands.isEmpty()) return null
+    return cands.firstOrNull { (fn, _) ->
+        val p0 = fn.params.firstOrNull()?.type ?: return@firstOrNull false
+        paramMatchesRecv(syms.expand(p0), selfT)
+    }?.takeIf { it.first != null }
+}
+
+/** 首参（want）与接收者（self）类型匹配：同基名；类型实参递归（List[T] vs List[Nat]：T 是类型参数则通配）
+ *  v1.1：别名先展开（Set[T]/Map[K,V] 都是 List 别名，方法路由按展开后的结构匹配）；
+ *  want 侧未解析裸名（类型参数，非声明类型/内建/synthetic）视为通配 */
+private fun Checker.paramMatchesRecv(want0: Type, self0: Type): Boolean {
+    val want = syms.expand(want0); val self = syms.expand(self0)
+    if (want is FunType || self is FunType) return false
+    if (want is NamedType && want.args.isEmpty() && want.name !in BASE_TYPES && want.name !in syms.enums &&
+        want.name !in syms.structs && !want.isSynthetic()) return true
+    fun base(t: Type): String = (t as? NamedType)?.name ?: t.render()
+    if (base(want) != base(self)) return false
+    val wa = (want as? NamedType)?.args ?: emptyList()
+    val sa = (self as? NamedType)?.args ?: emptyList()
+    if (wa.isEmpty()) return true
+    if (sa.size != wa.size) return false
+    return sa.zip(wa).all { (s, w) -> w.isSynthetic() || paramMatchesRecv(w, s) }
 }
 
 // ============ P0：跨模块限定调用与公共检查段 ============
@@ -125,9 +186,17 @@ private fun Checker.isMethodName(n: String): Boolean =
             s != null && (s.methods.containsKey(n) || n in s.traitMethods)
         })
 
+/** v1.1：是否存在同名自由函数（本模块 / 内置 / 可见模块含 stdlib）——集合方法糖候选 */
+private fun Checker.hasFreeFun(n: String): Boolean =
+    syms.findFun(n) != null ||
+        (moduleTree != null && visiblePaths.any { allSymbols[it]?.findFun(n) != null })
+
 /** 构造子调用公共段（决策 46/60，T5）：类型参数由实参推断；限定/普通共用。 */
 internal fun Checker.checkCtorCall(ci: CtorInfo, name: String, c: CallExpr, argTypes: List<Type>, modPath: String): Type {
-    moduleHits[c.callee] = moduleJsName(modPath, name)
+    // 内置 prelude 构造子（Some/None/null/true/false）在 JS 里是根作用域函数/字面量，无模块前缀——
+    // 否则 stdlib 模块内 `Some(x)` 会被错生成成 `stdlib__Some`（P0 限制：多模块同名构造子取末者）
+    if (name !in setOf("Some", "None", "null", "true", "false"))
+        moduleHits[c.callee] = moduleJsName(modPath, name)
     // 先算类型参数名与实参推断：字段类型是类型参数（T）时由实参推断，不参与相等检查
     val tps = ci.enum.theory.filterIsInstance<TypeParam>().map { it.name }
     val inferred = LinkedHashMap<String, Type>()
@@ -325,7 +394,7 @@ internal fun Checker.checkFnCall(
         // （T 未具体化，tsub 解不出具体字典），直接把递归栈内当前函数的约束槽透传给递归调用。
         dictSubHits[c] = constraintTps.map { "d_${it.constraint}_${it.name}" }
     }
-    return (fn.retType ?: namedT("Null", emptyList())).substT(tsub)
+    return (fn.retType ?: syms.inferredRets[fn.name] ?: namedT("Null", emptyList())).substT(tsub)
 }
 
 /** 显式供给实参（实例化项，限定/普通共用） */

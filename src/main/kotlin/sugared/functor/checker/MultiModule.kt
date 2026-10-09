@@ -76,13 +76,15 @@ class MultiModule(root: File) {
         val consHits = IdentityHashMap<CallExpr, String>()
         val dictSubHits = IdentityHashMap<CallExpr, List<String>>()
         val namedArgHits = IdentityHashMap<CallExpr, List<Expr>>()
+        val sugarHits = IdentityHashMap<CallExpr, List<Expr>>()
         for (chk in checkers.values) {
             dictHits.putAll(chk.dictHits)
             moduleHits.putAll(chk.moduleHits)
             consHits.putAll(chk.consHits)
             dictSubHits.putAll(chk.dictSubHits)
             namedArgHits.putAll(chk.namedArgOrder)
+            sugarHits.putAll(chk.methodSugarArgs)
         }
-        return JsCodeGen().generateUnits(asts.toList(), dictHits, moduleHits, consHits, dictSubHits, namedArgHits)
+        return JsCodeGen().generateUnits(asts.toList(), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits)
     }
 }

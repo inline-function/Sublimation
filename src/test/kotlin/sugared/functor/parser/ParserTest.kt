@@ -120,8 +120,8 @@ class ParserTest {
     }
 
     @Test
-    fun `lambda 反斜杠与大括号两形态`() {
-        val st = stmtsOf("var f1 = \\(x) => x\nvar f2 = { y => y }")
+    fun `lambda 大括号两形态`() {
+        val st = stmtsOf("var f1 = { x -> x }\nvar f2 = { y => y }")
         assertTrue((st[0] as VarStmt).value is LambdaExpr)
         assertTrue((st[1] as VarStmt).value is LambdaExpr)
     }
@@ -134,7 +134,7 @@ class ParserTest {
 
     @Test
     fun `if 表达式`() {
-        assertTrue((stmtsOf("var z = if true() { 1 } else { 2 }")[0] as VarStmt).value is IfExpr)
+        assertTrue((stmtsOf("var z = if (true()) { 1 } else { 2 }")[0] as VarStmt).value is IfExpr)
     }
 
     @Test
@@ -248,7 +248,7 @@ class ParserTest {
 
     @Test
     fun `return 语句与带值形态解析`() {
-        val st = stmtsOf("if n > 0 { return 1 }\nreturn")
+        val st = stmtsOf("if (n > 0) { return 1 }\nreturn")
         val ifStmt = (st[0] as ExprStmt).expr as IfExpr
         assertTrue((ifStmt.thenBlock.stmts[0] as ReturnStmt).expr != null)   // return 1
         assertTrue((st[1] as ReturnStmt).expr == null)                        // 裸 return

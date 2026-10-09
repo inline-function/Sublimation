@@ -21,10 +21,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
 
     companion object {
         // 指导思路：`=` 命题等式、`:` 类型测（均可中缀）；`==` `!=` 是 Bool 函数，
-        // 禁止中缀（防与伴生命题 f<a,b> 混淆），仅 SymbolCallExpr 前缀路径。
+        // v1.1 Kotlin 化：EQ/NEQ 允许中缀（a == b / a != b，值相等），前缀 ==(a,b) 仍保留。
         val binops = setOf(
             Kind.PLUS, Kind.MINUS, Kind.STAR, Kind.SLASH, Kind.PERCENT, Kind.ASSIGN, Kind.COLON,
             Kind.LE, Kind.GE, Kind.AMP, Kind.PIPE, Kind.ARROW, Kind.IFF,
+            Kind.EQ, Kind.NEQ,
             Kind.LAND, Kind.LOR, Kind.IMPLIES, Kind.EQUIV,
             Kind.U_NEQ, Kind.U_IMPLIES, Kind.U_IFF, Kind.U_AND, Kind.U_OR,
         )
@@ -303,14 +304,20 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         return ExprStmt(parseExpr(angle = false))
     }
 
-    /** `return e` / 裸 `return`（第四轮）：裸形判据=下一 token 是块尾/分隔/文件尾 */
+    /** `return e` / 裸 `return` / `return@label`（Kotlin 标签返回，v1.1）：
+     *  裸形判据=下一 token 是块尾/分隔/文件尾；`@` 紧贴 `return` 后时消费标签名。 */
     private fun parseReturn(): Stmt {
         val t = next()   // 消费 return
-        val pos = "${t.line}:${t.col}"
+        val atPos = "${t.line}:${t.col}"
+        var label: String? = null
+        if (peek(Kind.AT)) {
+            val atTk = cur()
+            if (!atTk.precededBySpace) { this.pos++; label = at(Kind.IDENT).text }
+        }
         val nx = cur()
         val bare = nx.kind == Kind.RBRACE || nx.kind == Kind.SEMI || nx.kind == Kind.EOF
-        return if (bare) ReturnStmt(null, pos)
-        else ReturnStmt(parseExpr(angle = false), pos)
+        return if (bare || label != null) ReturnStmt(null, atPos, label)
+        else ReturnStmt(parseExpr(angle = false), atPos)
     }
 
     private fun parseUnchecked(): Stmt {
@@ -534,7 +541,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                     try { e = InstExpr(e, parseAngleList()) }
                     catch (f: ParseFailure) { pos = save; break }
                 }
-                t.kind == Kind.LBRACE && braceIsLambda(pos) -> e = CallExpr(e, listOf(parseBraceLambda()))
+                t.kind == Kind.LBRACE && braceIsLambda(pos) -> {
+                    // v1.1 尾随 lambda 语法糖（Kotlin）：`f(a) { x -> … }` 追加为**最后**位置实参
+                    val lam = parseBraceLambda()
+                    e = if (e is CallExpr) e.copy(args = e.args + lam) else CallExpr(e, listOf(lam))
+                }
                 else -> break
             }
         }
@@ -647,7 +658,6 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                     TupleExpr(items, "${t.line}:${t.col}")
                 } else { at(Kind.RPAREN); first }
             }
-            t.kind == Kind.BACKSLASH -> parseSlashLambda()
             t.kind == Kind.LBRACE && braceIsLambda(pos) -> parseBraceLambda()
             t.kind == Kind.VAR -> parseVarExpr(emptyList())
             t.kind == Kind.AT -> { val a = parseAnnotations(); if (peek(Kind.VAR)) parseVarExpr(a) else throw ParseFailure(fileName, cur(), "var") }
@@ -688,11 +698,19 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
 
     private fun parseIf(): Expr {
         at(Kind.IF)
+        // v1.1 Kotlin 化：if 条件必须用 ()；then/else 分支可单表达式（不带 {}）或块
+        at(Kind.LPAREN)
         val cond = parseExpr(angle = false)
-        val thenB = parseBlock()
-        val elseB = if (peek(Kind.ELSE)) { pos++; parseBlock() } else null
+        at(Kind.RPAREN)
+        val thenB = parseBranchBlock()
+        val elseB = if (peek(Kind.ELSE)) { pos++; parseBranchBlock() } else null
         return IfExpr(cond, thenB, elseB)
     }
+
+    /** if/when 分支体：`{ 语句… }` 块，或单表达式（自动包装成块，值语义由调用位决定） */
+    private fun parseBranchBlock(): BlockExpr =
+        if (peek(Kind.LBRACE)) parseBlock()
+        else BlockExpr(listOf(ExprStmt(parseExpr(angle = false))))
 
     /**
      * when 表达式（决策 29/46：真模式匹配）。
@@ -795,53 +813,54 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
     private fun parseBranchBody(): Expr =
         if (peek(Kind.LBRACE)) parseBlock() else parseExpr(angle = false)
 
-    private fun parseSlashLambda(): Expr {
-        at(Kind.BACKSLASH)
-        at(Kind.LPAREN)
-        val ps = ArrayList<String>()
-        if (!peek(Kind.RPAREN)) {
-            while (true) {
-                ps += nameToken()
-                if (peek(Kind.COMMA)) { pos++; continue }
-                break
-            }
-        }
-        at(Kind.RPAREN)
-        at(Kind.DARROW)
-        return LambdaExpr(ps, parseExpr(angle = false))
-    }
+    /*************************** v1.1：旧 `\(x) =>` lambda 已移除（BACKSLASH 不再解析） ***************************/
 
+    /** v1.1 Kotlin 化 lambda：`{ a, b -> 语句…; 末表达式 }`。
+     *  体支持语句（var/return/赋值/多句），末表达式为返回值；单表达式直接作为 lambda 体。 */
     private fun parseBraceLambda(): Expr {
         at(Kind.LBRACE)
         val ps = ArrayList<String>()
-        while (!peek(Kind.DARROW)) {
+        while (!peek(Kind.DARROW) && !peek(Kind.ARROW)) {
             ps += nameToken()
             if (peek(Kind.COMMA)) pos++
         }
-        at(Kind.DARROW)
-        val body = parseExpr(angle = false)
+        if (peek(Kind.DARROW)) at(Kind.DARROW) else at(Kind.ARROW)
+        val body = parseLambdaBody()
         at(Kind.RBRACE)
         return LambdaExpr(ps, body)
     }
 
+    /** lambda 体：语句序列（含 return/var/exprstmt）；仅单条语句且为表达式时退化为表达式体 */
+    private fun parseLambdaBody(): Expr {
+        val stmts = ArrayList<Stmt>()
+        while (!peek(Kind.RBRACE)) {
+            skipSemis()
+            if (peek(Kind.RBRACE)) break
+            stmts += parseStmt()
+        }
+        return if (stmts.size == 1 && stmts[0] is ExprStmt) (stmts[0] as ExprStmt).expr
+        else BlockExpr(stmts)
+    }
+
     /**
-     * 从大括号起点判断是否 lambda：深度 1 内首个 `=>` 之前**只允许名字与逗号**，
+     * 从大括号起点判断是否 lambda：深度 1 内首个 `=>`/`->` 之前**只允许名字与逗号**，
      * 且至少有一个名字。防 when 分支体 `{ 1 -> x }` 的分支箭头被误判为尾随 lambda。
      */
     private fun braceIsLambda(start: Int): Boolean {
         var depth = 0
         var j = start
-        var sawName = false
+        var sawBad = false   // 名字表里出现非名字/非逗号 token（如数字）即非 lambda
         while (j < toks.size) {
             val k = toks[j].kind
             when {
                 k == Kind.LBRACE -> depth++
                 k == Kind.RBRACE -> { depth--; if (depth == 0) return false }
-                k == Kind.DARROW -> return if (depth == 1) sawName else false
+                // 遇箭头：depth 1 且参数表仅由名字/逗号组成（可为空 → 零参 lambda `{ -> 7 }`）
+                k == Kind.DARROW || k == Kind.ARROW -> return if (depth == 1) !sawBad else false
                 k == Kind.EOF -> return false
-                depth == 1 && (k == Kind.IDENT || k == Kind.SYMBOL) -> sawName = true
+                depth == 1 && (k == Kind.IDENT || k == Kind.SYMBOL) -> {}
                 depth == 1 && k == Kind.COMMA -> {}
-                depth == 1 -> return false          // 名字表里混入任何其他 token 即非 lambda
+                depth == 1 -> sawBad = true   // 混入任何其他 token（如 `{ 1 -> x }` 的数字）即非 lambda
                 else -> {}
             }
             j++

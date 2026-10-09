@@ -157,6 +157,8 @@ class Symbols {
     val ctors = LinkedHashMap<String, CtorInfo>()
     val classes = LinkedHashMap<String, ClassDecl>()
     val funs = LinkedHashMap<String, FunDecl>()
+    /** v1.1：表达式体省略返回类型时的**推导**返回类型表（函数名 → 类型），供调用点查询 */
+    val inferredRets = LinkedHashMap<String, Type>()
     val methods = LinkedHashMap<String, MutableList<MethodEntry>>()
     /** 型类声明里的候选方法名（决策 60，T5）：无 impl 实例时用于把调用判为 E-NO-INSTANCE */
     val traitMethods = LinkedHashSet<String>()

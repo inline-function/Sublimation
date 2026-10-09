@@ -46,6 +46,9 @@ class Checker(
     internal val dictSubHits = java.util.IdentityHashMap<CallExpr, List<String>>()
     /** P8（决策 84）：命名参数规范化后的实参留痕（调用点实例 → 按形参声明顺序的实参列表），codegen 重排 */
     internal val namedArgOrder = java.util.IdentityHashMap<CallExpr, List<Expr>>()
+    /** v1.1 集合方法糖留痕：`xs.map(f)` → 同名自由函数 `map(xs, f)`（接收者前置）。
+     *  键 = 调用点实例，值 = 重排后的实参列表（接收者 + 原实参），codegen 依此生成。 */
+    internal val methodSugarArgs = java.util.IdentityHashMap<CallExpr, List<Expr>>()
     /** P9（决策 44，用户授权 Max 倾向）：递归停机上下文——当前函数名/形参名/解构血缘 */
     internal var curFunName: String? = null
     internal var curFunParams: List<String> = emptyList()
@@ -76,6 +79,8 @@ class Checker(
     internal var funRetType: Type? = null
     /** 体内是否出现过合法显式 return（出现则块类型核对让位给逐 return 核对） */
     internal var bodyHasReturn = false
+    /** v1.1：lambda 返回类型栈——非空即"当前在 lambda 体内"（lambda 内 return 合法，返回该 lambda） */
+    internal val lambdaRetTypes = ArrayList<Type>()
 
     /** P6（决策 82）：类型名在可见模块中可解析（跨模块类型引用——裸名 `List`/`Result` 在类型位置可用，
  *  不只是 `stdlib.List` 限定形态）。P5 只补了 when 模式的构造子/枚举，这里补类型位置本身。 */
@@ -225,26 +230,35 @@ class Checker(
         val postRewritten = fn.posts.map { rewriteDollarN(it, fn.params, "后件") }
         preRewritten.forEach { f.inject(PropLogic.fromExpr(it)) }
         if (fn.body == null) { paramTypes = savedParamTypes; return }
-        val rt = fn.retType?.let { syms.expand(it) } ?: namedT("Null", emptyList())
+        // v1.1 返回类型：显式标注取之；省略时——块体 = Null（Kotlin Unit 语义），表达式体 = 推导。
+        val rtDeclared = fn.retType?.let { syms.expand(it) }
+        val isExprBody = fn.body !is BlockExpr
+        val rt = rtDeclared ?: namedT("Null", emptyList())
         // 决策 75（flow 传播）：体是块 → 语句流 flow=true（体内及语句位 if/when 分支可 return）；
         // 单一表达式体无语句位，flow=false。
         val savedFunRet = funRetType; val savedHasRet = bodyHasReturn
         funRetType = rt; bodyHasReturn = false
         val t = checkExpr(fn.body, f, pure, flow = fn.body is BlockExpr)
         val sawRet = bodyHasReturn
+        // v1.1：表达式体省略返回类型 → 推导生效（供调用点反推；递归自引用时保留 Null/synthetic）
+        val effRt = if (fn.retType == null && isExprBody && !t.isSynthetic()) {
+            syms.inferredRets[fn.name] = t; t
+        } else rt
         funRetType = savedFunRet; bodyHasReturn = savedHasRet
-        if (sawRet) {
+        // v1.1 Kotlin 语义：显式非 Null 返回类型的**块式**函数必须所有路径 return（不再隐式返回尾表达式）
+        if (fn.body is BlockExpr && rtDeclared != null && rtDeclared.name != "Null" && !diverges(fn.body))
+            d.error("E-MISSING-RETURN", fn.body.pos,
+                "函数 ${fn.name} 声明返回 ${rtDeclared.render()}，块体未在所有路径 return（Kotlin 语义：请写 return，或改用 `= 表达式` 表达式体）")
+        else if (sawRet) {
             // 显式 return 路径：块尾类型核对让位，逐 return 已核对（E-RETURN-TYPE）；
             // 块本身按表达式用（如 `fun f(): Nat = { return 1 }` 的体）时值为 Null，不再要求与 rt 一致
         } else
-        if (t.isUnsealed() && rt.name != "Null")
+        if (t.isUnsealed() && effRt.name != "Null")
             d.error("E-NON-SEALED-MATCH", fn.body.pos,
-                "函数 ${fn.name} 作为表达式的模式匹配没有密封（声明返回 ${rt.render()}，但非穷尽 when 值类型为 Null）；补全分支或加 else")
-        else if (!t.isSynthetic() && !typeLooseEq(t, rt) &&
-            // Kotlin 的 Unit 语义（第4轮返工补）：Null 函数的**块体**尾表达式是语句，值被丢弃
-            //（`fun main() { get7() }` 合法）；表达式体（`= expr`）仍要求类型匹配（Kotlin 也拒绝 `fun f(): Unit = 1`）
-            !(rt.name == "Null" && fn.body is BlockExpr))
-            d.error("E-TYPE-MISMATCH", fn.body.pos, "函数 ${fn.name} 体类型 ${t.render()} 与声明 ${rt.render()} 不符")
+                "函数 ${fn.name} 作为表达式的模式匹配没有密封（声明返回 ${effRt.render()}，但非穷尽 when 值类型为 Null）；补全分支或加 else")
+        else if (!t.isSynthetic() && !typeLooseEq(t, effRt) &&
+            !(effRt.name == "Null" && fn.body is BlockExpr))
+            d.error("E-TYPE-MISMATCH", fn.body.pos, "函数 ${fn.name} 体类型 ${t.render()} 与声明 ${effRt.render()} 不符")
         val tail = dollarOf(fn.body)
         for (post in postRewritten) {
             val goal = PropLogic.substDollar(PropLogic.fromExpr(post), tail)
@@ -284,10 +298,12 @@ class Checker(
                 var t = t0
                 if (s.type != null) {
                     checkTypeResolvable(s.type, emptyList())
-                    val u = TypeInfer.unify(t, syms.expand(s.type))   // 别名展开（决策 30）
-                    if (u == null)
+                    val want = syms.expand(s.type)   // 别名展开（决策 30）
+                    // v1.1：标注类型即变量类型（Kotlin 语义）；unify 只做兼容性检查，
+                    // 避免泛型初值（如 setEmpty(): Set[T]）把未绑定类型参数残留进变量类型
+                    if (TypeInfer.unify(t, want) == null)
                         d.error("E-TYPE-MISMATCH", s.pos, "var ${s.name}: 标注 ${s.type.render()} 与初值 ${t.render()} 不可统一")
-                    else t = u
+                    else t = want
                 }
                 f.declareVar(s.name, t)
                 val mut = "mut" in s.annotations
@@ -323,9 +339,19 @@ class Checker(
             // 带值核对声明返回类型，裸形只许 Null 函数
             is ReturnStmt -> {
                 val rt = funRetType
+                // v1.1：lambda 体内 return 合法——返回当前 lambda（Kotlin 风格 `{ …; return v }` / `return@label`）
+                if (lambdaRetTypes.isNotEmpty()) {
+                    val lret = lambdaRetTypes.last()
+                    if (s.expr != null) {
+                        val t0 = checkExpr(s.expr, f, if (uncheckedDepth > 0) false else pure)
+                        if (!t0.isSynthetic() && !lret.isSynthetic() && !typeLooseEq(lret, t0))
+                            d.error("E-RETURN-TYPE", s.pos, "lambda 内 return 值类型 ${t0.render()} 与 lambda 返回 ${lret.render()} 不符")
+                    }
+                    return namedT("Nothing", emptyList())   // lambda 内 return 后语句不可达
+                }
                 if (rt == null || !flow)
                     d.error("E-RETURN-OUTSIDE", s.pos,
-                        "return 只能出现在具名函数体的语句流里（值位表达式与 lambda 体中非法——它们编译为 IIFE，请改用尾表达式）")
+                        "return 只能出现在具名函数体或 lambda 体的语句流里（值位表达式非法）")
                 else when {
                     s.expr == null && rt.name != "Null" ->
                         d.error("E-RETURN-TYPE", s.pos, "裸 return 要求函数返回 Null，实际声明 ${rt.render()}")
@@ -444,7 +470,12 @@ class Checker(
             e.params.forEachIndexed { i, pname ->
                 nf.declareVar(pname, ft?.params?.getOrNull(i) ?: syntheticT("参数"))
             }
-            val bt = checkExpr(e.body, nf, if (uncheckedDepth > 0) false else pure)
+            val bt = run {
+                lambdaRetTypes.add(ft?.ret ?: syntheticT("lambda返回"))
+                val r = checkExpr(e.body, nf, if (uncheckedDepth > 0) false else pure)
+                lambdaRetTypes.removeAt(lambdaRetTypes.size - 1)
+                r
+            }
             // P2（决策 78）：期望返回是**未解析的类型参数**（非 BASE_TYPES/非已声明类型/非 synthetic）时
             // 跳过核对——它由调用点反推（如 map 的 U 只能从 lambda 体推出），报了也是误报
             val ftRet = ft?.ret
@@ -524,9 +555,13 @@ class Checker(
             var t = t0
             if (e.type != null) {
                 checkTypeResolvable(e.type, emptyList())
-                val u = TypeInfer.unify(t, syms.expand(e.type))   // 别名展开（决策 30）
-                if (u == null) d.error("E-TYPE-MISMATCH", e.pos, "var ${e.name}: 标注 ${e.type.render()} 与初值 ${t.render()} 不可统一")
-                else t = u
+                val want = syms.expand(e.type)   // 别名展开（决策 30）
+                // v1.1 修复：标注类型即变量类型（Kotlin 语义）；unify 只做兼容性检查——
+                // 过去用 unify 结果当类型，遇泛型初值（如 setEmpty(): Set[T]）会把未绑定的
+                // 类型参数 T 残留进变量类型，导致后续方法调用实参失配
+                if (TypeInfer.unify(t0, want) == null)
+                    d.error("E-TYPE-MISMATCH", e.pos, "var ${e.name}: 标注 ${e.type.render()} 与初值 ${t.render()} 不可统一")
+                else t = want
             }
             f.declareVar(e.name, t)
             val mut = "mut" in e.annotations

@@ -1,0 +1,33 @@
+// Sublimation 标准库（v1.1 Kotlin 化）：Set（集合）与 Map（表）
+// 独立枚举实现（结构递归自动停机）；方法糖 `s.contains(x)` / `s.add(x)` /
+// `m.get(k)` / `m.put(k, v)` → 接收者前置的自由函数调用
+// 注：stdlib 各 .subl 共享同一符号空间，Set 与 List 的同名方法需错开（size / setSize）
+enum Set[T] { SetNil(), SetCons(T, Set[T]) }
+enum Map[K, V] { MapNil(), MapCons(K, V, Map[K, V]) }
+
+fun setEmpty[T](): Set[T] = SetNil()
+fun mapEmpty[K, V](): Map[K, V] = MapNil()
+
+fun contains[T](xs: Set[T], x: T): Bool = when(xs) {
+    SetNil -> false
+    SetCons(h, t) -> if (h == x) { true } else { contains(t, x) }
+}
+
+fun add[T](xs: Set[T], x: T): Set[T] = SetCons(x, xs)
+
+fun setSize[T](xs: Set[T]): Nat = when(xs) {
+    SetNil -> 0
+    SetCons(_, t) -> 1 + setSize(t)
+}
+
+fun get[K, V](m: Map[K, V], k: K): Optional[V] = when(m) {
+    MapNil -> None()
+    MapCons(k0, v0, t) -> if (k0 == k) { Some(v0) } else { get(t, k) }
+}
+
+fun put[K, V](m: Map[K, V], k: K, v: V): Map[K, V] = MapCons(k, v, m)
+
+fun mapSize[K, V](m: Map[K, V]): Nat = when(m) {
+    MapNil -> 0
+    MapCons(_, _, t) -> 1 + mapSize(t)
+}

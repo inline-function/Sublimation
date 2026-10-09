@@ -57,7 +57,7 @@ fun classify(n: Nat): Str {
 
 // ---------- 提前 return（决策 75：语句位 if 里可直接 return 退出函数） ----------
 fun abs(n: Int): Nat {
-    if n < 0 { return 0 - n }
+    if (n < 0) { return 0 - n }
     return n
 }
 
@@ -117,7 +117,7 @@ fun main() {
     unchecked print(roleText(Admin()))          // admin
     unchecked print(flatten(Some(Some(9))))     // 9
     unchecked print(label((1, "a")))            // pair
-    unchecked print(applyTwice(\(x) => x + 1, 10))  // 12
+    unchecked print(applyTwice({ x -> x + 1 }, 10))  // 12
     unchecked print(classify(0))                // zero
     unchecked print(classify(7))                // many
     unchecked print(abs(0 - 5))                 // 5（提前 return）

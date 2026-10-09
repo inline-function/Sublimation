@@ -4,11 +4,11 @@
 // 覆盖（§13.3-4）：字符串（charAt/substring/concat）、集合（自建 JList + 遍历）、错误处理（Ret）、
 //       浮点 Rat、递归（解析器索引递归 + Json 树结构递归）、泛型约束（impl Show for Json）、
 //       插值（P8）、命名参数（P8）、自动推理（unchecked.axiom = 0）。
+// v1.1 迁移：块式函数显式 return、{ x -> } lambda 两形态、if (cond) 强制括号。
 // 停机说明：解析器索引递归（i → i+1）是数值递减，P9（决策 44）"语法子项"判定判不出，
 //       按计划 §11.3 用 unchecked 前缀逃逸标注递归调用点（纯调用，不改纯度，axiom 0 次）；
 //       Json 树遍历是构造子模式解构 → P9 结构递归判定放行（结构子项链路）。
-// 相等比较统一前缀 ==(a,b) / !=(a,b)：`==` 禁止中缀（防与命题混淆）。
-// 函数风格：块体尾表达式（return 只能出现在具名函数语句流，决策 75）。
+// 相等比较保留前缀 ==(a,b) / !=(a,b)（前缀调用兼容；中缀 a == b 亦合法）。
 // ============================================================
 
 // ---------- 数据类型 ----------
@@ -29,19 +29,17 @@ fun jFold[T, U](init: U, f: (T, U) => U, xs: JList[T]): U = when(xs) {
     JCons(h, t) -> jFold(f(h, init), f, t)
     _ -> init
 }
-fun jRev[T](xs: JList[T]): JList[T] = jFold(JNil(), \(h, acc) => JCons(h, acc), xs)
+fun jRev[T](xs: JList[T]): JList[T] = jFold(JNil(), { h, acc -> JCons(h, acc) }, xs)
 
 // ---------- 字符辅助 ----------
 fun isDigit(c: Str): Bool = ==(c, "0") | ==(c, "1") | ==(c, "2") | ==(c, "3") | ==(c, "4") | ==(c, "5") | ==(c, "6") | ==(c, "7") | ==(c, "8") | ==(c, "9")
 fun isWs(c: Str): Bool = ==(c, " ") | ==(c, "\n") | ==(c, "\t") | ==(c, "\r")
 fun isNumStart(c: Str): Bool = isDigit(c) | ==(c, "-")
 
-fun skipWs(s: Str, i: Nat): Nat {
-    if (isWs(charAt(s, i))) {
-        unchecked var r = skipWs(s, i + 1)
-        r
-    } else { i }
-}
+fun skipWs(s: Str, i: Nat): Nat = if (isWs(charAt(s, i))) {
+    unchecked var r = skipWs(s, i + 1)
+    r
+} else { i }
 
 // ---------- 字面量（null / true / false） ----------
 fun parseNull(s: Str, i: Nat): Ret =
@@ -54,16 +52,14 @@ fun parseFalse(s: Str, i: Nat): Ret =
     if (==(substring(s, i, i + 5), "false")) { Ok(JBool(false), i + 5) } else { Fail("期望 false @ " + toStr(i)) }
 
 // ---------- 数字：扫描到非数字字符后 parseRat ----------
-fun numEnd(s: Str, i: Nat): Nat {
-    if (isDigit(charAt(s, i)) | ==(charAt(s, i), "-") | ==(charAt(s, i), "+") | ==(charAt(s, i), ".")) {
-        unchecked var r = numEnd(s, i + 1)
-        r
-    } else { i }
-}
+fun numEnd(s: Str, i: Nat): Nat = if (isDigit(charAt(s, i)) | ==(charAt(s, i), "-") | ==(charAt(s, i), "+") | ==(charAt(s, i), ".")) {
+    unchecked var r = numEnd(s, i + 1)
+    r
+} else { i }
 
 fun parseNumber(s: Str, i: Nat): Ret {
     var e = numEnd(s, i)
-    when(parseRat(substring(s, i, e))) {
+    return when(parseRat(substring(s, i, e))) {
         Some(v) -> Ok(JNum(v), e)
         None -> Fail("坏数字(从 " + toStr(i) + " 到 " + toStr(e) + ")")
     }
@@ -92,7 +88,7 @@ fun parseEscape(s: Str, i: Nat, acc: Str): Ret = when(charAt(s, i + 1)) {
 // ---------- 数组：元素用 JCons 累积，收尾 jRev 复原顺序 ----------
 fun parseArr(s: Str, i: Nat, acc: JList[Json]): Ret {
     var j = skipWs(s, i)
-    if (==(charAt(s, j), "]")) { Ok(JArr(jRev(acc)), j + 1) }
+    return if (==(charAt(s, j), "]")) { Ok(JArr(jRev(acc)), j + 1) }
     else {
         var r = parseValue(s, j)
         when(r) {
@@ -116,7 +112,7 @@ fun strOf(j: Json): Str = when(j) {
 
 fun parseObj(s: Str, i: Nat, acc: JList[Pair]): Ret {
     var j = skipWs(s, i)
-    if (==(charAt(s, j), "}")) { Ok(JObj(jRev(acc)), j + 1) }
+    return if (==(charAt(s, j), "}")) { Ok(JObj(jRev(acc)), j + 1) }
     else {
         var rk = parseStrBody(s, j + 1, "")
         when(rk) {
@@ -186,21 +182,21 @@ fun showFull(j: Json): Str = when(j) {
 }
 
 fun showArr(l: JList[Json]): Str {
-    var inner = jFold("", \(x, acc) => if (==(acc, "")) { showFull(x) } else { concat(acc, concat(",", showFull(x))) }, l)
-    concat("[", concat(inner, "]"))
+    var inner = jFold("", { x, acc -> if (==(acc, "")) { showFull(x) } else { concat(acc, concat(",", showFull(x))) } }, l)
+    return concat("[", concat(inner, "]"))
 }
 
 fun showPair(p: Pair): Str = concat("\"", concat(p.k, concat("\"", concat(":", showFull(p.v)))))
 
 fun showObj(ps: JList[Pair]): Str {
-    var inner = jFold("", \(x, acc) => if (==(acc, "")) { showPair(x) } else { concat(acc, concat(",", showPair(x))) }, ps)
-    concat("{", concat(inner, "}"))
+    var inner = jFold("", { x, acc -> if (==(acc, "")) { showPair(x) } else { concat(acc, concat(",", showPair(x))) } }, ps)
+    return concat("{", concat(inner, "}"))
 }
 
 // ---------- 泛型约束（P4）：impl Show for Json，展示字典槽 + 方法调用 ----------
 impl Show for Json { fun show(): Str = showFull(self) }
 
-fun showAll[T: Show](xs: JList[T]): Str = jFold("", \(x, acc) => concat(acc, x.show()), xs)
+fun showAll[T: Show](xs: JList[T]): Str = jFold("", { x, acc -> concat(acc, x.show()) }, xs)
 
 // ---------- 顶入口 ----------
 fun parse(s: Str): Ret = parseValue(s, 0)

@@ -185,8 +185,11 @@ data class UncheckedStmt(val inner: Stmt, override val pos: String = "") : Stmt
 
 data class ExprStmt(val expr: Expr, override val pos: String = "") : Stmt
 
-/** `return e` / 裸 `return`（第四轮，Kotlin 风格显式返回）：只允许在具名函数体的语句位 */
-data class ReturnStmt(val expr: Expr?, override val pos: String = "") : Stmt
+/**
+ * `return e` / 裸 `return` / `return@label`（Kotlin 风格显式返回，v1.1 扩展标签）。
+ * 具名函数体语句位：返回该函数；lambda 体内：返回当前 lambda（label 为 lambda 调用标签名）。
+ */
+data class ReturnStmt(val expr: Expr?, override val pos: String = "", val label: String? = null) : Stmt
 
 // ---------- 表达式 ----------
 

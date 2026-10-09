@@ -290,18 +290,18 @@ class CheckerTest {
 
     @Test
     fun `T2 lambda 双向推导`() {
-        assertTrue(ok("fun apply(f: (Nat)=>Nat, x: Nat): Nat = f(x)\nfun main() { apply(\\(n) => n + 1, 2) }"))
+        assertTrue(ok("fun apply(f: (Nat)=>Nat, x: Nat): Nat = f(x)\nfun main() { apply({ n -> n + 1 }, 2) }"))
     }
 
     @Test
     fun `T2 lambda 参数个数不符报错`() {
-        val src = "fun apply(f: (Nat,Nat)=>Nat): Nat = f(1,2)\nfun main() { apply(\\(n) => n) }"
+        val src = "fun apply(f: (Nat,Nat)=>Nat): Nat = f(1,2)\nfun main() { apply({ n -> n }) }"
         assertTrue(errs(src).contains("E-TYPE-MISMATCH"))
     }
 
     @Test
     fun `T2 零参函数类型`() {
-        assertTrue(ok("fun call0(f: ()=>Nat): Nat = f()\nfun main() { call0(\\() => 7) }"))
+        assertTrue(ok("fun call0(f: ()=>Nat): Nat = f()\nfun main() { call0({ -> 7 }) }"))
     }
 
     @Test
@@ -436,7 +436,7 @@ class CheckerTest {
 
     @Test
     fun `O2 点号字段优先于同名方法`() {
-        val src = "struct P(m: (Nat) => Nat)\nfun main() { unchecked print(P(\\(x) => x).m(3)) }"
+        val src = "struct P(m: (Nat) => Nat)\nfun main() { unchecked print(P({ x -> x }).m(3)) }"
         assertTrue(ok(src))
     }
 
@@ -511,17 +511,17 @@ class CheckerTest {
 
     @Test
     fun `提前return - 语句位if分支合法`() {
-        assertTrue(ok("fun f(n: Nat): Nat { if n > 0 { return 1 }\nreturn 0 }"))
+        assertTrue(ok("fun f(n: Nat): Nat { if (n > 0) { return 1 }\nreturn 0 }"))
     }
 
     @Test
     fun `提前return - 尾if全路径return合法`() {
-        assertTrue(ok("fun f(n: Nat): Nat { if n > 0 { return 1 } else { return 2 } }"))
+        assertTrue(ok("fun f(n: Nat): Nat { if (n > 0) { return 1 } else { return 2 } }"))
     }
 
     @Test
     fun `值位if的return被拒`() {
-        assertTrue(errs("fun f(x: Nat): Nat { var t = if x > 0 { return 9 } else { x }\nreturn t }").contains("E-RETURN-OUTSIDE"))
+        assertTrue(errs("fun f(x: Nat): Nat { var t = if (x > 0) { return 9 } else { x }\nreturn t }").contains("E-RETURN-OUTSIDE"))
     }
 
     @Test
