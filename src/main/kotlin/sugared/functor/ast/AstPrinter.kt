@@ -66,7 +66,7 @@ private fun angleTag(xs: List<Expr>): String =
 private fun Param.toTag(): String = "$name: ${type.toTag()}"
 
 private fun Type.toTag(): String =
-    if (args.isEmpty()) name else "$name<" + args.joinToString(", ") { it.toTag() } + ">"
+    if (args.isEmpty()) name else "$name[" + args.joinToString(", ") { it.toTag() } + "]"
 
 private fun Stmt.toTree(): Tree = when (this) {
     is VarStmt -> Tree("var $name${annTag(annotations)} = ${value.toTag()}")

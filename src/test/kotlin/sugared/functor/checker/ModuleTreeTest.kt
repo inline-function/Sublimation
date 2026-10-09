@@ -349,8 +349,8 @@ class ModuleTreeTest {
     // ============ P2：stdlib 隐式挂载（决策 78） ============
 
     private val MIN_STDLIB = """
-        enum List[T] { Nil(), Cons(T, List<T>) }
-        fun listLength[T](xs: List<T>): Nat = when(xs) {
+        enum List[T] { Nil(), Cons(T, List[T]) }
+        fun listLength[T](xs: List[T]): Nat = when(xs) {
             Nil -> 0
             Cons(_, t) -> 1 + listLength(t)
         }

@@ -174,7 +174,7 @@ class ParserTest {
 
     @Test
     fun `type 别名声明解析`() {
-        val f = parseSource("type Pair[T] = Optional<T>", "t")
+        val f = parseSource("type Pair[T] = Optional[T]", "t")
         val a = (f.entries[0] as DeclEntry).decl as TypeAliasDecl
         assertEquals("Pair", a.name)
         assertEquals(listOf("T"), a.theory.filterIsInstance<TypeParam>().map { it.name })

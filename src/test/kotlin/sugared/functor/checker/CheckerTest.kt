@@ -182,20 +182,20 @@ class CheckerTest {
 
     @Test
     fun `A2 Optional带字段枚举穷尽`() {
-        val src = "fun unwrap(o: Optional<Nat>): Nat = when(o) { None -> 0 Some(x) -> x }"
+        val src = "fun unwrap(o: Optional[Nat]): Nat = when(o) { None -> 0 Some(x) -> x }"
         assertTrue(warns(src).none { it == "W-NON-EXHAUSTIVE" }, "Optional 两分支应穷尽")
         assertTrue(ok(src))
     }
 
     @Test
     fun `A2 Optional缺分支非穷尽`() {
-        val src = "fun f(o: Optional<Nat>): Null { when(o) { Some(x) -> 1 } }"
+        val src = "fun f(o: Optional[Nat]): Null { when(o) { Some(x) -> 1 } }"
         assertTrue(warns(src).contains("W-NON-EXHAUSTIVE"), "缺 None 分支应判非穷尽")
     }
 
     @Test
     fun `A2 带字面量构造子模式保守非穷尽`() {
-        val src = "fun f(o: Optional<Nat>): Null { when(o) { None -> 0 Some(0) -> 1 } }"
+        val src = "fun f(o: Optional[Nat]): Null { when(o) { None -> 0 Some(0) -> 1 } }"
         assertTrue(warns(src).contains("W-NON-EXHAUSTIVE"), "Some(0) 不覆盖所有 Some，应判非穷尽")
     }
 
@@ -238,7 +238,7 @@ class CheckerTest {
 
     @Test
     fun `决策30 参数化别名`() {
-        val src = "type NatOpt = Optional<Nat>\nfun f(o: NatOpt): Nat = when(o) { Some(x) -> x None -> 0 }\nfun main() { f(Some(1)) }"
+        val src = "type NatOpt = Optional[Nat]\nfun f(o: NatOpt): Nat = when(o) { Some(x) -> x None -> 0 }\nfun main() { f(Some(1)) }"
         assertTrue(ok(src))
     }
 
@@ -254,7 +254,7 @@ class CheckerTest {
 
     @Test
     fun `T0 嵌套构造子模式穷尽无假阳性`() {
-        val src = "fun depth(o: Optional<Optional<Nat>>): Nat = " +
+        val src = "fun depth(o: Optional[Optional[Nat]]): Nat = " +
             "when(o) { Some(Some(y)) -> y  Some(None) -> 0  None -> 0 }"
         val bad = checkFile(parseSource(src, "t")).diags.filter { it.severity == Severity.ERROR || it.code == "W-NON-EXHAUSTIVE" }
         assertTrue(bad.isEmpty(), "三层分支应判穷尽，实际: ${bad.map { it.render() }}")
@@ -262,20 +262,20 @@ class CheckerTest {
 
     @Test
     fun `T0 嵌套模式仍保守 - 缺内层分支`() {
-        val src = "fun f(o: Optional<Optional<Nat>>): Null { when(o) { Some(Some(y)) -> 0  None -> 0 } }"
+        val src = "fun f(o: Optional[Optional[Nat]]): Null { when(o) { Some(Some(y)) -> 0  None -> 0 } }"
         assertTrue(warns(src).contains("W-NON-EXHAUSTIVE"), "缺 Some(None) 分支应判非穷尽")
     }
 
     @Test
     fun `T0 嵌套模式等式保留完整结构`() {
-        val src = "fun f(o: Optional<Optional<Nat>>): Nat = when(o) { Some(Some(y)) -> y else -> 0 }"
+        val src = "fun f(o: Optional[Optional[Nat]]): Nat = when(o) { Some(Some(y)) -> y else -> 0 }"
         assertTrue(ok(src))
     }
 
     @Test
     fun `T1 sealed 类型三形态构造与渲染`() {
         assertEquals("Nat", namedT("Nat").render())
-        assertEquals("Optional<Nat>", namedT("Optional", listOf(namedT("Nat"))).render())
+        assertEquals("Optional[Nat]", namedT("Optional", listOf(namedT("Nat"))).render())
         assertEquals("(Nat, Str)=>Bool", FunType(listOf(namedT("Nat"), namedT("Str")), namedT("Bool")).render())
         assertEquals("(Nat, Nat)", TupleType(listOf(namedT("Nat"), namedT("Nat"))).render())
         assertFalse(FunType(listOf(namedT("Nat")), namedT("Nat")).isNominal())
@@ -585,13 +585,13 @@ class CheckerTest {
 
     @Test
     fun `P1 parseNat 类型 Optional Nat`() {
-        val src = "fun f(): Optional<Nat> = parseNat(\"12\")\nfun main() { unchecked f() }"
-        assertTrue(ok(src), "parseNat 应返回 Optional<Nat>")
+        val src = "fun f(): Optional[Nat] = parseNat(\"12\")\nfun main() { unchecked f() }"
+        assertTrue(ok(src), "parseNat 应返回 Optional[Nat]")
     }
 
     @Test
     fun `P1 parseNat 入参必须 Str`() {
-        val src = "fun f(): Optional<Nat> = parseNat(1)\nfun main() { unchecked f() }"
+        val src = "fun f(): Optional[Nat] = parseNat(1)\nfun main() { unchecked f() }"
         assertTrue(errs(src).contains("E-TYPE-MISMATCH"), "parseNat 收 Nat 应报类型不匹配")
     }
 
@@ -605,8 +605,8 @@ class CheckerTest {
 
     @Test
     fun `P2 arrayOf 类型 Array`() {
-        val src = "fun f(): Array<Nat> = arrayOf(1, 2, 3)\nfun main() { unchecked f() }"
-        assertTrue(ok(src), "arrayOf 应返回 Array<Nat>")
+        val src = "fun f(): Array[Nat] = arrayOf(1, 2, 3)\nfun main() { unchecked f() }"
+        assertTrue(ok(src), "arrayOf 应返回 Array[Nat]")
     }
 
     @Test
@@ -617,19 +617,19 @@ class CheckerTest {
 
     @Test
     fun `P2 arrayGet 类型 Optional`() {
-        val src = "fun f(): Optional<Nat> = arrayGet(arrayOf(7, 8), 0)\nfun main() { unchecked f() }"
-        assertTrue(ok(src), "arrayGet 应返回 Optional<T>")
+        val src = "fun f(): Optional[Nat] = arrayGet(arrayOf(7, 8), 0)\nfun main() { unchecked f() }"
+        assertTrue(ok(src), "arrayGet 应返回 Optional[T]")
     }
 
     @Test
     fun `P2 arraySet 类型 Array`() {
-        val src = "fun f(): Array<Nat> = arraySet(arrayOf(1, 2), 0, 9)\nfun main() { unchecked f() }"
-        assertTrue(ok(src), "arraySet 应返回 Array<T>")
+        val src = "fun f(): Array[Nat] = arraySet(arrayOf(1, 2), 0, 9)\nfun main() { unchecked f() }"
+        assertTrue(ok(src), "arraySet 应返回 Array[T]")
     }
 
     @Test
     fun `P2 arrayGet 入参类型错`() {
-        val src = "fun f(): Optional<Nat> = arrayGet(arrayOf(7, 8), \"x\")\nfun main() { unchecked f() }"
+        val src = "fun f(): Optional[Nat] = arrayGet(arrayOf(7, 8), \"x\")\nfun main() { unchecked f() }"
         assertTrue(errs(src).contains("E-TYPE-MISMATCH"), "arrayGet 第二参收 Str 应报类型不匹配")
     }
 
@@ -688,8 +688,8 @@ class CheckerTest {
     @Test
     fun `P9 when 解构的结构递归通过`() {
         // 验收②：len(t) 的 t 由 when(xs){Cons(_, t)} 解构而来，是 xs 的语法子项 → 放行
-        val src = "enum List[T] { Nil(), Cons(T, List<T>) }\n" +
-            "fun len[T](xs: List<T>): Nat = when(xs) {\n" +
+        val src = "enum List[T] { Nil(), Cons(T, List[T]) }\n" +
+            "fun len[T](xs: List[T]): Nat = when(xs) {\n" +
             "    Nil -> 0\n" +
             "    Cons(_, t) -> 1 + len(t)\n" +
             "}"
@@ -701,8 +701,8 @@ class CheckerTest {
         // 补充：f(x) 直接传形参自身（无递减）也应拒绝；多参数递归放行需任一实参为子项
         val self = "fun f(n: Nat): Nat = f(n)"
         assertTrue(errs(self).contains("E-NON-STRUCTURAL-REC"))
-        val map = "enum List[T] { Nil(), Cons(T, List<T>) }\n" +
-            "fun map[T, U](f: (T) => U, xs: List<T>): List<U> = when(xs) {\n" +
+        val map = "enum List[T] { Nil(), Cons(T, List[T]) }\n" +
+            "fun map[T, U](f: (T) => U, xs: List[T]): List[U] = when(xs) {\n" +
             "    Nil -> Nil()\n" +
             "    Cons(h, t) -> Cons(f(h), map(f, t))\n" +
             "}"

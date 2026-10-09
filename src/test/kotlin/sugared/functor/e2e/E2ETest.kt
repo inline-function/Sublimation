@@ -52,7 +52,7 @@ class E2ETest {
     @Test
     fun `Optional 解构与默认值`() {
         assumeTrue(nodeAvailable())
-        val src = "fun u(o: Optional<Nat>, d: Nat): Nat = when(o) { Some(x) -> x  None -> d }\n" +
+        val src = "fun u(o: Optional[Nat], d: Nat): Nat = when(o) { Some(x) -> x  None -> d }\n" +
             "fun main() { unchecked print(u(Some(42), 0))\nunchecked print(u(None, 7)) }"
         assertEquals("42\n7", run(src))
     }
@@ -61,7 +61,7 @@ class E2ETest {
     fun `嵌套解构`() {
         assumeTrue(nodeAvailable())
         // 决策 64：嵌套 ∃ 展开后三层分支已可判穷尽，无需 else 兜底
-        val src = "fun depth(o: Optional<Optional<Nat>>): Nat = " +
+        val src = "fun depth(o: Optional[Optional[Nat]]): Nat = " +
             "when(o) { Some(Some(y)) -> y  Some(None) -> 0  None -> 0 }\n" +
             "fun main() { unchecked print(depth(Some(Some(5))))\nunchecked print(depth(Some(None))) }"
         assertEquals("5\n0", run(src))
@@ -321,8 +321,8 @@ class E2ETest {
         // 具体类型 → 字典实参漏插 → 参数错位。回退透传当前函数约束槽（d_Show_T）。
         val src = "class Show[T] { fun show(): Str }\n" +
             "impl Show for Nat { fun show(): Str = toStr(self) }\n" +
-            "enum L[T] { LNil(), LCons(T, L<T>) }\n" +
-            "fun joinAll[T: Show](xs: L<T>): Str = when(xs) {\n" +
+            "enum L[T] { LNil(), LCons(T, L[T]) }\n" +
+            "fun joinAll[T: Show](xs: L[T]): Str = when(xs) {\n" +
             "    LNil() -> \"\"\n" +
             "    LCons(h, t) -> concat(h.show(), joinAll(t))\n" +
             "    _ -> \"\"\n" +

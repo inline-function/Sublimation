@@ -264,7 +264,7 @@ class ModuleE2ETest {
         // 约束 T: Show——类型参数约束经字典槽透传（§8.2：f 的 JS 签名带 d_Show_T 隐藏首参）
         val main = "class Show[T] { fun show(): Str }\n" +
             "impl Show for Nat { fun show(): Str = toStr(self) }\n" +
-            "fun showAll[T: Show](xs: List<T>): Str = stdlib.fold(\"\", \\(x, acc) => acc + x.show(), xs)\n" +
+            "fun showAll[T: Show](xs: List[T]): Str = stdlib.fold(\"\", \\(x, acc) => acc + x.show(), xs)\n" +
             "@unpure fun main() {\n" +
             "print(showAll(stdlib.Cons(1, stdlib.Cons(2, stdlib.Nil()))))\n}"
         assertEquals("12", runTree(mapOf("stdlib/list.subl" to std, "main.subl" to main)))
@@ -276,7 +276,7 @@ class ModuleE2ETest {
         val std = File("stdlib/list.subl").readText()
         val main = "class Show[T] { fun show(): Str }\n" +
             "impl Show for Str { fun show(): Str = self }\n" +
-            "fun printAll[T: Show](xs: List<T>): Str = stdlib.fold(\"\", \\(x, acc) => acc + x.show(), xs)\n" +
+            "fun printAll[T: Show](xs: List[T]): Str = stdlib.fold(\"\", \\(x, acc) => acc + x.show(), xs)\n" +
             "@unpure fun main() {\n" +
             "print(printAll(stdlib.Cons(\"x\", stdlib.Nil())))\n}"
         assertEquals("x", runTree(mapOf("stdlib/list.subl" to std, "main.subl" to main)))

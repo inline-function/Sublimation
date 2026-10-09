@@ -212,10 +212,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         val segs = ArrayList<String>()
         segs += first
         while (peek(Kind.DOT)) { pos++; segs += nameToken() }
-        // 类型实参要求 `<` 紧贴类型名（邻接规则）；带空格的 `<` 属于声明位的上文/下文。
-        // 紧贴但实参表不合法（如返回类型后的下文 `<$ == 7>`）时回退，交回结构位处理。
+        // 类型实参声明用 `[]`（理论参数，v1.1）：`List[Nat]`、`Optional[Optional[Nat]]`。
+        // `[]` 只表示类型代入，与声明位 `fun f[T]` 的 `[]` 同族（引入/代入理论参数）；
+        // 尖括号 `<...>` 仍专用于上下文命题（下文 `<$ == 7>`）与显式供给 `f<q>()`，互不歧义。
         var args: List<Type> = emptyList()
-        if (peek(Kind.LT) && !cur().precededBySpace) {
+        if (peek(Kind.LBRACKET)) {
             val save = pos
             try {
                 pos++
@@ -249,7 +250,7 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
             if (peek(Kind.COMMA)) { pos++; continue }
             break
         }
-        at(Kind.GT)
+        at(Kind.RBRACKET)
         return out
     }
 

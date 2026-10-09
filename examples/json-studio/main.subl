@@ -14,43 +14,43 @@
 // ============================================================
 
 // ---------- 0. 类型定义 ----------
-enum JList[T] { JNil(), JCons(T, JList<T>) }
-enum Json { JNull(), JBool(Bool), JNum(Rat), JStr(Str), JArr(JList<Json>), JObj(JList<Pair>) }
+enum JList[T] { JNil(), JCons(T, JList[T]) }
+enum Json { JNull(), JBool(Bool), JNum(Rat), JStr(Str), JArr(JList[Json]), JObj(JList[Pair]) }
 struct Pair(k: Str, v: Json)
 enum Ret { Ok(Json, Nat), Fail(Str) }
 
 // ---------- 1. 集合（结构递归，P9 放行：解构绑定是结构子项） ----------
-fun jLen[T](xs: JList<T>): Nat = when(xs) {
+fun jLen[T](xs: JList[T]): Nat = when(xs) {
     JNil() -> 0
     JCons(_, t) -> 1 + jLen(t)
     _ -> 0
 }
 
-fun jMap[T, U](f: (T) => U, xs: JList<T>): JList<U> = when(xs) {
+fun jMap[T, U](f: (T) => U, xs: JList[T]): JList[U] = when(xs) {
     JNil() -> JNil()
     JCons(h, t) -> JCons(f(h), jMap(f, t))
     _ -> JNil()
 }
 
-fun jFilter[T](f: (T) => Bool, xs: JList<T>): JList<T> = when(xs) {
+fun jFilter[T](f: (T) => Bool, xs: JList[T]): JList[T] = when(xs) {
     JNil() -> JNil()
     JCons(h, t) -> if (f(h)) { JCons(h, jFilter(f, t)) } else { jFilter(f, t) }
     _ -> JNil()
 }
 
-fun jFold[T, U](init: U, f: (T, U) => U, xs: JList<T>): U = when(xs) {
+fun jFold[T, U](init: U, f: (T, U) => U, xs: JList[T]): U = when(xs) {
     JNil() -> init
     JCons(h, t) -> jFold(f(h, init), f, t)
     _ -> init
 }
 
-fun jAppend[T](xs: JList<T>, ys: JList<T>): JList<T> = when(xs) {
+fun jAppend[T](xs: JList[T], ys: JList[T]): JList[T] = when(xs) {
     JNil() -> ys
     JCons(h, t) -> JCons(h, jAppend(t, ys))
     _ -> ys
 }
 
-fun jRev[T](xs: JList<T>): JList<T> = jFold(JNil(), \(h, acc) => JCons(h, acc), xs)
+fun jRev[T](xs: JList[T]): JList[T] = jFold(JNil(), \(h, acc) => JCons(h, acc), xs)
 
 // ---------- 2. 字符辅助 ----------
 fun isDigit(c: Str): Bool = ==(c, "0") | ==(c, "1") | ==(c, "2") | ==(c, "3") | ==(c, "4") | ==(c, "5") | ==(c, "6") | ==(c, "7") | ==(c, "8") | ==(c, "9")
@@ -108,7 +108,7 @@ fun parseEscape(s: Str, i: Nat, acc: Str): Ret = when(charAt(s, i + 1)) {
     _ -> Fail("未知转义 @ " + toStr(i))
 }
 
-fun parseArr(s: Str, i: Nat, acc: JList<Json>): Ret {
+fun parseArr(s: Str, i: Nat, acc: JList[Json]): Ret {
     var j = skipWs(s, i)
     if (==(charAt(s, j), "]")) { Ok(JArr(jRev(acc)), j + 1) }
     else {
@@ -128,7 +128,7 @@ fun parseArr(s: Str, i: Nat, acc: JList<Json>): Ret {
 
 fun strOf(j: Json): Str = when(j) { JStr(x) -> x; _ -> "" }
 
-fun parseObj(s: Str, i: Nat, acc: JList<Pair>): Ret {
+fun parseObj(s: Str, i: Nat, acc: JList[Pair]): Ret {
     var j = skipWs(s, i)
     if (==(charAt(s, j), "}")) { Ok(JObj(jRev(acc)), j + 1) }
     else {
@@ -187,20 +187,20 @@ fun showFull(j: Json): Str = when(j) {
     _ -> "?"
 }
 
-fun showArr(l: JList<Json>): Str {
+fun showArr(l: JList[Json]): Str {
     var inner = jFold("", \(x, acc) => if (==(acc, "")) { showFull(x) } else { concat(acc, concat(",", showFull(x))) }, l)
     concat("[", concat(inner, "]"))
 }
 
 fun showPair(p: Pair): Str = concat("\"", concat(p.k, concat("\"", concat(":", showFull(p.v)))))
 
-fun showObj(ps: JList<Pair>): Str {
+fun showObj(ps: JList[Pair]): Str {
     var inner = jFold("", \(x, acc) => if (==(acc, "")) { showPair(x) } else { concat(acc, concat(",", showPair(x))) }, ps)
     concat("{", concat(inner, "}"))
 }
 
 // 约束函数：需要 T: Show 字典（自动推理从 impl 补全）
-fun showAll[T: Show](xs: JList<T>): Str = jFold("", \(x, acc) => concat(acc, x.show()), xs)
+fun showAll[T: Show](xs: JList[T]): Str = jFold("", \(x, acc) => concat(acc, x.show()), xs)
 
 // ---------- 5. 查询 / 统计 / 变换（结构递归 + Optional + 元组） ----------
 fun countNodes(j: Json): Nat = when(j) {
@@ -208,12 +208,12 @@ fun countNodes(j: Json): Nat = when(j) {
     JObj(p) -> 1 + countPairs(p)
     _ -> 1
 }
-fun countList(l: JList<Json>): Nat = when(l) {
+fun countList(l: JList[Json]): Nat = when(l) {
     JNil() -> 0
     JCons(h, t) -> countNodes(h) + countList(t)
     _ -> 0
 }
-fun countPairs(p: JList<Pair>): Nat = when(p) {
+fun countPairs(p: JList[Pair]): Nat = when(p) {
     JNil() -> 0
     JCons(pr, t) -> 2 + countNodes(pr.v) + countPairs(t)
     _ -> 0
@@ -224,12 +224,12 @@ fun depth(j: Json): Nat = when(j) {
     JObj(p) -> 1 + depthPairs(p)
     _ -> 0
 }
-fun depthList(l: JList<Json>): Nat = when(l) {
+fun depthList(l: JList[Json]): Nat = when(l) {
     JNil() -> 0
     JCons(h, t) -> max(depth(h), depthList(t))
     _ -> 0
 }
-fun depthPairs(p: JList<Pair>): Nat = when(p) {
+fun depthPairs(p: JList[Pair]): Nat = when(p) {
     JNil() -> 0
     JCons(pr, t) -> max(depth(pr.v), depthPairs(t))
     _ -> 0
@@ -237,11 +237,11 @@ fun depthPairs(p: JList<Pair>): Nat = when(p) {
 fun max(a: Nat, b: Nat): Nat = if a > b { a } else { b }
 
 // 找某个键第一次出现的对象值，返回 Optional<Json>
-fun findKey(j: Json, key: Str): Optional<Json> = when(j) {
+fun findKey(j: Json, key: Str): Optional[Json] = when(j) {
     JObj(ps) -> findInPairs(ps, key)
     _ -> None()
 }
-fun findInPairs(ps: JList<Pair>, key: Str): Optional<Json> = when(ps) {
+fun findInPairs(ps: JList[Pair], key: Str): Optional[Json] = when(ps) {
     JNil() -> None()
     JCons(pr, t) -> if (==(pr.k, key)) { Some(pr.v) } else { findInPairs(t, key) }
     _ -> None()
@@ -254,19 +254,19 @@ fun sumNumbers(j: Json): Rat = when(j) {
     JObj(p) -> sumPairs(p)
     _ -> 0.0
 }
-fun sumList(l: JList<Json>): Rat = when(l) {
+fun sumList(l: JList[Json]): Rat = when(l) {
     JNil() -> 0.0
     JCons(h, t) -> sumNumbers(h) + sumList(t)
     _ -> 0.0
 }
-fun sumPairs(p: JList<Pair>): Rat = when(p) {
+fun sumPairs(p: JList[Pair]): Rat = when(p) {
     JNil() -> 0.0
     JCons(pr, t) -> sumNumbers(pr.v) + sumPairs(t)
     _ -> 0.0
 }
 
 // 元组：返回 (最小值, 最大值)，展示元组字面量 + 调用方解构（单元素分支避免 0 污染）
-fun jMinMax(xs: JList<Rat>): (Rat, Rat) = when(xs) {
+fun jMinMax(xs: JList[Rat]): (Rat, Rat) = when(xs) {
     JNil() -> (0.0, 0.0)
     JCons(h, JNil()) -> (h, h)
     JCons(h, t) -> {

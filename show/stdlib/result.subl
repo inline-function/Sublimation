@@ -5,17 +5,17 @@
 
 enum Result[T, E] { Ok(T), Err(E) }
 
-fun isOk[T, E](r: Result<T, E>): Bool = when(r) {
+fun isOk[T, E](r: Result[T, E]): Bool = when(r) {
     Ok(_) -> true
     Err(_) -> false
 }
 
-fun unwrapOr[T, E](r: Result<T, E>, d: T): T = when(r) {
+fun unwrapOr[T, E](r: Result[T, E], d: T): T = when(r) {
     Ok(x) -> x
     Err(_) -> d
 }
 
-fun mapResult[T, U, E](f: (T) => U, r: Result<T, E>): Result<U, E> = when(r) {
+fun mapResult[T, U, E](f: (T) => U, r: Result[T, E]): Result[U, E] = when(r) {
     Ok(x) -> Ok(f(x))
     Err(e) -> Err(e)
 }

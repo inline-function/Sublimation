@@ -1,39 +1,39 @@
 // Sublimation 标准库（P2，决策 78）：List
 // 挂载方式：编译入口根目录下的 stdlib/ 子模块，编译器为每个用户模块**隐式挂载**（无需写 settings）。
 // 注意：类型实参是尖括号（List<T>），`List[T]` 只出现在声明头（v1.0 计划 §4.2 示例的方括号系文档笔误）。
-enum List[T] { Nil(), Cons(T, List<T>) }
+enum List[T] { Nil(), Cons(T, List[T]) }
 
-fun listLength[T](xs: List<T>): Nat = when(xs) {
+fun listLength[T](xs: List[T]): Nat = when(xs) {
     Nil -> 0
     Cons(_, t) -> 1 + listLength(t)
 }
 
-fun head[T](xs: List<T>): Optional<T> = when(xs) {
+fun head[T](xs: List[T]): Optional[T] = when(xs) {
     Nil -> None()
     Cons(h, _) -> Some(h)
 }
 
-fun map[T, U](f: (T) => U, xs: List<T>): List<U> = when(xs) {
+fun map[T, U](f: (T) => U, xs: List[T]): List[U] = when(xs) {
     Nil -> Nil()
     Cons(h, t) -> Cons(f(h), map(f, t))
 }
 
-fun filter[T](f: (T) => Bool, xs: List<T>): List<T> = when(xs) {
+fun filter[T](f: (T) => Bool, xs: List[T]): List[T] = when(xs) {
     Nil -> Nil()
     Cons(h, t) -> if (f(h)) { Cons(h, filter(f, t)) } else { filter(f, t) }
 }
 
-fun fold[T, U](init: U, f: (T, U) => U, xs: List<T>): U = when(xs) {
+fun fold[T, U](init: U, f: (T, U) => U, xs: List[T]): U = when(xs) {
     Nil -> init
     Cons(h, t) -> fold(f(h, init), f, t)
 }
 
-fun append[T](xs: List<T>, ys: List<T>): List<T> = when(xs) {
+fun append[T](xs: List[T], ys: List[T]): List[T] = when(xs) {
     Nil -> ys
     Cons(h, t) -> Cons(h, append(t, ys))
 }
 
-fun reverse[T](xs: List<T>): List<T> = when(xs) {
+fun reverse[T](xs: List[T]): List[T] = when(xs) {
     Nil -> Nil()
     Cons(h, t) -> append(reverse(t), Cons(h, Nil()))
 }
@@ -41,7 +41,7 @@ fun reverse[T](xs: List<T>): List<T> = when(xs) {
 // P9（决策 44）：range 是数值递减递归（a → a+1），非结构（语法）子项——按 v1.0 计划 §11.3 用 unchecked
 // 逃逸标注（stdlib 作者声明该递归刻意接受停机检查放行）。函数仍为纯：unchecked 只豁免停机判定、
 // 不改纯度（内部 unchecked 语句对外的 pure 注册不变）；调用点无需 unchecked。
-fun range(a: Nat, b: Nat): List<Nat> {
+fun range(a: Nat, b: Nat): List[Nat] {
     if (a < b) {
         unchecked var rest = range(a + 1, b)
         return Cons(a, rest)

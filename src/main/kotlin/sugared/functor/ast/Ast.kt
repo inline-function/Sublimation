@@ -108,7 +108,7 @@ sealed interface Type {
 /** 名义类型 / 类型参数引用：`Nat`、`Optional<Nat>`、`T` */
 data class NamedType(override val name: String, override val args: List<Type> = emptyList()) : Type {
     override fun render(): String =
-        if (args.isEmpty()) name else "$name<" + args.joinToString(", ") { it.render() } + ">"
+        if (args.isEmpty()) name else "$name[" + args.joinToString(", ") { it.render() } + "]"
     override fun substT(sub: Map<String, Type>): Type =
         if (name in sub && args.isEmpty()) sub.getValue(name)
         else NamedType(name, args.map { it.substT(sub) })
@@ -146,7 +146,7 @@ data class QualifiedType(
 ) : Type {
     override fun render(): String {
         val base = module.joinToString(".") + "." + name
-        return if (args.isEmpty()) base else "$base<" + args.joinToString(", ") { it.render() } + ">"
+        return if (args.isEmpty()) base else "$base[" + args.joinToString(", ") { it.render() } + "]"
     }
     override fun substT(sub: Map<String, Type>): Type =
         if (name in sub && args.isEmpty()) sub.getValue(name)

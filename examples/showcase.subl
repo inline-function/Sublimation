@@ -27,7 +27,7 @@ fun roleText(r: Role): Str {
 }
 
 // ---------- Optional 嵌套解构（决策 64） ----------
-fun flatten(oo: Optional<Optional<Nat>>): Nat {
+fun flatten(oo: Optional[Optional[Nat]]): Nat {
     return when(oo) {
         Some(Some(y)) -> y
         Some(None) -> 0

@@ -4,7 +4,7 @@
 // ============================================================
 
 // 穷尽：Some/None 覆盖律可证，无需 else
-fun unwrapOr(o: Optional<Nat>, d: Nat): Nat {
+fun unwrapOr(o: Optional[Nat], d: Nat): Nat {
     return when(o) {
         Some(x) -> x
         None -> d
@@ -12,7 +12,7 @@ fun unwrapOr(o: Optional<Nat>, d: Nat): Nat {
 }
 
 // 通配 `_` 分支：不绑定字段
-fun describe(o: Optional<Nat>): Str {
+fun describe(o: Optional[Nat]): Str {
     return when(o) {
         Some(_) -> "have"
         None -> "none"
@@ -20,7 +20,7 @@ fun describe(o: Optional<Nat>): Str {
 }
 
 // 嵌套解构：Optional<Optional<Nat>>（决策 64：嵌套 ∃ 展开后三层分支判穷尽）
-fun flatten(oo: Optional<Optional<Nat>>): Nat {
+fun flatten(oo: Optional[Optional[Nat]]): Nat {
     return when(oo) {
         Some(Some(y)) -> y
         Some(None) -> 0

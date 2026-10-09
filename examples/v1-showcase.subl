@@ -6,9 +6,9 @@
 // ============================================================
 
 // ---- P2/P9：自建递归 List——遍历用构造子模式解构，P9 停机判定"结构子项"放行 ----
-enum L[T] { LNil(), LCons(T, L<T>) }
+enum L[T] { LNil(), LCons(T, L[T]) }
 
-fun len[T](xs: L<T>): Nat = when(xs) {
+fun len[T](xs: L[T]): Nat = when(xs) {
     LNil() -> 0
     LCons(_, t) -> 1 + len(t)
     _ -> 0
@@ -19,7 +19,7 @@ class Show[T] { fun show(): Str }
 impl Show for Nat { fun show(): Str = toStr(self) }
 impl Show for Str { fun show(): Str = self }
 
-fun joinAll[T: Show](xs: L<T>): Str = when(xs) {
+fun joinAll[T: Show](xs: L[T]): Str = when(xs) {
     LNil() -> ""
     LCons(h, t) -> concat(h.show(), joinAll(t))
     _ -> ""

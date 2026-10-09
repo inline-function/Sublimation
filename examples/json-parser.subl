@@ -13,23 +13,23 @@
 
 // ---------- 数据类型 ----------
 class Show[T] { fun show(): Str }
-enum JList[T] { JNil(), JCons(T, JList<T>) }
-enum Json { JNull(), JBool(Bool), JNum(Rat), JStr(Str), JArr(JList<Json>), JObj(JList<Pair>) }
+enum JList[T] { JNil(), JCons(T, JList[T]) }
+enum Json { JNull(), JBool(Bool), JNum(Rat), JStr(Str), JArr(JList[Json]), JObj(JList[Pair]) }
 struct Pair(k: Str, v: Json)
 enum Ret { Ok(Json, Nat), Fail(Str) }
 
 // ---------- 自建列表遍历（结构递归于解构绑定，P9 放行：JCons 的 t 是 l 的结构子项） ----------
-fun jLen[T](xs: JList<T>): Nat = when(xs) {
+fun jLen[T](xs: JList[T]): Nat = when(xs) {
     JNil() -> 0
     JCons(_, t) -> 1 + jLen(t)
     _ -> 0
 }
-fun jFold[T, U](init: U, f: (T, U) => U, xs: JList<T>): U = when(xs) {
+fun jFold[T, U](init: U, f: (T, U) => U, xs: JList[T]): U = when(xs) {
     JNil() -> init
     JCons(h, t) -> jFold(f(h, init), f, t)
     _ -> init
 }
-fun jRev[T](xs: JList<T>): JList<T> = jFold(JNil(), \(h, acc) => JCons(h, acc), xs)
+fun jRev[T](xs: JList[T]): JList[T] = jFold(JNil(), \(h, acc) => JCons(h, acc), xs)
 
 // ---------- 字符辅助 ----------
 fun isDigit(c: Str): Bool = ==(c, "0") | ==(c, "1") | ==(c, "2") | ==(c, "3") | ==(c, "4") | ==(c, "5") | ==(c, "6") | ==(c, "7") | ==(c, "8") | ==(c, "9")
@@ -90,7 +90,7 @@ fun parseEscape(s: Str, i: Nat, acc: Str): Ret = when(charAt(s, i + 1)) {
 }
 
 // ---------- 数组：元素用 JCons 累积，收尾 jRev 复原顺序 ----------
-fun parseArr(s: Str, i: Nat, acc: JList<Json>): Ret {
+fun parseArr(s: Str, i: Nat, acc: JList[Json]): Ret {
     var j = skipWs(s, i)
     if (==(charAt(s, j), "]")) { Ok(JArr(jRev(acc)), j + 1) }
     else {
@@ -114,7 +114,7 @@ fun strOf(j: Json): Str = when(j) {
     _ -> ""
 }
 
-fun parseObj(s: Str, i: Nat, acc: JList<Pair>): Ret {
+fun parseObj(s: Str, i: Nat, acc: JList[Pair]): Ret {
     var j = skipWs(s, i)
     if (==(charAt(s, j), "}")) { Ok(JObj(jRev(acc)), j + 1) }
     else {
@@ -163,12 +163,12 @@ fun countNodes(j: Json): Nat = when(j) {
     JObj(p) -> 1 + countPairs(p)
     _ -> 1
 }
-fun countList(l: JList<Json>): Nat = when(l) {
+fun countList(l: JList[Json]): Nat = when(l) {
     JNil() -> 0
     JCons(h, t) -> countNodes(h) + countList(t)
     _ -> 0
 }
-fun countPairs(p: JList<Pair>): Nat = when(p) {
+fun countPairs(p: JList[Pair]): Nat = when(p) {
     JNil() -> 0
     JCons(pr, t) -> 2 + countNodes(pr.v) + countPairs(t)
     _ -> 0
@@ -185,14 +185,14 @@ fun showFull(j: Json): Str = when(j) {
     _ -> "?"
 }
 
-fun showArr(l: JList<Json>): Str {
+fun showArr(l: JList[Json]): Str {
     var inner = jFold("", \(x, acc) => if (==(acc, "")) { showFull(x) } else { concat(acc, concat(",", showFull(x))) }, l)
     concat("[", concat(inner, "]"))
 }
 
 fun showPair(p: Pair): Str = concat("\"", concat(p.k, concat("\"", concat(":", showFull(p.v)))))
 
-fun showObj(ps: JList<Pair>): Str {
+fun showObj(ps: JList[Pair]): Str {
     var inner = jFold("", \(x, acc) => if (==(acc, "")) { showPair(x) } else { concat(acc, concat(",", showPair(x))) }, ps)
     concat("{", concat(inner, "}"))
 }
@@ -200,7 +200,7 @@ fun showObj(ps: JList<Pair>): Str {
 // ---------- 泛型约束（P4）：impl Show for Json，展示字典槽 + 方法调用 ----------
 impl Show for Json { fun show(): Str = showFull(self) }
 
-fun showAll[T: Show](xs: JList<T>): Str = jFold("", \(x, acc) => concat(acc, x.show()), xs)
+fun showAll[T: Show](xs: JList[T]): Str = jFold("", \(x, acc) => concat(acc, x.show()), xs)
 
 // ---------- 顶入口 ----------
 fun parse(s: Str): Ret = parseValue(s, 0)
