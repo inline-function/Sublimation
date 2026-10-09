@@ -1,16 +1,16 @@
 // ============================================================
-// Sublimation（凝华）语言 v1.1 特性展示（Kotlin 风格语法）
+// Sublimation（凝华）语言 v2.0 特性展示（Kotlin 风格语法）
 // 模块结构：show/ 为编译入口根目录（根模块 = show.subl），
 //   show/stdlib/ 为自动挂载的标准库。
 // 运行：show\run.bat（compile show 目录 -> show.js，运行并输出 show.log）
 // 覆盖特性：
+//   v2.0：同名方法跨容器**重载**（size/map/filter/contains 按接收者路由）+
+//         集合 API 扩展（sum/maxNat/minNat/take/drop/union/intersect/keys/values…）+
+//         Optional/Result 工具（map/flatMap/filter/orElse…）→ JS 按首参标签唯一化命名
 //   v1.1 语法：if (cond) 强制括号 / a == b 中缀 / { x -> } lambda + 尾随 lambda /
 //              表达式体返回类型推导 / 块式显式 return / 接收者风格 xs.map {}
-//   集合 API：List / Set / Map + map / flatMap / filter / forEach / fold / size
 //   型类：class Show + impl（Grade/Student）+ 字典自动推理
-//   模式：when 解构 / 守卫 / else 兜底；元组
-//   值：Str / Nat / Rat / 插值 / 命名参数 / 高阶
-//   可靠：结构递归（P9 自动停机）；命题前后件（自动供给）
+//   模式：when 解构 / 守卫 / else 兜底；元组；命题前后件
 // ============================================================
 
 // ---------- 1. 学生成绩（结构体 + 列表 + 高阶） ----------
@@ -78,11 +78,25 @@ fun main() {
     @mut var grades: Set[Nat] = stdlib.setEmpty()
     grades = grades.add(3)
     grades = grades.add(7)
-    print("集合 contains(3) = ${grades.contains(3)}  size = ${grades.setSize()}")
+    print("集合 contains(3) = ${grades.contains(3)}  size = ${grades.size()}")
     @mut var phone: Map[Str, Nat] = stdlib.mapEmpty()
     phone = phone.put("Alice", 12345)
     var alice = phone.get("Alice").getOrElse(0)
-    print("表 get(Alice) = $alice  size = ${phone.mapSize()}")
+    print("表 get(Alice) = $alice  size = ${phone.size()}")
+    // v2.0 基本库：重载同名方法（接收者路由）+ 新集合 API
+    phone = phone.put("Bob", 555)
+    var hasBob = phone.containsKey("Bob")
+    var ks = phone.keys()
+    var vs = phone.values()
+    var kstr = ks.joinToString(", ")
+    var vstr = vs.joinToString(", ")
+    print("表 containsKey(Bob) = $hasBob  keys = $kstr  values = $vstr")
+    print("List sum = ${xs.sum()}  max = ${xs.maxNat().getOrElse(0)}  min = ${xs.minNat().getOrElse(0)}")
+    var big = grades.add(9)
+    print("并集 size = ${big.union(grades).size()}  交集 size = ${big.intersect(grades).size()}")
+    var maybe: Optional[Nat] = Some(6)
+    var doubledOpt = maybe.map { x -> x * 2 }
+    print("Optional.map = ${doubledOpt.getOrElse(0)}  isSome = ${maybe.isSome()}")
     giveP()
     takeP()
     print("命题供给 = OK")

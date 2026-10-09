@@ -125,6 +125,16 @@ fun moduleJsName(absPath: String, name: String): String {
     return if (p.isEmpty()) m else "${p}__$m"
 }
 
+/** v2.0 重载（决策 92 配套）：函数的 JS 后缀标签——按首参类型基名区分同名重载（0 参 → v0）。
+ *  重载注册已保证首参 render 不同，故基名在重载组内唯一；声明侧与调用侧（moduleHits）共用同一规则。 */
+fun fnTag(fn: sugared.functor.ast.FunDecl): String = when (val t = fn.params.firstOrNull()?.type) {
+    null -> "v0"
+    is sugared.functor.ast.NamedType -> t.name
+    is sugared.functor.ast.TupleType -> "tup"
+    is sugared.functor.ast.FunType -> "fn"
+    else -> "v0"
+}
+
 /** 限定方法调用的 codegen 标记（moduleHits 值）：限定方法走字典分发、首实参即接收者。 */
 const val MODULE_METHOD_MARKER = "\u0000module_method"
 

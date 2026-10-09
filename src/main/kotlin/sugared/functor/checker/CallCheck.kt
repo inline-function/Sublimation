@@ -86,7 +86,7 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
                 methodSugarArgs[c]!!, listOfNotNull(selfT) + argTypes, isMethodPath = true)
     }
 
-    val fn: FunDecl = (if (fieldCallee != null) null else syms.findFun(name))   // O2：点号形态直指型类方法，不被同名自由函数截胡
+    val fn: FunDecl = (if (fieldCallee != null) null else findCallable(name, argTypes))   // O2：点号形态直指型类方法，不被同名自由函数截胡；v2.0 按实参挑重载
         ?: run {
             // 型类方法调用（决策 60，T5；O2 双形态）：按 self 类型解析字典，按调用点留痕给 codegen
             if (isMethodName(name)) {
@@ -125,7 +125,7 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
         }
 
     if (!isMethodPath && syms.funs.containsKey(name))
-        moduleHits[c.callee] = moduleJsName(modulePath, name)   // P0：同模块全局调用按模块前缀留痕；内建（syms.funs 之外）不 mangle
+        moduleHits[c.callee] = jsOverloadName(modulePath, fn)   // P0：同模块全局调用按模块前缀留痕；v2.0 重载带首参标签
     // v1.1 方法糖：接收者前置重排 `xs.map(f)` → `map(xs, f)`（实参类型首项为接收者类型）
     val sugar = methodSugarArgs[c]
     if (sugar != null)
@@ -141,22 +141,49 @@ private fun Checker.methodSugar(name: String, selfT: Type?, fieldCallee: FieldEx
     if (fieldCallee == null || selfT == null) return null
     val (fn, mod) = findCollectionMethod(name, selfT) ?: return null
     methodSugarArgs[c] = listOf(fieldCallee.target) + c.args
-    moduleHits[c.callee] = moduleJsName(mod, name)
+    moduleHits[c.callee] = jsOverloadName(mod, fn)
     return fn
 }
 
-/** 在「本模块 + 内置 + 可见模块（含 stdlib）」中找同名自由函数且首参类型匹配接收者；返回 (函数, 模块路径)。 */
+/** v2.0 重载：JS 名带首参标签后缀（与 JsCodeGen 声明侧规则一致）——仅当相应模块存在同名重载组 */
+private fun Checker.jsOverloadName(mod: String, fn: FunDecl): String {
+    val hasOver = if (mod.isEmpty()) syms.funOverloads.containsKey(fn.name)
+                  else allSymbols[mod]?.funOverloads?.containsKey(fn.name) == true
+    return if (hasOver) "${moduleJsName(mod, fn.name)}\$${fnTag(fn)}" else moduleJsName(mod, fn.name)
+}
+
+/** 在「本模块 + 内置 + 可见模块（含 stdlib）」中找同名自由函数且首参类型匹配接收者；返回 (函数, 模块路径)。
+ *  v2.0：候选含同名的**重载**（不同首参类型）——按接收者类型挑选正确分派。 */
 private fun Checker.findCollectionMethod(name: String, selfT: Type): Pair<FunDecl, String>? {
     val cands = ArrayList<Pair<FunDecl, String>>()
     syms.findFun(name)?.let { cands += it to "" }
+    syms.funOverloads[name]?.forEach { cands += it to "" }
     if (moduleTree != null) visiblePaths.forEach { p ->
-        allSymbols[p]?.findFun(name)?.let { cands += it to p }
+        val s = allSymbols[p] ?: return@forEach
+        s.findFun(name)?.let { cands += it to p }
+        s.funOverloads[name]?.forEach { cands += it to p }
     }
     if (cands.isEmpty()) return null
     return cands.firstOrNull { (fn, _) ->
         val p0 = fn.params.firstOrNull()?.type ?: return@firstOrNull false
         paramMatchesRecv(syms.expand(p0), selfT)
-    }?.takeIf { it.first != null }
+    }
+}
+
+/** v2.0：普通（自由函数）调用按**实参首类型**从重载里挑选匹配项；无重载则退回主声明（保留原诊断路径）。
+ *  只查本模块（重载目前仅用于 stdlib 同模块方法名；跨模块走 findCollectionMethod）。 */
+private fun Checker.findCallable(name: String, argTypes: List<Type>): FunDecl? {
+    val main = syms.findFun(name)
+    val ovs = syms.funOverloads[name]
+    if (ovs == null) return main
+    val cands = ArrayList<FunDecl>(); main?.let { cands += it }; cands += ovs
+    val arity = cands.filter { it.params.size == argTypes.size }
+    val pool = if (arity.isNotEmpty()) arity else cands
+    pool.firstOrNull { fn ->
+        val p0 = fn.params.firstOrNull()?.type ?: return@firstOrNull true   // 0 参：匹配
+        argTypes.isNotEmpty() && paramMatchesRecv(syms.expand(p0), argTypes[0])
+    }?.let { return it }
+    return main
 }
 
 /** 首参（want）与接收者（self）类型匹配：同基名；类型实参递归（List[T] vs List[Nat]：T 是类型参数则通配）
@@ -186,10 +213,13 @@ private fun Checker.isMethodName(n: String): Boolean =
             s != null && (s.methods.containsKey(n) || n in s.traitMethods)
         })
 
-/** v1.1：是否存在同名自由函数（本模块 / 内置 / 可见模块含 stdlib）——集合方法糖候选 */
+/** v1.1：是否存在同名自由函数（本模块 / 内置 / 可见模块含 stdlib）——集合方法糖候选（v2.0：含重载） */
 private fun Checker.hasFreeFun(n: String): Boolean =
-    syms.findFun(n) != null ||
-        (moduleTree != null && visiblePaths.any { allSymbols[it]?.findFun(n) != null })
+    syms.findFun(n) != null || syms.funOverloads.containsKey(n) ||
+        (moduleTree != null && visiblePaths.any {
+            val s = allSymbols[it]
+            s != null && (s.findFun(n) != null || s.funOverloads.containsKey(n))
+        })
 
 /** 构造子调用公共段（决策 46/60，T5）：类型参数由实参推断；限定/普通共用。 */
 internal fun Checker.checkCtorCall(ci: CtorInfo, name: String, c: CallExpr, argTypes: List<Type>, modPath: String): Type {

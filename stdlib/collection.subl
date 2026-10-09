@@ -1,23 +1,47 @@
-// Sublimation 标准库（v1.1 Kotlin 化）：Set（集合）与 Map（表）
-// 独立枚举实现（结构递归自动停机）；方法糖 `s.contains(x)` / `s.add(x)` /
-// `m.get(k)` / `m.put(k, v)` → 接收者前置的自由函数调用
-// 注：stdlib 各 .subl 共享同一符号空间，Set 与 List 的同名方法需错开（size / setSize）
+// Sublimation 标准库（v2.0 Kotlin 化）：Set（集合）与 Map（表）
+// 独立枚举实现（结构递归自动停机）；方法糖 `s.contains(x)` / `m.get(k)` → 接收者前置的自由函数调用。
+// v2.0：与 List/Optional 的同名方法（size/contains/map…）通过**重载**共存，按接收者类型分派。
 enum Set[T] { SetNil(), SetCons(T, Set[T]) }
 enum Map[K, V] { MapNil(), MapCons(K, V, Map[K, V]) }
 
 fun setEmpty[T](): Set[T] = SetNil()
 fun mapEmpty[K, V](): Map[K, V] = MapNil()
 
+fun size[T](xs: Set[T]): Nat = when(xs) {
+    SetNil -> 0
+    SetCons(_, t) -> 1 + size(t)
+}
+
+fun isEmpty[T](xs: Set[T]): Bool = when(xs) {
+    SetNil -> true
+    SetCons(_, _) -> false
+}
+
 fun contains[T](xs: Set[T], x: T): Bool = when(xs) {
     SetNil -> false
     SetCons(h, t) -> if (h == x) { true } else { contains(t, x) }
 }
 
-fun add[T](xs: Set[T], x: T): Set[T] = SetCons(x, xs)
+fun add[T](xs: Set[T], x: T): Set[T] = if (contains(xs, x)) { xs } else { SetCons(x, xs) }
 
-fun setSize[T](xs: Set[T]): Nat = when(xs) {
-    SetNil -> 0
-    SetCons(_, t) -> 1 + setSize(t)
+fun remove[T](xs: Set[T], x: T): Set[T] = when(xs) {
+    SetNil -> SetNil()
+    SetCons(h, t) -> if (h == x) { remove(t, x) } else { SetCons(h, remove(t, x)) }
+}
+
+fun union[T](xs: Set[T], ys: Set[T]): Set[T] = when(xs) {
+    SetNil -> ys
+    SetCons(h, t) -> if (contains(ys, h)) { union(t, ys) } else { SetCons(h, union(t, ys)) }
+}
+
+fun intersect[T](xs: Set[T], ys: Set[T]): Set[T] = when(xs) {
+    SetNil -> SetNil()
+    SetCons(h, t) -> if (contains(ys, h)) { SetCons(h, intersect(t, ys)) } else { intersect(t, ys) }
+}
+
+fun toList[T](xs: Set[T]): List[T] = when(xs) {
+    SetNil -> Nil()
+    SetCons(h, t) -> Cons(h, toList(t))
 }
 
 fun get[K, V](m: Map[K, V], k: K): Optional[V] = when(m) {
@@ -27,7 +51,27 @@ fun get[K, V](m: Map[K, V], k: K): Optional[V] = when(m) {
 
 fun put[K, V](m: Map[K, V], k: K, v: V): Map[K, V] = MapCons(k, v, m)
 
-fun mapSize[K, V](m: Map[K, V]): Nat = when(m) {
+fun size[K, V](m: Map[K, V]): Nat = when(m) {
     MapNil -> 0
-    MapCons(_, _, t) -> 1 + mapSize(t)
+    MapCons(_, _, t) -> 1 + size(t)
+}
+
+fun containsKey[K, V](m: Map[K, V], k: K): Bool = when(m) {
+    MapNil -> false
+    MapCons(k0, _, t) -> if (k0 == k) { true } else { containsKey(t, k) }
+}
+
+fun remove[K, V](m: Map[K, V], k: K): Map[K, V] = when(m) {
+    MapNil -> MapNil()
+    MapCons(k0, v0, t) -> if (k0 == k) { t } else { MapCons(k0, v0, remove(t, k)) }
+}
+
+fun keys[K, V](m: Map[K, V]): List[K] = when(m) {
+    MapNil -> Nil()
+    MapCons(k0, _, t) -> Cons(k0, keys(t))
+}
+
+fun values[K, V](m: Map[K, V]): List[V] = when(m) {
+    MapNil -> Nil()
+    MapCons(_, v0, t) -> Cons(v0, values(t))
 }

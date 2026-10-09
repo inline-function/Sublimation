@@ -56,8 +56,15 @@ internal fun Checker.collectDecl(decl: Decl) {
         is FunDecl -> {
             // `_` 是匿名占位名，不入符号表（指导§54：标注为 _ 的标识符无法被后续引用）
             if (decl.name == "_") return
-            if (syms.funs.putIfAbsent(decl.name, decl) != null)
-                d.error("E-DUP-DECL", decl.pos, "函数 ${decl.name} 重复声明")
+            val prev = syms.funs.putIfAbsent(decl.name, decl)
+            if (prev != null) {
+                // v2.0 重载（决策 92 配套）：同名且**首参类型不同** → 登记为候选重载（方法糖按接收者分派）；
+                // 首参相同仍报 E-DUP-DECL（含 0 参函数：null == null）。
+                val p0 = prev.params.firstOrNull()?.type?.render()
+                val n0 = decl.params.firstOrNull()?.type?.render()
+                if (p0 != n0) syms.funOverloads.getOrPut(decl.name) { mutableListOf(prev) }.add(decl)
+                else d.error("E-DUP-DECL", decl.pos, "函数 ${decl.name} 重复声明")
+            }
         }
         is TypeAliasDecl -> {
             if (syms.aliases.putIfAbsent(decl.name, decl) != null)

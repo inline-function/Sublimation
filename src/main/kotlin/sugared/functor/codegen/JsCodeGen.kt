@@ -4,6 +4,7 @@ import sugared.functor.ast.*
 import sugared.functor.checker.MODULE_METHOD_MARKER
 import sugared.functor.checker.dictNameOf
 import sugared.functor.checker.jsMangle
+import sugared.functor.checker.fnTag
 import sugared.functor.checker.moduleJsName
 
 class CodegenError(message: String) : RuntimeException("[代码生成] $message")
@@ -60,6 +61,10 @@ class JsCodeGen {
     private var dictMethod = false
     /** 结构体字段名索引（从 AST 声明收集，codegen 不读符号表；P0：同名跨模块取最后者，见《模块系统.md》限制） */
     private val structFields = HashMap<String, List<String>>()
+    /** v2.0：重载函数名集合（同名 >1 声明）——这些名字在 JS 里需按首参标签唯一化，避免同名覆盖 */
+    private val overloadedFns = HashSet<String>()
+    /** v2.0：每模块的重载函数名集合（模块路径 → 名），声明侧按此加后缀（与 Checker 侧 moduleHits 判定一致） */
+    private val overloadsByUnit = HashMap<String, Set<String>>()
 
     fun generate(
         file: FileAst,
@@ -89,10 +94,12 @@ class JsCodeGen {
         sugarArgs = sugarHits
         currentPrefix = ""
         structFields.clear()
+        overloadsByUnit.clear()
         for ((_, fa) in units) for (e in fa.entries) if (e is DeclEntry) {
             val s = e.decl as? StructDecl ?: continue
             structFields[s.name] = s.fields.map { it.name }
         }
+        for ((p, fa) in units) overloadsByUnit[p] = collectOverloads(fa)
         // 收集构造子名：prelude + 全部模块 enum；tuple 形参位置键带模块前缀
         ctorNames.clear()
         ctorNames += listOf("true", "false", "null", "None", "Some")
@@ -331,7 +338,10 @@ class JsCodeGen {
         val slots = fn.theory.filterIsInstance<TypeParam>().filter { it.constraint != null }
             .map { "d_${it.constraint}_${it.name}" }
         val ps = (slots + fn.params.map { mangle(it.name) }).joinToString(", ")
-        line("function ${moduleJsName(currentPrefix, fn.name)}($ps) {")
+        // v2.0 重载：本模块内同名 >1 的函数按首参标签唯一化（`stdlib__map$List`），与 Checker 侧 moduleHits 同名规则一致
+        val base = moduleJsName(currentPrefix, fn.name)
+        val jsName = if (overloadsByUnit[currentPrefix]?.contains(fn.name) == true) "$base\$${fnTag(fn)}" else base
+        line("function $jsName($ps) {")
         indent++
         when (body) {
             is BlockExpr -> genBlockBody(body)
@@ -339,6 +349,19 @@ class JsCodeGen {
         }
         indent--
         line("}")
+    }
+
+    /** v2.0：收集模块内「同名且首参类型不同」的函数名（重载组）——与 Checker 的 E-DUP-DECL 放行判据一致 */
+    private fun collectOverloads(fa: FileAst): Set<String> {
+        val seen = HashMap<String, String>()
+        val out = HashSet<String>()
+        for (e in fa.entries) if (e is DeclEntry) {
+            val fd = e.decl as? FunDecl ?: continue
+            val tag = fd.params.firstOrNull()?.type?.render() ?: ""
+            val prev = seen.putIfAbsent(fd.name, tag)
+            if (prev != null && prev != tag) out += fd.name
+        }
+        return out
     }
 
     /** 块体展平进真正的 JS 函数/对象方法：语句逐条发射。

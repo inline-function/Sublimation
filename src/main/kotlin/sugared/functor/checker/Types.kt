@@ -157,6 +157,9 @@ class Symbols {
     val ctors = LinkedHashMap<String, CtorInfo>()
     val classes = LinkedHashMap<String, ClassDecl>()
     val funs = LinkedHashMap<String, FunDecl>()
+    /** v2.0：同名不同**首参类型**的自由函数重载（funs 含首个声明，其余候选存此）。
+     *  集合方法名（map/contains/size…）在不同容器类型上共用——方法糖按接收者类型分派。 */
+    val funOverloads = LinkedHashMap<String, MutableList<FunDecl>>()
     /** v1.1：表达式体省略返回类型时的**推导**返回类型表（函数名 → 类型），供调用点查询 */
     val inferredRets = LinkedHashMap<String, Type>()
     val methods = LinkedHashMap<String, MutableList<MethodEntry>>()

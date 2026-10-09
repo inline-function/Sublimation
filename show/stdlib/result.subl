@@ -1,6 +1,7 @@
-// Sublimation 标准库（v1.1 Kotlin 化）：Result / Optional
+// Sublimation 标准库（v2.0 Kotlin 化）：Result / Optional
 // Result[T, E]：Ok(T) 成功携带值；Err(E) 失败携带错误信息（比 Optional 多错误通道）
-// Optional[T]（Some/None）是编译器内建枚举，表达「有/无」
+// Optional[T]（Some/None）是编译器内建枚举，表达「有/无」。
+// v2.0：map/flatMap/filter 与 List / Set 同名**重载**——方法糖按接收者类型分派。
 enum Result[T, E] { Ok(T), Err(E) }
 
 fun isOk[T, E](r: Result[T, E]): Bool = when(r) {
@@ -8,18 +9,75 @@ fun isOk[T, E](r: Result[T, E]): Bool = when(r) {
     Err(_) -> false
 }
 
+fun isErr[T, E](r: Result[T, E]): Bool = when(r) {
+    Ok(_) -> false
+    Err(_) -> true
+}
+
 fun unwrapOr[T, E](r: Result[T, E], d: T): T = when(r) {
     Ok(x) -> x
     Err(_) -> d
 }
 
+fun map[T, U, E](r: Result[T, E], f: (T) => U): Result[U, E] = when(r) {
+    Ok(x) -> Ok(f(x))
+    Err(e) -> Err(e)
+}
+
+fun flatMap[T, U, E](r: Result[T, E], f: (T) => Result[U, E]): Result[U, E] = when(r) {
+    Ok(x) -> f(x)
+    Err(e) -> Err(e)
+}
+
+fun mapErr[T, E, F](r: Result[T, E], f: (E) => F): Result[T, F] = when(r) {
+    Ok(x) -> Ok(x)
+    Err(e) -> Err(f(e))
+}
+
+// mapResult / flatMapResult 保留（v1.1 名字，P5 验收用）
 fun mapResult[T, U, E](r: Result[T, E], f: (T) => U): Result[U, E] = when(r) {
     Ok(x) -> Ok(f(x))
     Err(e) -> Err(e)
 }
 
-// Optional 便捷方法（接收者风格 opt.getOrElse { }）
+// ---------- Optional 便捷方法（接收者风格 o.map {} / o.getOrElse {}） ----------
+
+fun map[T, U](o: Optional[T], f: (T) => U): Optional[U] = when(o) {
+    Some(x) -> Some(f(x))
+    None -> None()
+}
+
+fun flatMap[T, U](o: Optional[T], f: (T) => Optional[U]): Optional[U] = when(o) {
+    Some(x) -> f(x)
+    None -> None()
+}
+
+fun filter[T](o: Optional[T], f: (T) => Bool): Optional[T] = when(o) {
+    Some(x) -> if (f(x)) { o } else { None() }
+    None -> None()
+}
+
+fun isSome[T](o: Optional[T]): Bool = when(o) {
+    Some(_) -> true
+    None -> false
+}
+
+fun isNone[T](o: Optional[T]): Bool = when(o) {
+    Some(_) -> false
+    None -> true
+}
+
 fun getOrElse[T](o: Optional[T], d: T): T = when(o) {
     Some(x) -> x
     None -> d
+}
+
+fun orElse[T](o: Optional[T], d: Optional[T]): Optional[T] = when(o) {
+    Some(_) -> o
+    None -> d
+}
+
+fun toResult[T, E](o: Optional[T], e: E): Result[T, E] = when(o) {
+    Some(x) -> Ok(x)
+    None -> Err(e)
 }

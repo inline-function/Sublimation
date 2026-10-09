@@ -1,6 +1,7 @@
-// Sublimation 标准库（v1.1 Kotlin 化）：List —— 接收者风格 `xs.map {}` / `xs.filter {}` / `xs.forEach {}`
+// Sublimation 标准库（v2.0 Kotlin 化）：List —— 接收者风格 `xs.map {}` / `xs.filter {}` / `xs.forEach {}`
 // 挂载方式：编译入口根目录下的 stdlib/ 子模块，编译器为每个用户模块**隐式挂载**（无需写 settings）。
 // 类型实参统一方括号：声明 `enum List[T]`、实例化 `List[U]`。
+// v2.0：同名方法（size/map/filter/contains…）在不同容器类型上**重载**——方法糖按接收者类型分派。
 enum List[T] { Nil(), Cons(T, List[T]) }
 
 fun listLength[T](xs: List[T]): Nat = when(xs) {
@@ -8,15 +9,41 @@ fun listLength[T](xs: List[T]): Nat = when(xs) {
     Cons(_, t) -> 1 + listLength(t)
 }
 
-// Kotlin 风格别名：xs.size()（与 Set 的 size 分属不同 stdlib 模块，方法路由按接收者类型选择）
+// Kotlin 风格：xs.size()（List/Set/Map 各有同名重载，路由按接收者）
 fun size[T](xs: List[T]): Nat = when(xs) {
     Nil -> 0
     Cons(_, t) -> 1 + size(t)
 }
 
+fun isEmpty[T](xs: List[T]): Bool = when(xs) {
+    Nil -> true
+    Cons(_, _) -> false
+}
+
 fun head[T](xs: List[T]): Optional[T] = when(xs) {
     Nil -> None()
     Cons(h, _) -> Some(h)
+}
+
+fun last[T](xs: List[T]): Optional[T] = when(xs) {
+    Nil -> None()
+    Cons(h, Nil) -> Some(h)
+    Cons(_, t) -> last(t)
+}
+
+fun contains[T](xs: List[T], x: T): Bool = when(xs) {
+    Nil -> false
+    Cons(h, t) -> if (h == x) { true } else { contains(t, x) }
+}
+
+fun elementAt[T](xs: List[T], i: Nat): Optional[T] = when(xs) {
+    Nil -> None()
+    Cons(h, t) -> if (i == 0) { Some(h) } else { elementAt(t, i - 1) }
+}
+
+fun count[T](xs: List[T], f: (T) => Bool): Nat = when(xs) {
+    Nil -> 0
+    Cons(h, t) -> if (f(h)) { 1 + count(t, f) } else { count(t, f) }
 }
 
 fun map[T, U](xs: List[T], f: (T) => U): List[U] = when(xs) {
@@ -58,11 +85,44 @@ fun reverse[T](xs: List[T]): List[T] = when(xs) {
     Cons(h, t) -> append(reverse(t), Cons(h, Nil()))
 }
 
-// range 是数值递减递归（a → a+1），非结构（语法）子项——按 v1.0 计划 §11.3 用 unchecked 逃逸标注。
+// 数值递减递归（a → a+1），非结构子项——按 P9 用 unchecked 逃逸标注。
 fun range(a: Nat, b: Nat): List[Nat] {
     if (a < b) {
         unchecked var rest = range(a + 1, b)
         return Cons(a, rest)
     }
     return Nil()
+}
+
+fun take[T](xs: List[T], n: Nat): List[T] = when(xs) {
+    Nil -> Nil()
+    Cons(h, t) -> if (n == 0) { Nil() } else { unchecked var r = take(t, n - 1); Cons(h, r) }
+}
+
+fun drop[T](xs: List[T], n: Nat): List[T] = when(xs) {
+    Nil -> Nil()
+    Cons(h, t) -> if (n == 0) { xs } else { unchecked var r = drop(t, n - 1); r }
+}
+
+// zip 暂缓：元素为元组时 Cons 泛型推断因类型参数撞名（occurs check）误判——见 v2.0 记录，待命名空间 alpha 化后启用。
+
+fun joinToString[T](xs: List[T], sep: Str): Str =
+    fold(xs, "", { x, acc -> if (acc == "") { toStr(x) } else { concat(acc, concat(sep, toStr(x))) } })
+
+fun sum(xs: List[Nat]): Nat = fold(xs, 0, { x, acc -> acc + x })
+
+fun maxNat(xs: List[Nat]): Optional[Nat] = when(xs) {
+    Nil -> None()
+    Cons(h, t) -> when(t) {
+        Nil -> Some(h)
+        Cons(_, _) -> { var m = maxNat(t); when(m) { Some(v) -> if (h > v) { Some(h) } else { Some(v) }; None -> Some(h) } }
+    }
+}
+
+fun minNat(xs: List[Nat]): Optional[Nat] = when(xs) {
+    Nil -> None()
+    Cons(h, t) -> when(t) {
+        Nil -> Some(h)
+        Cons(_, _) -> { var m = minNat(t); when(m) { Some(v) -> if (h < v) { Some(h) } else { Some(v) }; None -> Some(h) } }
+    }
 }
