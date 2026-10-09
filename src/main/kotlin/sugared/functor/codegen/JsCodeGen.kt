@@ -65,6 +65,8 @@ class JsCodeGen {
     private val overloadedFns = HashSet<String>()
     /** v2.0：每模块的重载函数名集合（模块路径 → 名），声明侧按此加后缀（与 Checker 侧 moduleHits 判定一致） */
     private val overloadsByUnit = HashMap<String, Set<String>>()
+    /** v2.0：空安全 SafeCall 调用点的 JS 方法名（Checker 登记；SafeCallExpr → 函数名） */
+    private var safeCallExprNames: Map<Expr, String> = emptyMap()
 
     fun generate(
         file: FileAst,
@@ -123,6 +125,16 @@ class JsCodeGen {
         // prelude 枚举工厂（Optional/Null 不在用户源码里声明，需内置生成）
         line("const None = () => ({ tag: \"None\" });")
         line("const Some = (a0) => ({ tag: \"Some\", 0: a0 });")
+        // v2.0 空安全结构判定（决策 88-92，§7）：基本类型用 typeof，枚举/具名用 tag，函数 typeof===
+        // JS 不记录类型信息 → 结构判定（与 == 结构相等同源）；v1 纯结构、零 tag 名义区分。
+        line("const __isa = (v, t) => {")
+        line("  if (t === \"Nat\" || t === \"Int\" || t === \"Rat\") return typeof v === \"number\";")
+        line("  if (t === \"Str\") return typeof v === \"string\";")
+        line("  if (t === \"Bool\") return typeof v === \"boolean\";")
+        line("  if (t === \"Null\") return v === null || (v && v.tag === \"Null\");")
+        line("  if (t === \"(fn)\") return typeof v === \"function\";")
+        line("  return v !== null && typeof v === \"object\" && v.tag === t;")
+        line("};")
         // 结构相等助手（决策 32/53）：仅在源码用到 ==/!= 时注入，保持"未用则零运行时"
         if (units.any { (_, fa) -> needEqPreScan(fa) }) {
             line("const __eq = (a, b) => {")
@@ -442,6 +454,11 @@ class JsCodeGen {
         BotExpr -> "false"
         is UniExpr -> "(${unop(e.op)}${expr(e.operand)})"
         is BinExpr -> bin(e)
+        // v2.0 空安全（决策 88-92）
+        is ElvisExpr -> { val t = expr(e.left); "(() => { const _v = $t; return _v.tag === \"None\" ? ${expr(e.right)} : _v[0]; })()" }
+        is SafeCallExpr -> safeCallJs(e)
+        is CastExpr -> { val t = expr(e.target); "(() => { const _v = $t; return __isa(_v, \"${e.type.name}\") ? Some(_v) : None(); })()" }
+        is TypeTestExpr -> "(__isa(${expr(e.target)}, \"${e.type.name}\"))"
         is SymbolCallExpr -> symbolCall(e)
         is FieldExpr -> moduleHits[e] ?: "${expr(e.target)}.${mangle(e.name)}"   // P0：跨模块限定引用走留痕名
         is CallExpr -> call(e)
@@ -497,6 +514,23 @@ class JsCodeGen {
             "<", ">", "<=", ">=" -> if (a.size == 2) "(${a[0]} ${e.op} ${a[1]})" else "false"
             else -> "undefined"   // 未收录的前缀符号：不应出现（解析器 symbolCallStart 限定）
         }
+    }
+
+    /** v2.0 空安全 SafeCall：`a?.f(b)` → a 为 Some 时调 f(a0, b…) 并包 Some；None 短路返回 None。
+     *  方法名从 moduleHits[e] 取（Checker 已按接收者解构后的类型路由）；`
+     *  非 Optional 是语义已报错，genExpr 不会走到——防御性返回 None()。 */
+    private fun safeCallJs(e: SafeCallExpr): String {
+        val t = expr(e.target)
+        val inner = "_v[0]"
+        // 内建零参值方法（Str.length 等）：JS 原生 `.property` 后缀形态（无参）；解构后直接访问。
+        // 其余（stdlib 自由函数/重载方法）走函数调用 `fn(inner, args…)`。
+        if (e.name == "length" && e.args.isEmpty()) {
+            return "(() => { const _v = $t; return _v.tag === \"None\" ? None() : Some($inner.length); })()"
+        }
+        val fn = moduleHits[e] ?: jsMangle(e.name)
+        val argJs = e.args.joinToString(", ") { expr(it) }
+        val callJs = "$fn($inner${if (argJs.isNotEmpty()) ", $argJs" else ""})"
+        return "(() => { const _v = $t; return _v.tag === \"None\" ? None() : Some($callJs); })()"
     }
 
     private fun unop(op: String): String = when (op) {

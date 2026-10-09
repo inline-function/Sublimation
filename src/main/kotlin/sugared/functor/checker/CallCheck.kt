@@ -146,7 +146,7 @@ private fun Checker.methodSugar(name: String, selfT: Type?, fieldCallee: FieldEx
 }
 
 /** v2.0 重载：JS 名带首参标签后缀（与 JsCodeGen 声明侧规则一致）——仅当相应模块存在同名重载组 */
-private fun Checker.jsOverloadName(mod: String, fn: FunDecl): String {
+internal fun Checker.jsOverloadName(mod: String, fn: FunDecl): String {
     val hasOver = if (mod.isEmpty()) syms.funOverloads.containsKey(fn.name)
                   else allSymbols[mod]?.funOverloads?.containsKey(fn.name) == true
     return if (hasOver) "${moduleJsName(mod, fn.name)}\$${fnTag(fn)}" else moduleJsName(mod, fn.name)
@@ -154,7 +154,7 @@ private fun Checker.jsOverloadName(mod: String, fn: FunDecl): String {
 
 /** 在「本模块 + 内置 + 可见模块（含 stdlib）」中找同名自由函数且首参类型匹配接收者；返回 (函数, 模块路径)。
  *  v2.0：候选含同名的**重载**（不同首参类型）——按接收者类型挑选正确分派。 */
-private fun Checker.findCollectionMethod(name: String, selfT: Type): Pair<FunDecl, String>? {
+internal fun Checker.findCollectionMethod(name: String, selfT: Type): Pair<FunDecl, String>? {
     val cands = ArrayList<Pair<FunDecl, String>>()
     syms.findFun(name)?.let { cands += it to "" }
     syms.funOverloads[name]?.forEach { cands += it to "" }

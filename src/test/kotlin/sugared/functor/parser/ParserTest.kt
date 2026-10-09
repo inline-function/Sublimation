@@ -340,4 +340,44 @@ class ParserTest {
         val e = assertFailsWith<ParseFailure> { parseSource("fun f(x: Nat ?): Null = null", "t") }
         assertTrue(e.message!!.contains("期望"), "实际: ${e.message}")
     }
+
+    // ============ v2.0 空安全运算符（决策 88-92）：?: / ?. / >: / ? T ============
+
+    @Test
+    fun `elvis 空替代解析`() {
+        val v = (stmtsOf("var z = a ?: b")[0] as VarStmt).value as ElvisExpr
+        assertEquals("a", (v.left as NameRef).name)
+        assertEquals("b", (v.right as NameRef).name)
+    }
+
+    @Test
+    fun `safecall 标准形式解析`() {
+        val v = (stmtsOf("var z = s?.length()")[0] as VarStmt).value as SafeCallExpr
+        assertEquals("s", (v.target as NameRef).name)
+        assertEquals("length", v.name)
+        assertTrue(v.args.isEmpty())
+    }
+
+    @Test
+    fun `safecall 受限中缀解析`() {
+        // `a ?.f b`（INFIX-5/7）：同一行后继表达式作参数
+        val v = (stmtsOf("var z = a ?.add 3")[0] as VarStmt).value as SafeCallExpr
+        assertEquals("a", (v.target as NameRef).name)
+        assertEquals("add", v.name)
+        assertEquals(1, v.args.size)
+    }
+
+    @Test
+    fun `cast 安全转换解析`() {
+        val v = (stmtsOf("var z = a >: Rat")[0] as VarStmt).value as CastExpr
+        assertEquals("a", (v.target as NameRef).name)
+        assertEquals("Rat", v.type.name)
+    }
+
+    @Test
+    fun `typetest 问号类型测解析`() {
+        val v = (stmtsOf("var z = x ? Rat")[0] as VarStmt).value as TypeTestExpr
+        assertEquals("x", (v.target as NameRef).name)
+        assertEquals("Rat", v.type.name)
+    }
 }

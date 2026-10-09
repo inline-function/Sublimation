@@ -494,11 +494,30 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
             if (t.kind == Kind.BY) { pos++; left = ByExpr(left, parseBracketList()); continue }
             if (t.kind == Kind.GT) {
                 if (angle) break
+                // v2.0 空安全：`a >: T` 安全转换。词法层不粘连 `>:`（避免 `<valid<7>>` 终止符序列误判），
+                // 由 parser 在表达式位合成：GT 后紧跟 COLON 即安全转换，右操作数是**类型**不是值。
+                val nxTok = toks.getOrNull(pos + 1)
+                if (nxTok?.kind == Kind.COLON && t.line == nxTok.line) {
+                    pos += 2
+                    left = CastExpr(left, parseType())
+                    continue
+                }
                 pos++; left = BinExpr(">", left, parseUnary()); continue
             }
             if (t.kind == Kind.LT) {
                 if (!t.precededBySpace) break   // 紧贴的 < 属于 postfix 实例化
                 pos++; left = BinExpr("<", left, parseUnary()); continue
+            }
+            // v2.0 空安全：`a ? T` 运行时类型测（? 需前后空格——紧贴 = T? 后缀已在类型位处理）。
+            // 右操作数是类型名（结构判定目标），非值表达式。
+            if (t.kind == Kind.QUEST) {
+                pos++
+                left = TypeTestExpr(left, parseType())
+                continue
+            }
+            // v2.0 空安全：`a ?: b` 空替代
+            if (t.kind == Kind.ELVIS) {
+                pos++; left = ElvisExpr(left, parseUnary()); continue
             }
             if (t.kind in binops) {
                 pos++; left = BinExpr(t.text, left, parseUnary()); continue
@@ -519,6 +538,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         }
         return left
     }
+
+    /** v2.0 空安全（INFIX-5/7，决策 92）：`a ?.f b` 受限中缀——SAFECALL 后的下一 token（b）须为合法表达式起始。
+     *  与标识符中缀同套路：排除分支箭头/逗号/右括号/行尾等，避免误吞相邻表达式。 */
+    private fun safeCallArgStart(nx: Token): Boolean =
+        nx.kind !in setOf(Kind.ARROW, Kind.COMMA, Kind.RBRACE, Kind.RBRACKET, Kind.SEMI, Kind.RPAREN, Kind.ASSIGN, Kind.RET)
 
     /** P0 补全（决策 88）：标识符中缀要求右操作数也带空格前缀，且 f 与左右操作数同在一行（`a f b` 成立；`f(x)` 与跨行 `1\nx` 不是中缀）。
      *  右操作数还必须是合法表达式起始 token——排除 `->`（when 分支分隔/蕴含）、`,`、`}` 等，
@@ -549,6 +573,23 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         while (true) {
             val t = cur()
             when {
+                // v2.0 空安全：`a?.f(b)` 标准形式；`a ?.f b` 受限中缀（INFIX-5/7：f 为两参函数或单参方法时，
+                // 解析层无脑取同一行后继表达式为参数，合法性由语义层裁定）
+                t.kind == Kind.SAFECALL -> {
+                    pos++
+                    val name = nameToken()
+                    val args = if (peek(Kind.LPAREN)) {
+                        val (pa, na) = parseArgs()
+                        if (na.isNotEmpty()) throw ParseFailure(fileName, cur(), "安全调用不支持命名参数")
+                        pa
+                    } else {
+                        val nx = toks.getOrNull(pos)
+                        if (nx != null && nx.line == t.line && nx.precededBySpace && safeCallArgStart(nx))
+                            listOf(parseUnary())
+                        else emptyList()
+                    }
+                    e = SafeCallExpr(e, name, args)
+                }
                 t.kind == Kind.DOT -> { pos++; e = FieldExpr(e, nameToken()) }
                 t.kind == Kind.LPAREN -> {
                     // O3（决策 69）：大写名字 + `()`/`(IDENT = …)` 形态 → 命名字段构造；其余仍走普通调用

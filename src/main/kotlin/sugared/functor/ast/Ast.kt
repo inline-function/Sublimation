@@ -249,6 +249,28 @@ data object BotExpr : Expr                   // '⊥'
 data class BinExpr(val op: String, val left: Expr, val right: Expr, override val pos: String = "") : Expr
 data class UniExpr(val op: String, val operand: Expr, override val pos: String = "") : Expr
 
+/**
+ * v2.0 空安全运算符（决策 88-92）。
+ * 不做 BinExpr 复用——语义层需特判（Optional 解构/包装、分支注入），独立节点更清晰。
+ */
+
+/** `a ?: b` 空替代：a 为 Some(x) → x；a 为 None → b。类型 = a 内层与 b 的 join */
+data class ElvisExpr(val left: Expr, val right: Expr, override val pos: String = "") : Expr
+
+/** `a?.f(b)` 安全调用（含中缀 `a ?.f b`，INFIX-7 解析层 desugar）：a 为 Some(x) → Some(x.f(b))；None → None */
+data class SafeCallExpr(
+    val target: Expr,
+    val name: String,
+    val args: List<Expr>,
+    override val pos: String = "",
+) : Expr
+
+/** `a >: T` 安全转换：尝试把 a 转为 T（结构判定），成功 → Some(a)，失败 → None；不抛异常 */
+data class CastExpr(val target: Expr, val type: Type, override val pos: String = "") : Expr
+
+/** `a ? T` 运行时类型测：结构判定 a 是否为 T，返回 Bool；`if (a ? T)` 分支内智能转换 a : T */
+data class TypeTestExpr(val target: Expr, val type: Type, override val pos: String = "") : Expr
+
 /** 函数调用；尾随 lambda 已并入 args */
 data class CallExpr(
     val callee: Expr,

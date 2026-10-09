@@ -355,4 +355,74 @@ class ModuleE2ETest {
             )),
         )
     }
+
+    // ============ v2.0 空安全运算符（决策 88-92）：?: / ?. / >: ============
+
+    @Test
+    fun `v2 空安全 - elvis 空替代`() {
+        assumeTrue(nodeAvailable())
+        val res = File("stdlib/result.subl").readText()
+        val main = "@unpure fun main() {\n" +
+            "var a: Optional[Nat] = Some(5)\n" +
+            "var b: Optional[Nat] = None()\n" +
+            "var e1 = a ?: 0\n" +
+            "var e2 = b ?: 0\n" +
+            "print(\"e1=\$e1\")\n" +
+            "print(\"e2=\$e2\")\n" +
+            "}"
+        assertEquals(
+            "e1=5\ne2=0",
+            runTree(mapOf("stdlib/result.subl" to res, "main.subl" to main)),
+        )
+    }
+
+    @Test
+    fun `v2 空安全 - safecall 安全调用`() {
+        assumeTrue(nodeAvailable())
+        val res = File("stdlib/result.subl").readText()
+        val main = "@unpure fun main() {\n" +
+            "var s: Optional[Str] = Some(\"ab\")\n" +
+            "var n: Optional[Str] = None()\n" +
+            "var sl = s?.length()\n" +
+            "var nl = n?.length()\n" +
+            "print(\"sl=\${sl.getOrElse(0)}\")\n" +
+            "print(\"nl=\${nl.getOrElse(0)}\")\n" +
+            "}"
+        assertEquals(
+            "sl=2\nnl=0",
+            runTree(mapOf("stdlib/result.subl" to res, "main.subl" to main)),
+        )
+    }
+
+    @Test
+    fun `v2 空安全 - cast 安全转换`() {
+        assumeTrue(nodeAvailable())
+        val res = File("stdlib/result.subl").readText()
+        val main = "@unpure fun main() {\n" +
+            "var r = 5 >: Rat\n" +
+            "var w = \"x\" >: Rat\n" +
+            "print(\"r=\${r.isSome()}\")\n" +
+            "print(\"w=\${w.isSome()}\")\n" +
+            "}"
+        assertEquals(
+            "r=true\nw=false",
+            runTree(mapOf("stdlib/result.subl" to res, "main.subl" to main)),
+        )
+    }
+
+    @Test
+    fun `v2 空安全 - 类型测问号 T`() {
+        assumeTrue(nodeAvailable())
+        val main = "fun describe(x: Any): Bool = x ? Rat\n" +
+            "@unpure fun main() {\n" +
+            "var b1 = describe(5)\n" +
+            "var b2 = describe(\"a\")\n" +
+            "print(\"r=\${b1}\")\n" +
+            "print(\"s=\${b2}\")\n" +
+            "}"
+        assertEquals(
+            "r=true\ns=false",
+            runTree(mapOf("main.subl" to main)),
+        )
+    }
 }

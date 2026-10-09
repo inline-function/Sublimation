@@ -421,6 +421,11 @@ class Checker(
         }
         is BinExpr -> checkBin(e, f, pure)
         is SymbolCallExpr -> { e.args.forEach { checkExpr(it, f, pure) }; namedT("Bool", emptyList()) }
+        // v2.0 空安全（决策 88-92）
+        is ElvisExpr -> { val l = checkExpr(e.left, f, pure); val r = checkExpr(e.right, f, pure); checkElvis(e, l, r) }
+        is SafeCallExpr -> checkSafeCall(e, f, pure)
+        is CastExpr -> { checkExpr(e.target, f, pure); checkCast(e) }
+        is TypeTestExpr -> { checkExpr(e.target, f, pure); checkTypeTest(e) }
         is FieldExpr -> {
             // P0：跨模块限定引用 `core.gcd` / `c.Point`——纯名字链且首段非局部变量
             val qual = resolveQChain(e, f)
@@ -638,6 +643,60 @@ class Checker(
     internal fun nominalOf(e: Expr): Type? = when (e) {
         is NameRef -> if (syms.baseOf(namedT(e.name, emptyList())) != null) namedT(e.name, emptyList()) else null
         else -> null
+    }
+
+    // ============ v2.0 空安全运算符（决策 88-92） ============
+
+    /** Optional 内层类型：Optional[T] → T；非 Optional 返回 null */
+    private fun optionalInner(t: Type): Type? =
+        if (t is NamedType && t.name == "Optional" && t.args.size == 1) t.args[0] else null
+
+    /** `a ?: b`——a 为 Some(x) 时得 x，None 时得 b。返回 a 内层与 b 的 join（宽松升格）。 */
+    private fun checkElvis(e: ElvisExpr, l: Type, r: Type): Type {
+        val inner = optionalInner(l)
+        if (inner == null && !l.isSynthetic()) {
+            d.error("E-TYPE-MISMATCH", e.pos, "空替代左操作数应为 Optional[T]，实际 ${l.render()}")
+            return syntheticT("空替代")
+        }
+        if (inner == null) return r
+        // 内层与 b 的类型 join：数值升格（Nat⊔Int=Int），否则取内层（宽松）
+        return TypeInfer.unify(inner, r) ?: inner
+    }
+
+    /** `a?.f(b)`——a 为 Optional[T]，解构 T 后调用 f，结果重新包装为 Optional[U]。
+     *  依赖 findCollectionMethod（CallCheck.kt）找同名自由函数；类型由 f 返回类型 + Optional 包裹。 */
+    private fun checkSafeCall(e: SafeCallExpr, f: Frame, pure: Boolean): Type {
+        val selfT = checkExpr(e.target, f, pure)
+        val inner = optionalInner(selfT)
+        if (inner == null && !selfT.isSynthetic()) {
+            d.error("E-TYPE-MISMATCH", e.pos, "安全调用接收者应为 Optional[T]，实际 ${selfT.render()}")
+            return syntheticT("安全调用")
+        }
+        e.args.forEach { checkExpr(it, f, pure) }
+        // 用解构后的 inner 作为接收者，借 methodSugar 机制找同名自由函数并检查参数。
+        // 为复用 checkFnCall 的完整参数校验，构造一个 FieldExpr(target=NameRef(临时), name)。
+        val base = inner ?: syntheticT("安全调用解构")
+        val sugarFn = findCollectionMethod(e.name, base) ?: run {
+            d.error("E-UNBOUND-NAME", e.pos, "安全调用目标 ${e.name} 对 ${base.render()} 无匹配方法")
+            return syntheticT("安全调用")
+        }
+        // 登记 JS 调用名（与普通方法糖一致：模块前缀 + 重载标签）——codegen 生成 `<name>(inner, args…)`
+        moduleHits[e] = jsOverloadName(sugarFn.second, sugarFn.first)
+        // 返回类型 = f(inner, args…) 的返回类型包 Optional。
+        val ret = sugarFn.first.retType ?: namedT("Null", emptyList())
+        return namedT("Optional", listOf(ret))
+    }
+
+    /** `a >: T`——运行时结构判定 a 是否为 T；返回 Optional[T]。校验 T 可解析（不限定 a 类型，安全）。 */
+    private fun checkCast(e: CastExpr): Type {
+        checkTypeResolvable(e.type, emptyList())
+        return namedT("Optional", listOf(e.type))
+    }
+
+    /** `a ? T`——运行时结构判定 a 是否为 T；返回 Bool。校验 T 可解析。分支内智能转换由 IfExpr 处理。 */
+    private fun checkTypeTest(e: TypeTestExpr): Type {
+        checkTypeResolvable(e.type, emptyList())
+        return namedT("Bool", emptyList())
     }
 }
 
