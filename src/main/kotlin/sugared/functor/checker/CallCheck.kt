@@ -7,6 +7,9 @@ import sugared.functor.ast.*
 /** v2.0 异步（决策 93）：Task 对象方法名（taskJs 生成的 JS 对象字段） */
 internal val taskMethods = setOf("start", "join", "isAlive")
 
+/** v2.0 异步（决策 93）：Channel 对象方法名（channel 运行时 class 的方法） */
+internal val channelMethods = setOf("send", "receive", "close", "isClosed")
+
 /** 任务调用的目标变量名：`t.start()` → "t"（NameRef 直接取；其他形态不做跨表达追踪） */
 private fun taskTargetName(e: Expr): String? = when (e) {
     is NameRef -> e.name
@@ -53,7 +56,7 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
     // P0（M6，impl 也要挂载）：方法名判定跨可见模块（含兄弟/挂载模块的 impl），不再只看本模块。
     // v2.0 异步（决策 93）：Task 对象方法（start/join/isAlive）需纳入方法路径——它们不是型类方法/自由函数，
     // 但必须是接收者形态（o.start()）走 Task 特判；裸名 start(...) 不会被误解析。
-    val fieldCallee: FieldExpr? = (c.callee as? FieldExpr)?.takeIf { isMethodName(it.name) || hasFreeFun(it.name) || it.name in taskMethods }
+    val fieldCallee: FieldExpr? = (c.callee as? FieldExpr)?.takeIf { isMethodName(it.name) || hasFreeFun(it.name) || it.name in taskMethods || it.name in channelMethods }
     val freeName = (c.callee as? NameRef)?.name
         ?: ((c.callee as? InstExpr)?.target as? NameRef)?.name
     val isFreeFormMethod = fieldCallee == null && freeName != null &&
@@ -88,25 +91,70 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
     syms.structs[name]?.let { st -> return checkStructCall(st, name, c, argTypes, modulePath) }
     }
 
+    // v2.0 异步（决策 93，异步 §3.1/§5.4）：Channel 创建 `Channel[T]()` / `Channel[T](cap)`。
+    // 形态是 `callee = InstExpr(NameRef("Channel"))`，于构造子判定之后特判；创建点返回 Channel[T]。
+    // localChannels（本地通道登记）在 VarStmt 层做（`var ch = Channel<…>()` 才能拿到变量名）。
+    if (name == "Channel") {
+        val tArg = (c.callee as? InstExpr)?.terms?.firstOrNull()
+        val tT = when {
+            tArg is NameRef -> namedT(tArg.name, emptyList())
+            else -> { d.error("E-TYPE-MISSING", c.pos, "Channel 创建需显式类型参数：Channel[T]()（文档 CH-1/CH-2）"); syntheticT("Channel实参") }
+        }
+        if (c.args.size == 1 && argTypes[0].isNominal() && !typeLooseEq(argTypes[0], namedT("Nat", emptyList())))
+            d.error("E-TYPE-MISMATCH", c.pos, "Channel 缓冲容量须为 Nat：Channel[${tT.render()}](${argTypes[0].render()})")
+        if (c.args.size > 1) d.error("E-ARITY", c.pos, "Channel 创建最多一个容量实参")
+        channelUsed = true   // 告诉 codegen 注入 Channel 运行时 class
+        return namedT("Channel", listOf(tT))
+    }
+
     // v1.1 集合方法糖提前路径：`o.m(args)` 且 m 是「同名自由函数」（非 typeclass 方法名）→ 脱糖为 m(o, args)。
     // 自由函数名（map/filter/forEach…）不进 isMethodName 分支，须在 fn 解析链（含 E-UNBOUND 回退）之前截获。
-    // v2.0 异步（决策 93）：Task 对象方法（start/join/isAlive）在方法糖**之前**特判——它们是 taskJs 生成的
-    // JS 对象字段（codegen 天然生成 `t.start`），不登记 moduleHits/methodSugarArgs（避免覆盖字段访问形态）。
-    if (fieldCallee != null && name in taskMethods && selfT is NamedType && selfT.name == "Task" && selfT.args.size == 1) {
-        // E-NOT-STARTED 检查（TASK-7，异步 §1.6）：函数体内无 t.start() 而 t.join() → 报错。
-        // startTaskArgs 由 checkFun 在函数体扫描时按「调用目标名」登记；join 处比对同名。
-        when (name) {
-            "start" -> { taskTargetName(fieldCallee.target)?.let { startedTasks += it }; return namedT("Null", emptyList()) }
-            "isAlive" -> return namedT("Bool", emptyList())
-            "join" -> {
-                val tn = taskTargetName(fieldCallee.target)
-                if (tn != null && tn !in startedTasks)
-                    d.error("E-NOT-STARTED", c.pos, "任务 $tn 未 start() 即 join()（TASK-7：函数体内先 t.start() 再 t.join()）")
-                // join 是挂起操作（异步 §5.3 `await t.join()`）：async 上下文登记挂起点生成 await；
-                // 同步上下文同 E-NEED-ASYNC（挂起操作不得出现在同步函数）
-                if (curFunAsync) asyncAwaitHits[c] = true
-                else d.error("E-NEED-ASYNC", c.pos, "t.join() 是挂起操作，需 @async 上下文")
-                return selfT.args[0]
+    // v2.0 异步（决策 93）：Task 对象方法（start/join/isAlive）与 Channel 对象方法（send/receive/close/isClosed）
+    // 在方法糖**之前**特判——它们是 codegen 生成的 JS 对象/class 字段（天然生成 `t.start`），
+    // 不登记 moduleHits/methodSugarArgs（避免覆盖字段访问形态）。
+    if (fieldCallee != null && selfT is NamedType && selfT.args.size == 1) {
+        val inner = selfT.args[0]
+        when {
+            name in taskMethods && selfT.name == "Task" -> {
+                // E-NOT-STARTED 检查（TASK-7，异步 §1.6）：函数体内无 t.start() 而 t.join() → 报错。
+                when (name) {
+                    "start" -> { taskTargetName(fieldCallee.target)?.let { startedTasks += it }; return namedT("Null", emptyList()) }
+                    "isAlive" -> return namedT("Bool", emptyList())
+                    "join" -> {
+                        val tn = taskTargetName(fieldCallee.target)
+                        if (tn != null && tn !in startedTasks)
+                            d.error("E-NOT-STARTED", c.pos, "任务 $tn 未 start() 即 join()（TASK-7：函数体内先 t.start() 再 t.join()）")
+                        if (curFunAsync) asyncAwaitHits[c] = true
+                        else d.error("E-NEED-ASYNC", c.pos, "t.join() 是挂起操作，需 @async 上下文")
+                        return inner
+                    }
+                }
+            }
+            name in channelMethods && selfT.name == "Channel" -> {
+                // CH-6（异步 §3.6）：send 报 E-CHANNEL-CLOSED——当且仅当同一函数体内**顺序在前**存在 close(ch)；
+                // CH-5（§3.5）：receive 智能转换——本地创建的通道（无 close）→ 返回 T；否则 T?。
+                val cn = taskTargetName(fieldCallee.target)
+                when (name) {
+                    "send" -> {
+                        checkExpr(c.args.firstOrNull() ?: return syntheticT("send"), f, pure)
+                        if (cn != null && cn in closedChannels)
+                            d.error("E-CHANNEL-CLOSED", c.pos, "通道 $cn 已 close() 后 send()（CH-6：同一函数体内 close 在 send 前）")
+                        if (curFunAsync) asyncAwaitHits[c] = true
+                        else d.error("E-NEED-ASYNC", c.pos, "ch.send() 是挂起操作，需 @async 上下文")
+                        return namedT("Bool", emptyList())
+                    }
+                    "receive" -> {
+                        if (curFunAsync) asyncAwaitHits[c] = true
+                        else d.error("E-NEED-ASYNC", c.pos, "ch.receive() 是挂起操作，需 @async 上下文")
+                        // CH-5：本地创建（var ch = Channel<…>()）且未 close → 返回 T（编译器确定通道未关闭）；
+                        // 此时 codegen 需解包（receiveSmartHits 留痕）。参数位/未知一律 T?。
+                        val smart = cn != null && cn in localChannels && cn !in closedChannels
+                        receiveSmartHits[c] = smart
+                        return if (smart) inner else namedT("Optional", listOf(inner))
+                    }
+                    "close" -> { cn?.let { closedChannels += it }; return namedT("Null", emptyList()) }
+                    "isClosed" -> return namedT("Bool", emptyList())
+                }
             }
         }
     }

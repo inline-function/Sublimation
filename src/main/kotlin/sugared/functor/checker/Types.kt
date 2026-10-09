@@ -4,7 +4,8 @@ import sugared.functor.ast.*
 
 /** 基本类型集（prelude 内建；决策 45：单值类型=Null，None 专属 Optional[T]；决策 52：Any 受限顶类型；决策 62：元组具名形态；P2：Array[T]） */
 val BASE_TYPES = setOf("Nat", "Int", "Rat", "Str", "Bool", "Null", "Nothing", "Any",
-    "EmptyTuple", "SingleTuple", "Array")
+    "EmptyTuple", "SingleTuple", "Array",
+    "Task", "Channel")   // v2.0 异步（决策 93）：内建泛型类型（无用户声明，形如 Array）
 
 /** 合成类型（v1 类型推导不完整时的占位：泛型未绑定、lambda、$ 命题变量等） */
 fun syntheticT(reason: String): Type = namedT("(推导:$reason)")

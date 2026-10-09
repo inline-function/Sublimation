@@ -69,6 +69,10 @@ class JsCodeGen {
     private var safeCallExprNames: Map<Expr, String> = emptyMap()
     /** v2.0 异步（决策 93）：@async 函数体内的挂起点调用（CallExpr → true），生成 `await fn(...)` */
     private var awaitHits: Map<CallExpr, Boolean> = emptyMap()
+    /** v2.0 异步（§5.4）：源码用到 Channel 时注入 Channel 运行时 class（唯一的运行时组件，几十行） */
+    private var channelUsed = false
+    /** v2.0 异步（CH-5）：receive 智能转换（CallExpr → true）→ codegen 解包 `(…)[0]` */
+    private var receiveSmartHits: Map<CallExpr, Boolean> = emptyMap()
 
     fun generate(
         file: FileAst,
@@ -79,7 +83,9 @@ class JsCodeGen {
         namedArgHits: Map<CallExpr, List<Expr>> = emptyMap(),
         sugarHits: Map<CallExpr, List<Expr>> = emptyMap(),
         awaitHits: Map<CallExpr, Boolean> = emptyMap(),
-    ): String = generateUnits(listOf("" to file), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits)
+        channelUsed: Boolean = false,
+        receiveSmartHits: Map<CallExpr, Boolean> = emptyMap(),
+    ): String = generateUnits(listOf("" to file), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, receiveSmartHits)
 
     /** M8：全部模块合成一个 JS（顶层名字带模块前缀，根无前缀） */
     fun generateUnits(
@@ -91,6 +97,8 @@ class JsCodeGen {
         namedArgHits: Map<CallExpr, List<Expr>> = emptyMap(),
         sugarHits: Map<CallExpr, List<Expr>> = emptyMap(),
         awaitHits: Map<CallExpr, Boolean> = emptyMap(),
+        channelUsed: Boolean = false,
+        receiveSmartHits: Map<CallExpr, Boolean> = emptyMap(),
     ): String {
         dicts = dictHits
         this.moduleHits = moduleHits
@@ -99,6 +107,8 @@ class JsCodeGen {
         namedArgOrders = namedArgHits
         sugarArgs = sugarHits
         this.awaitHits = awaitHits
+        this.channelUsed = channelUsed
+        this.receiveSmartHits = receiveSmartHits
         currentPrefix = ""
         structFields.clear()
         overloadsByUnit.clear()
@@ -150,6 +160,32 @@ class JsCodeGen {
             line("  if (ka.length !== kb.length) return false;")
             line("  return ka.every(k => __eq(a[k], b[k]));")
             line("};")
+        }
+        // v2.0 异步（异步 §5.4）：Channel 小运行时——唯一运行时组件（缓冲/握手/关闭状态）。
+        // 无缓冲（cap=0）时 send/receive 同步握手：等待队列互相配对；缓冲时进队列。
+        if (channelUsed) {
+            line("class Channel {")
+            line("  constructor(cap = 0) { this.cap = cap; this.queue = []; this.waiting = []; this.closed = false; }")
+            line("  async send(v) {")
+            line("    if (this.closed) return false;")
+            line("    if (this.queue.length < this.cap || this.cap === 0 && this.waiting.length > 0) {")
+            line("      const w = this.waiting.shift();")
+            line("      if (w) { w(v); return true; }")
+            line("    }")
+            line("    if (this.queue.length >= this.cap) {")
+            line("      this.queue.push(v);")
+            line("      return new Promise((res) => { this.waiting.push(res); });")
+            line("    }")
+            line("    this.queue.push(v); return true;")
+            line("  }")
+            line("  async receive() {")
+            line("    if (this.closed && this.queue.length === 0) return { tag: \"None\" };")
+            line("    if (this.queue.length > 0) return { tag: \"Some\", 0: this.queue.shift() };")
+            line("    return new Promise((res) => { this.waiting.push((v) => res({ tag: \"Some\", 0: v })); });")
+            line("  }")
+            line("  close() { this.closed = true; }")
+            line("  isClosed() { return this.closed; }")
+            line("}")
         }
         for ((p, fa) in units) {
             currentPrefix = p
@@ -583,6 +619,9 @@ class JsCodeGen {
         // 构造子/枚举名：Bool 的 true/false 特判
         if (name == "true") return "true"
         if (name == "false") return "false"
+        // v2.0 异步（异步 §5.4）：Channel 创建 `Channel<T>()` / `Channel<T>(cap)` → new Channel(cap)
+        if (name == "Channel")
+            return "new Channel(${if (e.args.isEmpty()) "0" else expr(e.args[0])})"
         if (name == "println" || name == "print") {
             val a = e.args.joinToString(", ") { expr(it) }
             return "console.log($a)"
@@ -686,7 +725,9 @@ class JsCodeGen {
         val allArgs = listOf(preDicts, args).filter { it.isNotEmpty() }.joinToString(", ")
         val callJs = "$calleeJs($allArgs)"
         // v2.0 异步（决策 93）：挂起点调用（@async 体内调 @async 函数）生成 `await fn(...)`
-        return if (awaitHits[e] == true) "await $callJs" else callJs
+        val withAwait = if (awaitHits[e] == true) "await $callJs" else callJs
+        // v2.0 异步（CH-5）：receive 智能转换——本地未关闭通道的 receive 返回 T，运行时解包 Some 值
+        return if (receiveSmartHits[e] == true) "($withAwait)[0]" else withAwait
     }
 
     /** O3（决策 69）：命名字段构造 `A(name = e)` → 位置实参工厂调用，缺省字段传 undefined 取 JS 参数默认值；

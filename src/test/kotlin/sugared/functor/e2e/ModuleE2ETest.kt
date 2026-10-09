@@ -547,4 +547,78 @@ class ModuleE2ETest {
             assertTrue(bag.report().contains("E-NEED-ASYNC"), "诊断应含 E-NEED-ASYNC，实际:\n${bag.report()}")
         } finally { dir.deleteRecursively() }
     }
+
+    // ============ v2.0 异步 Channel（决策 93，异步 §3/§5.4）：创建/send/receive/close + CH-5/CH-6 ============
+
+    @Test
+    fun `v2 异步 - Channel 有缓冲 send receive 智能转换解包`() {
+        assumeTrue(nodeAvailable())
+        val main = "@unpure fun main() {\n" +
+            "  var ch = Channel<Nat>(1)\n" +
+            "  ch.send(42)\n" +
+            "  var x = ch.receive()\n" +   // 本地未关闭通道 → CH-5 智能转换返回 Nat 并解包
+            "  print(\"x=\$x\")\n" +
+            "}"
+        assertEquals("x=42", runTree(mapOf("main.subl" to main)))
+    }
+
+    @Test
+    fun `v2 异步 - Channel 参数位 receive 返回 Optional 用 when 解包`() {
+        assumeTrue(nodeAvailable())
+        val main = "@unpure @async fun consume(ch: Channel[Nat]): Null {\n" +
+            "  var x = ch.receive()\n" +   // 参数位 → T?（保守，CH-5 表）
+            "  when (x) {\n" +
+            "    Some(v) -> print(\"val=\$v\")\n" +
+            "    None -> print(\"closed\")\n" +
+            "  }\n" +
+            "}\n" +
+            "@unpure fun main() {\n" +
+            "  var ch = Channel<Nat>(1)\n" +
+            "  ch.send(7)\n" +
+            "  var t = Task { consume(ch) }\n" +
+            "  t.start()\n" +
+            "  t.join()\n" +
+            "}"
+        assertEquals("val=7", runTree(mapOf("main.subl" to main)))
+    }
+
+    @Test
+    fun `v2 异步 - Channel close 后 send 报 E-CHANNEL-CLOSED`() {
+        assumeTrue(nodeAvailable())
+        val main = "@unpure fun main() {\n" +
+            "  var ch = Channel<Nat>(1)\n" +
+            "  ch.close()\n" +
+            "  ch.send(42)\n" +
+            "}"
+        val dir = Files.createTempDirectory("subl-chan-closed").toFile()
+        try {
+            File(dir, "main.subl").writeText(main)
+            val mm = MultiModule(dir)
+            val bag = mm.checkAll()
+            assertTrue(bag.hasError, "应报 E-CHANNEL-CLOSED，实际通过")
+            assertTrue(bag.report().contains("E-CHANNEL-CLOSED"), "诊断应含 E-CHANNEL-CLOSED，实际:\n${bag.report()}")
+        } finally { dir.deleteRecursively() }
+    }
+
+    @Test
+    fun `v2 异步 - Channel 同步函数 send 报 E-NEED-ASYNC`() {
+        assumeTrue(nodeAvailable())
+        val main = "fun helper(): Bool {\n" +
+            "  var ch = Channel<Nat>(1)\n" +
+            "  var ok = ch.send(1)\n" +
+            "  return ok\n" +
+            "}\n" +
+            "@unpure fun main() {\n" +
+            "  var y = helper()\n" +
+            "  print(\"y=\$y\")\n" +
+            "}"
+        val dir = Files.createTempDirectory("subl-chan-sync").toFile()
+        try {
+            File(dir, "main.subl").writeText(main)
+            val mm = MultiModule(dir)
+            val bag = mm.checkAll()
+            assertTrue(bag.hasError, "应报 E-NEED-ASYNC，实际通过")
+            assertTrue(bag.report().contains("E-NEED-ASYNC"), "诊断应含 E-NEED-ASYNC，实际:\n${bag.report()}")
+        } finally { dir.deleteRecursively() }
+    }
 }

@@ -58,6 +58,14 @@ class Checker(
     internal val asyncAwaitHits = java.util.IdentityHashMap<CallExpr, Boolean>()
     /** v2.0 异步（TASK-7）：当前函数体内已 start() 的任务变量名集合（checkFun 进出清空）——join 处比对 */
     internal var startedTasks: MutableSet<String> = LinkedHashSet()
+    /** v2.0 异步（CH-5/CH-6）：当前函数体内**本地创建**（`var ch = Channel<…>()`）的通道名集合 */
+    internal var localChannels: MutableSet<String> = LinkedHashSet()
+    /** v2.0 异步（CH-6）：当前函数体内已 close(ch) 的通道名集合（顺序累积：close 在 send 前 → 报错） */
+    internal var closedChannels: MutableSet<String> = LinkedHashSet()
+    /** v2.0 异步（§5.4）：源码是否用到 Channel（决定 codegen 是否注入 Channel 运行时 class） */
+    internal var channelUsed = false
+    /** v2.0 异步（CH-5）：receive 智能转换留痕（CallExpr → 是否为本地未关闭通道），codegen 据此解包 */
+    internal val receiveSmartHits = java.util.IdentityHashMap<CallExpr, Boolean>()
     /** P9：变量血缘（子 → 父）：when 解构绑定变量 → 主题变量（`when(xs){Cons(_,t)->...}` ⇒ t→xs）。checkFun 进出清空恢复。 */
     internal var structSub: MutableMap<String, String> = LinkedHashMap()
     /**
@@ -209,10 +217,14 @@ class Checker(
         val savedFunName = curFunName; val savedFunParams = curFunParams; val savedStructSub = structSub
         val savedFunAsync = curFunAsync
         val savedStarted = startedTasks
+        val savedLocals = localChannels
+        val savedClosed = closedChannels
         curFunName = fn.name
         curFunParams = fn.params.map { it.name }
         structSub = LinkedHashMap()
         startedTasks = LinkedHashSet()
+        localChannels = LinkedHashSet()
+        closedChannels = LinkedHashSet()
         // v2.0 异步（决策 93）：main 天然 @async（异步 §2/§5.2）——无需注解即可调 async 函数并 await
         curFunAsync = "async" in fn.annotations || fn.name == "main"
         // P6（决策 82）：设置约束字典槽——`fun f[T: Show]` 体内 `x.show()`（x: T）指向槽 d_Show_T
@@ -281,6 +293,8 @@ class Checker(
         curFunName = savedFunName; curFunParams = savedFunParams; structSub = savedStructSub
         curFunAsync = savedFunAsync
         startedTasks = savedStarted
+        localChannels = savedLocals
+        closedChannels = savedClosed
     }
 
     /** O2（决策 68）：结构体自类型的裸字段名集合（枚举/基类型无裸字段） */
@@ -319,6 +333,9 @@ class Checker(
                     else t = want
                 }
                 f.declareVar(s.name, t)
+                // v2.0 异步（CH-5）：`var ch = Channel<…>()` 登记为本地通道——receive 智能转换据此
+                // 返回 T（编译器确定通道未关闭）；参数位/未知一律 T?。
+                if (t is NamedType && t.name == "Channel") localChannels += s.name
                 val mut = "mut" in s.annotations
                 if (mut) f.declareMut(s.name)
                 // 指导§42：var n = 0 注入 n = 0 与 n : T；
