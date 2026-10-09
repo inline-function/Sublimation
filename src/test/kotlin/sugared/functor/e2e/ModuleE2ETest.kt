@@ -707,4 +707,25 @@ class ModuleE2ETest {
             assertTrue(bag.report().contains("E-NEED-ASYNC"), "诊断应含 E-NEED-ASYNC，实际:\n${bag.report()}")
         } finally { dir.deleteRecursively() }
     }
+
+    // ============ v2.0 异步 stage 5：`if (!ch.isClosed())` 分支内 receive 智能转换 ============
+
+    @Test
+    fun `v2 异步 - if not isClosed 分支内参数位 receive 智能转换解包`() {
+        assumeTrue(nodeAvailable())
+        // ch 是**参数**（非本地创建）→ CH-5 不适用；但 `if (!ch.isClosed())` 分支内（阶段5 openChannels）
+        // receive 仍智能转换为 T（生成解包）。send 一个值让运行可验证。
+        val main = "@unpure @async fun consume(ch: Channel[Nat]): Null {\n" +
+            "  if (!ch.isClosed()) {\n" +
+            "    var v: Nat = ch.receive()\n" +
+            "    print(\"v=\$v\")\n" +
+            "  }\n" +
+            "}\n" +
+            "@unpure fun main() {\n" +
+            "  var ch: Channel[Nat] = Channel<Nat>(1)\n" +
+            "  ch.send(42)\n" +
+            "  consume(ch)\n" +
+            "}\n"
+        assertEquals("v=42", runTree(mapOf("main.subl" to main)))
+    }
 }

@@ -62,6 +62,9 @@ class Checker(
     internal var localChannels: MutableSet<String> = LinkedHashSet()
     /** v2.0 异步（CH-6）：当前函数体内已 close(ch) 的通道名集合（顺序累积：close 在 send 前 → 报错） */
     internal var closedChannels: MutableSet<String> = LinkedHashSet()
+    /** v2.0 异步（异步 §6 阶段5）：`if (!ch.isClosed())` 分支内已验证开放的通道名集合——
+     *  分支内 receive 智能转换为 T（与 CH-5 本地未关闭同理），分支结束清空 */
+    internal var openChannels: MutableSet<String> = LinkedHashSet()
     /** v2.0 异步（§5.4）：源码是否用到 Channel（决定 codegen 是否注入 Channel 运行时 class） */
     internal var channelUsed = false
     /** v2.0 异步（CH-5）：receive 智能转换留痕（CallExpr → 是否为本地未关闭通道），codegen 据此解包 */
@@ -568,7 +571,23 @@ class Checker(
                     nf
                 } else f
             } else f
-            val a = checkExpr(e.thenBlock, thenF, up, flow = flow)
+            // v2.0 异步（异步 §6 阶段5）：`if (!ch.isClosed())` 分支——then 检查期间 ch 视为已验证开放，
+            // 分支内 receive 智能转换为 T（与 CH-5 本地未关闭同理）。嵌套 if 时恢复外层登记。
+            val openCn: String? = when (val cond = e.cond) {
+                is UniExpr -> if (cond.op == "!") {
+                    val call = cond.operand as? CallExpr
+                    val fe = call?.callee as? FieldExpr
+                    if (fe != null && fe.name == "isClosed" && fe.target is NameRef)
+                        (fe.target as NameRef).name else null
+                } else null
+                else -> null
+            }
+            val a = if (openCn != null) {
+                val wasOpen = openCn in openChannels
+                openChannels += openCn
+                try { checkExpr(e.thenBlock, thenF, up, flow = flow) }
+                finally { if (!wasOpen) openChannels -= openCn }
+            } else checkExpr(e.thenBlock, thenF, up, flow = flow)
             val b = e.elseBlock?.let { checkExpr(it, f, up, flow = flow) }
             // 分支以 return 收尾＝发散（Kotlin 的 Nothing 协变）：不参与类型 join，
             // 否则 `if c { return 1 } else { n }` 会误报"分支不一致"

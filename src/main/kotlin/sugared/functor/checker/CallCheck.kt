@@ -147,8 +147,9 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
                         if (curFunAsync) asyncAwaitHits[c] = true
                         else d.error("E-NEED-ASYNC", c.pos, "ch.receive() 是挂起操作，需 @async 上下文")
                         // CH-5：本地创建（var ch = Channel<…>()）且未 close → 返回 T（编译器确定通道未关闭）；
+                        // 阶段5：`if (!ch.isClosed())` 分支内（openChannels）同理 → T。
                         // 此时 codegen 需解包（receiveSmartHits 留痕）。参数位/未知一律 T?。
-                        val smart = cn != null && cn in localChannels && cn !in closedChannels
+                        val smart = cn != null && ((cn in localChannels && cn !in closedChannels) || cn in openChannels)
                         receiveSmartHits[c] = smart
                         return if (smart) inner else namedT("Optional", listOf(inner))
                     }
