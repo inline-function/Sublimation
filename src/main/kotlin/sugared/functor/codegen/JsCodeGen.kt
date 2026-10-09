@@ -540,9 +540,9 @@ class JsCodeGen {
             "==" -> return "__eq(${expr(e.left)}, ${expr(e.right)})"
             "!=" -> return "(!__eq(${expr(e.left)}, ${expr(e.right)}))"
             "!", "¬" -> "!"
-            "&", "∧", "u&" -> "&&"
-            "|", "∨", "u|" -> "||"
-            "=", ":", "->", "→", "u->", "<->", "↔", "u<->", "u!=" -> return "true"  // 纯命题，擦除
+            "&", "∧" -> "&&"
+            "|", "∨" -> "||"
+            "=", ":", "->", "→", "<->", "↔" -> return "true"  // 纯命题，擦除
             else -> return "true"   // 自定义符号中缀（两参解糖）：命题，擦除
         }
         return "(${expr(e.left)} $op ${expr(e.right)})"

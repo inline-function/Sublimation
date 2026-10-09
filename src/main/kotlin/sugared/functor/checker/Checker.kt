@@ -405,8 +405,7 @@ class Checker(
 
     internal fun isPureValue(e: Expr): Boolean = when (e) {
         is IntLit, is StrLit, is NameRef -> true
-        is BinExpr -> e.op in setOf("+", "-", "*", "/", "=", "==", "!=", "<", ">", "<=", ">=", "&", "|", "∧", "∨",
-            "u&", "u|", "u->", "u<->", "u!=") &&
+        is BinExpr -> e.op in setOf("+", "-", "*", "/", "=", "==", "!=", "<", ">", "<=", ">=", "&", "|", "∧", "∨") &&
             isPureValue(e.left) && isPureValue(e.right)
         is UniExpr -> isPureValue(e.operand)
         // P4（决策 80）：纯函数调用也视为纯值——`var x = f(5)` 需注入 `x = f(5)` 供等式推理

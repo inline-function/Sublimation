@@ -27,7 +27,6 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
             Kind.LE, Kind.GE, Kind.AMP, Kind.PIPE, Kind.ARROW, Kind.IFF,
             Kind.EQ, Kind.NEQ,
             Kind.LAND, Kind.LOR, Kind.IMPLIES, Kind.EQUIV,
-            Kind.U_NEQ, Kind.U_IMPLIES, Kind.U_IFF, Kind.U_AND, Kind.U_OR,
         )
         // P0 补全（决策 88）：可作函数名前缀调用的运算符 token（`+(1,2)` 形态）。
         // 不含 MINUS（一元负优先）、symbolCallStart（`==(...)` 等已走 SymbolCallExpr 内建符号路径）。

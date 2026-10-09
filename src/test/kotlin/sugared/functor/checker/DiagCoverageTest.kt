@@ -43,10 +43,10 @@ class DiagCoverageTest {
     @Test fun `E-PROP-AMBIGUOUS`() =
         assertTrue(has("fun w[@q]<q>: Null {}\nfun main() { unchecked.axiom[alpha]\nunchecked.axiom[beta]\nw() }", "E-PROP-AMBIGUOUS"))
 
-    // prove 对 PImp 目标逐层 d+1 递归；u-> 左结合会一次下钻就转查原子目标，
+    // prove 对 PImp 目标逐层 d+1 递归；→ 左结合会一次下钻就转查原子目标，
     // 需右嵌套括号把深度堆过 maxDepth 才触发耗尽
     @Test fun `E-DEEP-SATURATION 右嵌套长蕴含链`() =
-        assertTrue(has("fun f(): Null <p1 u-> (p2 u-> (p3 u-> (p4 u-> (p5 u-> (p6 u-> (p7 u-> p8))))))> {}",
+        assertTrue(has("fun f(): Null <p1 → (p2 → (p3 → (p4 → (p5 → (p6 → (p7 → p8))))))> {}",
             "E-DEEP-SATURATION"))
 
     // ---------- 实体层 ----------

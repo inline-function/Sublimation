@@ -60,4 +60,15 @@ class LexerTest {
         val e = assertFailsWith<LexFailure> { toks("中") }
         assertEquals(1, e.line)
     }
+
+    @Test
+    fun `u系算符退役 - u箭头不再黏连为单一token`() {
+        // 修-1：删除 uOps 后 `u->` 不再是 u-系算符，而是 `u` 标识符 + `->` 箭头两个 token。
+        // 不再产生任何 U_* kind；u- 写法被词法隔离，源码只能用 Unicode 命题算符。
+        val ts = toks("p u-> q")
+        assertEquals(Kind.IDENT, ts[0].kind)   // p
+        assertEquals("u", ts[1].text)          // u 标识符（不黏连）
+        assertEquals(Kind.IDENT, ts[1].kind)
+        assertEquals(Kind.ARROW, ts[2].kind)   // -> 箭头（非 IMPLIES，uOps 不存在）
+    }
 }

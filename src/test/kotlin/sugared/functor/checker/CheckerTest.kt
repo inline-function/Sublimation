@@ -148,13 +148,13 @@ class CheckerTest {
     }
 
     @Test
-    fun `u系命题算符中缀与归约`() {
-        val src = "fun needQ()<q>: Null {}\nfun main() { unchecked.axiom[p]\nunchecked.axiom[p u-> q]\nneedQ() }"
+    fun `命题算符中缀与归约 Unicode版`() {
+        val src = "fun needQ()<q>: Null {}\nfun main() { unchecked.axiom[p]\nunchecked.axiom[p → q]\nneedQ() }"
         assertTrue(ok(src))
     }
 
     @Test
-    fun `u不等于归约为等式否定`() {
+    fun `Bool when 分支穷尽`() {
         val src = "fun f(b: Bool): Null { when(b) { true -> null false -> null } }"
         assertTrue(ok(src))
     }

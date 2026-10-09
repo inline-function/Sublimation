@@ -10,8 +10,6 @@ enum class Kind {
     // 运算/比较/赋值
     PLUS, MINUS, STAR, SLASH, PERCENT, ASSIGN, EQ, NEQ, LE, GE,
     ARROW, DARROW, IFF, AMP, PIPE, BANG,
-    // u-系纯命题算符（粘连书写，可中缀；决策 49/A4）
-    U_NEQ, U_IMPLIES, U_IFF, U_AND, U_OR,
     // v2.0 空安全运算符（多字符优先：`?.`/`?:` 在 `?` 前）
     // CAST `>:` **不在词法层粘连**——`<valid<7>>: Null` 的 `>>` 终止符序列会误粘连成 `>:`，
     // 破坏上下文命题解析。`a >: T` 由 parser 表达式层合成（见 parseExpr 的 GT 分支）。
@@ -54,12 +52,6 @@ class Lexer(private val src: String, private val fileName: String) {
     companion object {
         /** 逻辑符号是词法 token，禁止并入符号标识符 */
         val logicalSingletons = setOf('∀', '∃', '∧', '∨', '¬', '→', '↔', '⊤', '⊥')
-
-        /** u-系纯命题算符（粘连识别；长者优先） */
-        private val uOps = listOf(
-            "u<->" to Kind.U_IFF, "u->" to Kind.U_IMPLIES, "u!=" to Kind.U_NEQ,
-            "u&" to Kind.U_AND, "u|" to Kind.U_OR,
-        )
     }
 
     fun tokenize(): List<Token> {
@@ -105,10 +97,6 @@ class Lexer(private val src: String, private val fileName: String) {
         val c = src[i]
         if (c in '0'..'9') return readInt()
         if (c == '"') return readString()
-        // u-系命题算符：'u' 紧跟符号字符且该符号串是已知算符（`u&` 命中，`unit` 不命中）
-        if (c == 'u') uOps.firstOrNull { src.startsWith(it.first, i) }?.let { (op, k) ->
-            adv(op.length); return k to op
-        }
         if (isAsciiLetter(c) || c == '_') return readIdent()
         if (isSymbolStart(c)) return readSymbol()
 

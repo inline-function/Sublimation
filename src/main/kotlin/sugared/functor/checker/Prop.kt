@@ -34,13 +34,10 @@ object PropLogic {
         is ParamRefExpr -> PAtom("\$${e.index}", emptyList())
         is UniExpr -> PNot(fromExpr(e.operand))
         is BinExpr -> when (e.op) {
-            "->", "→", "u->" -> PImp(fromExpr(e.left), fromExpr(e.right))
-            "<->", "↔", "u<->" -> PIff(fromExpr(e.left), fromExpr(e.right))
-            "&", "∧", "u&" -> PAnd(fromExpr(e.left), fromExpr(e.right))
-            "|", "∨", "u|" -> POr(fromExpr(e.left), fromExpr(e.right))
-            // `u!=` 是纯命题"两表达式不相等"（指导§24），归约为等式的否定；
-            // 与函数 `!=`（Bool 值，落 PAtom）严格区分
-            "u!=" -> PNot(PAtom("=", listOf(e.left, e.right)))
+            "->", "→" -> PImp(fromExpr(e.left), fromExpr(e.right))
+            "<->", "↔" -> PIff(fromExpr(e.left), fromExpr(e.right))
+            "&", "∧" -> PAnd(fromExpr(e.left), fromExpr(e.right))
+            "|", "∨" -> POr(fromExpr(e.left), fromExpr(e.right))
             else -> PAtom(e.op, listOf(e.left, e.right))  // 比较、两参解糖 `q ○ p`=`○<q,p>`
         }
         is NameRef -> PAtom(e.name, emptyList())
