@@ -369,8 +369,18 @@ internal fun Checker.checkFnCall(
         } else if (!effTypes[i].isSynthetic() && !p.type.name.startsWith("(")) {
             if (want.isNominal() && !typeLooseEq(want, effTypes[i])) {
                 // 决策 59：Any 形参接受任意实参（受限顶类型）；其余仍须名义相等
-                if (!(want.name == "Any" && want.args.isEmpty()))
-                    d.error("E-TYPE-MISMATCH", c.pos, "实参 $i ${effTypes[i].render()} 与形参 ${want.render()} 不符")
+                if (!(want.name == "Any" && want.args.isEmpty())) {
+                    // v2.0 空安全自动解构（AD-1..4）：类型检查**失败**时，若实参是**单字段构造子应用**
+                    // （Some(x)/Ok(x)/Err(x)），解包内部值再匹配——代替子类型；不改表达式类型、单向。
+                    val unwrapped = autoUnwrapCtor(effArgs[i], want)
+                    if (unwrapped != null) {
+                        val newArgs = effArgs.toMutableList()
+                        newArgs[i] = unwrapped
+                        methodSugarArgs[c] = newArgs   // codegen 侧用解包后实参生成 JS（sugarArgs 留痕复用）
+                    } else {
+                        d.error("E-TYPE-MISMATCH", c.pos, "实参 $i ${effTypes[i].render()} 与形参 ${want.render()} 不符")
+                    }
+                }
             }
         }
     }
@@ -431,6 +441,35 @@ internal fun Checker.checkFnCall(
 private fun Checker.instTermsOf(c: CallExpr): List<Expr> = when (val callee = c.callee) {
     is InstExpr -> callee.terms
     else -> emptyList()
+}
+
+/**
+ * v2.0 空安全自动解构（AD-1..4）：实参类型检查**失败**时尝试。
+ * 实参是**单字段构造子应用**（Some(x)/Ok(x)/Err(x)，构造子 fields.size==1）且解构后
+ * 内部值类型与形参 want 松弛匹配 → 返回解包的内部表达式；否则 null（保持原错误）。
+ * 仅作用于**字面量构造子**调用（不含变量引用——AD-4 单向、不穿透边界，变量形态后续迭代）。
+ */
+private fun Checker.autoUnwrapCtor(arg: Expr, want: Type): Expr? {
+    val ce = arg as? CallExpr ?: return null
+    val cname = (ce.callee as? NameRef)?.name ?: return null
+    val info = syms.ctors[cname] ?: return null
+    if (info.fields.size != 1) return null           // AD-2：仅单字段构造子
+    if (ce.args.size != 1) return null
+    val inner = ce.args[0]
+    // 规避：名字位是局部变量构造（如 `var Some = ...`），仅构造函数名字引用才解构；且不穿透函数边界
+    // （构造子全局登记，无局部遮蔽概念，这里直接按登记判定）。
+    // 解构后内部值类型与 want 松弛匹配（数值升格/同名义）才放行——避免 `Some(Str)` 传给 Rat 形参。
+    val innerT = typeOf(inner)
+    if (!innerT.isSynthetic() && want.isNominal() && !typeLooseEq(innerT, want)) return null
+    return inner
+}
+
+/** 表达式类型的最小求值：仅用于自动解构的内层类型预判。 */
+private fun Checker.typeOf(e: Expr): Type = when (e) {
+    is IntLit -> namedT("Nat", emptyList())
+    is FloatLit -> namedT("Rat", emptyList())
+    is StrLit -> namedT("Str", emptyList())
+    else -> syntheticT("解构内层")
 }
 
 /**

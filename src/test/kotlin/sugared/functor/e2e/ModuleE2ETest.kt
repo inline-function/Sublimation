@@ -425,4 +425,19 @@ class ModuleE2ETest {
             runTree(mapOf("main.subl" to main)),
         )
     }
+
+    @Test
+    fun `v2 空安全 - 自动解构 Some 传基层形参`() {
+        assumeTrue(nodeAvailable())
+        val res = File("stdlib/result.subl").readText()
+        val main = "fun takeRat(n: Rat): Nat = 1\n" +
+            "@unpure fun main() {\n" +
+            "var x = takeRat(Some(5))\n" +
+            "print(\"x=\$x\")\n" +
+            "}"
+        assertEquals(
+            "x=1",
+            runTree(mapOf("stdlib/result.subl" to res, "main.subl" to main)),
+        )
+    }
 }
