@@ -1,5 +1,9 @@
 # Sublimation（凝华）
 
+<p align="center">
+  <img src="doc/icon.png" alt="Sublimation（凝华）" width="200"/>
+</p>
+
 **把类型系统与程序逻辑融合的编程语言。Kotlin 手写编译器，零第三方依赖，源码直接编译为 JavaScript。**
 
 语言名取自物理现象「凝华」——气态不经液态直接成固态。正如本文的命题不经运行时、直接在编译期析出为程序的静态保证。
