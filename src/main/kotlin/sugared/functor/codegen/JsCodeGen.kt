@@ -67,6 +67,8 @@ class JsCodeGen {
     private val overloadsByUnit = HashMap<String, Set<String>>()
     /** v2.0：空安全 SafeCall 调用点的 JS 方法名（Checker 登记；SafeCallExpr → 函数名） */
     private var safeCallExprNames: Map<Expr, String> = emptyMap()
+    /** v2.0 异步（决策 93）：@async 函数体内的挂起点调用（CallExpr → true），生成 `await fn(...)` */
+    private var awaitHits: Map<CallExpr, Boolean> = emptyMap()
 
     fun generate(
         file: FileAst,
@@ -76,7 +78,8 @@ class JsCodeGen {
         dictSubHits: Map<CallExpr, List<String>> = emptyMap(),
         namedArgHits: Map<CallExpr, List<Expr>> = emptyMap(),
         sugarHits: Map<CallExpr, List<Expr>> = emptyMap(),
-    ): String = generateUnits(listOf("" to file), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits)
+        awaitHits: Map<CallExpr, Boolean> = emptyMap(),
+    ): String = generateUnits(listOf("" to file), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits)
 
     /** M8：全部模块合成一个 JS（顶层名字带模块前缀，根无前缀） */
     fun generateUnits(
@@ -87,6 +90,7 @@ class JsCodeGen {
         dictSubHits: Map<CallExpr, List<String>> = emptyMap(),
         namedArgHits: Map<CallExpr, List<Expr>> = emptyMap(),
         sugarHits: Map<CallExpr, List<Expr>> = emptyMap(),
+        awaitHits: Map<CallExpr, Boolean> = emptyMap(),
     ): String {
         dicts = dictHits
         this.moduleHits = moduleHits
@@ -94,6 +98,7 @@ class JsCodeGen {
         dictSubArgs = dictSubHits
         namedArgOrders = namedArgHits
         sugarArgs = sugarHits
+        this.awaitHits = awaitHits
         currentPrefix = ""
         structFields.clear()
         overloadsByUnit.clear()
@@ -353,7 +358,9 @@ class JsCodeGen {
         // v2.0 重载：本模块内同名 >1 的函数按首参标签唯一化（`stdlib__map$List`），与 Checker 侧 moduleHits 同名规则一致
         val base = moduleJsName(currentPrefix, fn.name)
         val jsName = if (overloadsByUnit[currentPrefix]?.contains(fn.name) == true) "$base\$${fnTag(fn)}" else base
-        line("function $jsName($ps) {")
+        // v2.0 异步（决策 93）：@async 函数生成 `async function`——体内挂起点（awaitHits）生成 await
+        val asyncKw = if ("async" in fn.annotations) "async " else ""
+        line("${asyncKw}function $jsName($ps) {")
         indent++
         when (body) {
             is BlockExpr -> genBlockBody(body)
@@ -651,7 +658,9 @@ class JsCodeGen {
         // 仅 NameRef/InstExpr 直接定位（FieldExpr 字段值是函数值，无约束函数概念）。
         val preDicts = if (callee is FieldExpr) "" else (dictSubArgs[e] ?: emptyList()).joinToString(", ")
         val allArgs = listOf(preDicts, args).filter { it.isNotEmpty() }.joinToString(", ")
-        return "$calleeJs($allArgs)"
+        val callJs = "$calleeJs($allArgs)"
+        // v2.0 异步（决策 93）：挂起点调用（@async 体内调 @async 函数）生成 `await fn(...)`
+        return if (awaitHits[e] == true) "await $callJs" else callJs
     }
 
     /** O3（决策 69）：命名字段构造 `A(name = e)` → 位置实参工厂调用，缺省字段传 undefined 取 JS 参数默认值；

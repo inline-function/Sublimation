@@ -7,6 +7,7 @@ import java.io.File
 import java.nio.file.Files
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * P0 多模块端到端（v1.0 补全计划 §2.5 验收）：
@@ -439,5 +440,43 @@ class ModuleE2ETest {
             "x=1",
             runTree(mapOf("stdlib/result.subl" to res, "main.subl" to main)),
         )
+    }
+
+    // ============ v2.0 异步传染（决策 93，异步 §2）：@async 函数 + 挂起点 await ============
+
+    @Test
+    fun `v2 异步 - 传染链生成 async 和 await`() {
+        assumeTrue(nodeAvailable())
+        val main = "@async fun tick(): Nat = 1\n" +
+            "@async fun fetch(): Nat {\n" +
+            "  var x = tick()\n" +
+            "  return x + 1\n" +
+            "}\n" +
+            "@async @unpure fun main() {\n" +
+            "  print(\"f=\${fetch()}\")\n" +
+            "}"
+        assertEquals(
+            "f=2",
+            runTree(mapOf("main.subl" to main)),
+        )
+    }
+
+    @Test
+    fun `v2 异步 - 同步上下文调用 async 函数报错`() {
+        assumeTrue(nodeAvailable())
+        val main = "@async fun tick(): Nat = 1\n" +
+            "@unpure fun main() {\n" +
+            "  var x = tick()\n" +
+            "  print(\"x=\$x\")\n" +
+            "}"
+        // 编译必须失败：E-NEED-ASYNC（同步上下文调 @async 函数）
+        val dir = Files.createTempDirectory("subl-async-neg").toFile()
+        try {
+            File(dir, "main.subl").writeText(main)
+            val mm = MultiModule(dir)
+            val bag = mm.checkAll()
+            assertTrue(bag.hasError, "应报 E-NEED-ASYNC，实际通过")
+            assertTrue(bag.report().contains("E-NEED-ASYNC"), "诊断应含 E-NEED-ASYNC，实际:\n${bag.report()}")
+        } finally { dir.deleteRecursively() }
     }
 }

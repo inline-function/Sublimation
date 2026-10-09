@@ -77,6 +77,7 @@ class MultiModule(root: File) {
         val dictSubHits = IdentityHashMap<CallExpr, List<String>>()
         val namedArgHits = IdentityHashMap<CallExpr, List<Expr>>()
         val sugarHits = IdentityHashMap<CallExpr, List<Expr>>()
+        val awaitHits = IdentityHashMap<CallExpr, Boolean>()
         for (chk in checkers.values) {
             dictHits.putAll(chk.dictHits)
             moduleHits.putAll(chk.moduleHits)
@@ -84,7 +85,8 @@ class MultiModule(root: File) {
             dictSubHits.putAll(chk.dictSubHits)
             namedArgHits.putAll(chk.namedArgOrder)
             sugarHits.putAll(chk.methodSugarArgs)
+            awaitHits.putAll(chk.asyncAwaitHits)
         }
-        return JsCodeGen().generateUnits(asts.toList(), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits)
+        return JsCodeGen().generateUnits(asts.toList(), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits)
     }
 }

@@ -52,6 +52,10 @@ class Checker(
     /** P9（决策 44，用户授权 Max 倾向）：递归停机上下文——当前函数名/形参名/解构血缘 */
     internal var curFunName: String? = null
     internal var curFunParams: List<String> = emptyList()
+    /** v2.0 异步（决策 93）：当前函数是否 @async 上下文——checkFun 设置；@async 函数体内可自由调用挂起函数 */
+    internal var curFunAsync = false
+    /** v2.0 异步：@async 函数体内对 @async 函数的**挂起点**调用留痕（调用点 → true），codegen 处生成 await */
+    internal val asyncAwaitHits = java.util.IdentityHashMap<CallExpr, Boolean>()
     /** P9：变量血缘（子 → 父）：when 解构绑定变量 → 主题变量（`when(xs){Cons(_,t)->...}` ⇒ t→xs）。checkFun 进出清空恢复。 */
     internal var structSub: MutableMap<String, String> = LinkedHashMap()
     /**
@@ -201,9 +205,11 @@ class Checker(
         val tps = tpNamesOf(fn)
         // P9（决策 44）：设置递归停机上下文（函数名/形参/解构血缘按函数隔离）
         val savedFunName = curFunName; val savedFunParams = curFunParams; val savedStructSub = structSub
+        val savedFunAsync = curFunAsync
         curFunName = fn.name
         curFunParams = fn.params.map { it.name }
         structSub = LinkedHashMap()
+        curFunAsync = "async" in fn.annotations
         // P6（决策 82）：设置约束字典槽——`fun f[T: Show]` 体内 `x.show()`（x: T）指向槽 d_Show_T
         val savedConsSlots = funConsSlots
         funConsSlots = fn.theory.filterIsInstance<TypeParam>()
@@ -268,6 +274,7 @@ class Checker(
         paramTypes = savedParamTypes
         funConsSlots = savedConsSlots
         curFunName = savedFunName; curFunParams = savedFunParams; structSub = savedStructSub
+        curFunAsync = savedFunAsync
     }
 
     /** O2（决策 68）：结构体自类型的裸字段名集合（枚举/基类型无裸字段） */

@@ -339,6 +339,15 @@ internal fun Checker.checkFnCall(
         if (!proveOrDeep(f.allFacts(), PAtom("pure", listOf(calleeRef))))
             d.error("E-IMPURE-CALL", c.pos, "纯作用域内调用非纯函数 $name（用 unchecked 前缀，或在上下文供给 pure<$name>）")
     }
+    // v2.0 异步传染（决策 93，异步 §2）：被调函数是 @async → 调用点必须是 @async 上下文（curFunAsync）。
+    // async<f> 自然命题只标记「f 是关键子函数」的传播事实，不构成调用放行——同步上下文调用即报
+    // E-NEED-ASYNC（给调用方函数加 @async）；@async 函数体内的调用是**挂起点**——codegen 自动插入 await
+    // （异步阶段 1：main/Task 体的天然 @async 见阶段 2）。
+    if ("async" in fn.annotations && !curFunAsync && uncheckedDepth == 0) {
+        d.error("E-NEED-ASYNC", c.pos, "调用 @async 函数 $name 需 @async 上下文（给调用方函数 ${curFunName ?: "main"} 加 @async 注解）")
+    } else if ("async" in fn.annotations && curFunAsync) {
+        asyncAwaitHits[c] = true   // 挂起点：codegen 生成 await
+    }
     if (fn.params.size != effTypes.size && "vararg" !in fn.annotations) {
         // O2：方法路径参数数用专属码（期望数不含隐式 self，与自由函数区分开便于定位）
         if (isMethodPath) d.error("E-METHOD-ARGS", c.pos,

@@ -17,6 +17,8 @@ internal fun Checker.registerPureFacts() {
     globalFacts.clear()
     for ((name, fn) in syms.funs) {
         if ("unpure" !in fn.annotations) globalFacts += PAtom("pure", listOf(NameRef(name)))
+        // v2.0 异步（决策 93）：@async 函数注册自然命题 async<name>——同步上下文调用须显式供给/放行
+        if ("async" in fn.annotations) globalFacts += PAtom("async", listOf(NameRef(name)))
     }
     // impl 方法同样注册（按方法名）
     for ((name, entries) in syms.methods) {
