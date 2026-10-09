@@ -348,6 +348,16 @@ class CheckerTest {
     }
 
     @Test
+    fun `隐式单参 lambda 语法糖`() {
+        assertTrue(ok("fun main() { var f : (Nat)=>Nat = { _ + 1 }\nf(1) }"))
+    }
+
+    @Test
+    fun `隐式单参 lambda 尾随调用`() {
+        assertTrue(ok("fun apply1(f: (Nat)=>Nat): Nat = f(1)\nfun main() { apply1 { _ + 10 } }"))
+    }
+
+    @Test
     fun `解构 var 非元组初值报 E-TUPLE-DESTRUCT`() {
         assertTrue(errs("fun main() { var n = 5\nvar (b, c) = n }").contains("E-TUPLE-DESTRUCT"))
     }

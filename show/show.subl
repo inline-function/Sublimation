@@ -177,7 +177,7 @@ fun main() {
     var a = (1,2)
     var (b,c) = a
     print("元组解构 = $b..$c")
-    //默认单参
-    var lambda : (Nat)=>Nat = { x -> x + 1 }
+    //默认单参（隐式单参语法糖：无箭头，体里 `_` 引用单参）
+    var lambda : (Nat)=>Nat = { _ + 1 }
     print("lambda(41) = ${lambda(41)}")
 }

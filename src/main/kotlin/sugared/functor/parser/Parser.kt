@@ -617,7 +617,9 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                     try { e = InstExpr(e, parseAngleList()) }
                     catch (f: ParseFailure) { pos = save; break }
                 }
-                t.kind == Kind.LBRACE && braceIsLambda(pos) -> {
+                // 尾随 lambda（含隐式单参）；`Task { … }`（决策 93）是代码块非 lambda，交给下一分支
+                t.kind == Kind.LBRACE && (braceIsLambda(pos) ||
+                    (braceHasImplicitBody(pos) && !(e is NameRef && e.name == "Task"))) -> {
                     // v1.1 尾随 lambda 语法糖（Kotlin）：`f(a) { x -> … }` 追加为**最后**位置实参
                     val lam = parseBraceLambda()
                     e = if (e is CallExpr) e.copy(args = e.args + lam) else CallExpr(e, listOf(lam))
@@ -739,7 +741,7 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                     TupleExpr(items, "${t.line}:${t.col}")
                 } else { at(Kind.RPAREN); first }
             }
-            t.kind == Kind.LBRACE && braceIsLambda(pos) -> parseBraceLambda()
+            t.kind == Kind.LBRACE && (braceIsLambda(pos) || braceHasImplicitBody(pos)) -> parseBraceLambda()
             t.kind == Kind.VAR -> parseVarExpr(emptyList())
             t.kind == Kind.AT -> { val a = parseAnnotations(); if (peek(Kind.VAR)) parseVarExpr(a) else throw ParseFailure(fileName, cur(), "var") }
             t.kind == Kind.FUN -> parseAnonFunExpr()
@@ -899,16 +901,23 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
     /** v1.1 Kotlin 化 lambda：`{ a, b -> 语句…; 末表达式 }`。
      *  体支持语句（var/return/赋值/多句），末表达式为返回值；单表达式直接作为 lambda 体。 */
     private fun parseBraceLambda(): Expr {
+        val start = pos   // 指向 `{`（未消费）
         at(Kind.LBRACE)
         val ps = ArrayList<String>()
-        while (!peek(Kind.DARROW) && !peek(Kind.ARROW)) {
-            ps += nameToken()
-            if (peek(Kind.COMMA)) pos++
+        var hasArrow = false
+        if (braceIsLambda(start)) {
+            // 显式参数带箭头（`{ a, b -> … }` / `{ -> 7 }`）：读参数表直到箭头
+            while (!peek(Kind.DARROW) && !peek(Kind.ARROW)) {
+                ps += nameToken()
+                if (peek(Kind.COMMA)) pos++
+            }
+            hasArrow = true
+            at(if (peek(Kind.DARROW)) Kind.DARROW else Kind.ARROW)
         }
-        if (peek(Kind.DARROW)) at(Kind.DARROW) else at(Kind.ARROW)
+        // 否则（braceHasImplicitBody 触达）：隐式单参，体里的 `_` 引用单参（语法糖）
         val body = parseLambdaBody()
         at(Kind.RBRACE)
-        return LambdaExpr(ps, body)
+        return if (hasArrow) LambdaExpr(ps, body) else LambdaExpr(listOf("_"), body)
     }
 
     /** lambda 体：语句序列（含 return/var/exprstmt）；仅单条语句且为表达式时退化为表达式体 */
@@ -942,6 +951,25 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                 depth == 1 && (k == Kind.IDENT || k == Kind.SYMBOL) -> {}
                 depth == 1 && k == Kind.COMMA -> {}
                 depth == 1 -> sawBad = true   // 混入任何其他 token（如 `{ 1 -> x }` 的数字）即非 lambda
+                else -> {}
+            }
+            j++
+        }
+        return false
+    }
+
+    /** 隐式单参 lambda 诗据：大括号深度 1 内**无箭头/无类型冒号**，即 `{ 表达式 }` 形式——
+     *  体里的 `_` 引用隐式单参（语法糖，Kotlin `{ it + 1 }` 同款）。 */
+    private fun braceHasImplicitBody(start: Int): Boolean {
+        var depth = 0
+        var j = start
+        while (j < toks.size) {
+            val k = toks[j].kind
+            when {
+                k == Kind.LBRACE -> depth++
+                k == Kind.RBRACE -> { depth--; if (depth == 0) return true }
+                k == Kind.ARROW || k == Kind.DARROW || k == Kind.COLON -> return false  // 显式参数带箭头→交给 braceIsLambda；`:` 是类型测/类型标注→非隐式体
+                k == Kind.EOF -> return false
                 else -> {}
             }
             j++
