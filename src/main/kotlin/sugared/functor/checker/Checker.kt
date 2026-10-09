@@ -557,7 +557,18 @@ class Checker(
             // flow=false（值位，如 var x = if…）分支仍是表达式（codegen 编 IIFE）。条件表达式恒值位。
             val up = if (uncheckedDepth > 0) false else pure
             checkExpr(e.cond, f, up)   // 条件恒值位
-            val a = checkExpr(e.thenBlock, f, up, flow = flow)
+            // v2.0 空安全智能转换（决策 88-92）：条件为 `x ? T` 时 then 分支帧注入 `x : T`——
+            // 子帧遮蔽 x 的旧类型（Optional[T] → T），分支内 x 直接按 T 使用（Kotlin 智能转换扩展）。
+            val thenF: Frame = if (e.cond is TypeTestExpr) {
+                val tt = e.cond
+                if (tt.target is NameRef) {
+                    val nf = Frame(f)
+                    nf.declareVar(tt.target.name, tt.type)
+                    nf.inject(PAtom(":", listOf(tt.target, typeToExpr(tt.type))))
+                    nf
+                } else f
+            } else f
+            val a = checkExpr(e.thenBlock, thenF, up, flow = flow)
             val b = e.elseBlock?.let { checkExpr(it, f, up, flow = flow) }
             // 分支以 return 收尾＝发散（Kotlin 的 Nothing 协变）：不参与类型 join，
             // 否则 `if c { return 1 } else { n }` 会误报"分支不一致"

@@ -658,4 +658,22 @@ class ModuleE2ETest {
             "@unpure fun main() { print(\"ok\") }\n"
         assertEquals("ok", runTree(mapOf("main.subl" to main)))
     }
+
+    @Test
+    fun `v2 空安全 - if x?T 分支内智能转换收窄为 T`() {
+        assumeTrue(nodeAvailable())
+        // o: Any 参数，`if (o ? Point)` 分支内 o 从 Any 收窄为 Point（Kotlin 智能转换扩展）
+        val main = "struct Point(x: Nat, y: Nat)\n" +
+            "@unpure fun describe(o: Any): Null {\n" +
+            "  if (o ? Point) {\n" +
+            "    var pt: Point = o\n" +
+            "    print(\"pt.x=\${pt.x}\")\n" +
+            "  }\n" +
+            "}\n" +
+            "@unpure fun main() {\n" +
+            "  var p: Point = Point(3, 4)\n" +
+            "  describe(p)\n" +
+            "}\n"
+        assertEquals("pt.x=3", runTree(mapOf("main.subl" to main)))
+    }
 }
