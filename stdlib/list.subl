@@ -135,3 +135,9 @@ fun minNat(xs: List[Nat]): Optional[Nat] = when(xs) {
         Cons(_, _) -> { var m = minNat(t); when(m) { Some(v) -> if (h < v) { Some(h) } else { Some(v) }; None -> Some(h) } }
     }
 }
+
+// 去重（v2.0 基本库）：保留首次出现顺序。类型参数 A 避开 Cons 的 T 撞名（同 zip 注释）。
+fun distinct[A](xs: List[A]): List[A] = when(xs) {
+    Nil -> Nil()
+    Cons(h, t) -> if (contains(t, h)) { distinct(t) } else { Cons(h, distinct(t)) }
+}

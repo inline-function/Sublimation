@@ -75,3 +75,17 @@ fun values[K, V](m: Map[K, V]): List[V] = when(m) {
     MapNil -> Nil()
     MapCons(_, v0, t) -> Cons(v0, values(t))
 }
+
+// List → Set 转换（v2.0 基本库）
+fun toSet[A](xs: List[A]): Set[A] = when(xs) {
+    Nil -> SetNil()
+    Cons(h, t) -> add(toSet(t), h)
+}
+
+// List[(K,V)] → Map 转换（v2.0 基本库）。元组解构用 when (k, v) ->（无元组下标语法）。
+fun toMap[K, V](xs: List[(K, V)]): Map[K, V] = when(xs) {
+    Nil -> MapNil()
+    Cons(pr, t) -> when(pr) {
+        (k, v) -> put(toMap(t), k, v)
+    }
+}

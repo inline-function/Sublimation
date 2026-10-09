@@ -745,4 +745,24 @@ class ModuleE2ETest {
         val list = File("stdlib/list.subl").readText()
         assertEquals("zip ok", runTree(mapOf("main.subl" to src, "stdlib/list.subl" to list)))
     }
+
+    @Test
+    fun `v2 基本库 - distinct toSet toMap 常用集合函数`() {
+        assumeTrue(nodeAvailable())
+        val src = "@unpure fun main() {\n" +
+            "  var xs: List[Nat] = stdlib.range(1, 4)\n" +
+            "  var s = stdlib.toSet(xs)\n" +
+            "  var z = stdlib.zip(xs, xs)\n" +
+            "  var m = stdlib.toMap(z)\n" +
+            "  var d = stdlib.distinct(stdlib.append(xs, xs))\n" +
+            "  print(\"s=\${s.size()} m=\${m.size()} d=\${d.size()}\")\n" +
+            "}\n"
+        // toSet/toMap 在 collection.subl，distinct/zip 在 list.subl——两者都内联
+        val list = File("stdlib/list.subl").readText()
+        val coll = File("stdlib/collection.subl").readText()
+        assertEquals("s=3 m=3 d=3", runTree(mapOf(
+            "main.subl" to src,
+            "stdlib/list.subl" to list,
+            "stdlib/collection.subl" to coll)))
+    }
 }
