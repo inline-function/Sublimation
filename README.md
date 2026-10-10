@@ -1,7 +1,8 @@
 # Sublimation（凝华）
 
 <p align="center">
-  <img src="doc/icon.png" alt="Sublimation（凝华）" width="200"/>
+  <img src="brand/5-HT/语言图标.png" alt="Sublimation（凝华）语言图标" width="170"/>
+  <img src="brand/5-HT/表情包/灵感.jpg" alt="芙芙莎明 · 灵感" width="120"/>
 </p>
 
 **把类型系统与程序逻辑融合的编程语言。Kotlin 手写编译器，零第三方依赖，源码直接编译为 JavaScript。**
@@ -13,10 +14,6 @@
 ---
 
 ## 吉祥物：芙芙莎明（5-HT）
-
-<p align="center">
-  <img src="brand/5-HT/表情包/灵感.jpg" alt="芙芙莎明 · 灵感" width="150"/>
-</p>
 
 **芙芙莎明（5-HT）**——Sublimation 的吉祥物兼社区情绪稳定剂：桃发黑眼圈、粗框眼镜、头顶 ∀ 发光发夹，胸前挂着 λ 工牌与苯环；函数式、定理证明、药理学三合一，**命苦但温柔，表情包管够**。完整形象设定见 [`brand/5-HT/形象.md`](brand/5-HT/形象.md)。
 
