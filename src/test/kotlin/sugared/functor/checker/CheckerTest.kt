@@ -441,6 +441,54 @@ class CheckerTest {
             "@unpure fun main() { print(showIt(1)) }"))
     }
 
+    // ============ HKT（《高阶类型.md》）；单文件测不挂 stdlib，List/Optional 枚举内联 ============
+
+    private val hktEnv = "enum List[T] { Nil(), Cons(T, List[T]) }\n" +
+        "class Functor[F[_]] { fun map[A, B](f: (A) => B, fa: F[A]): F[B] }\n" +
+        "impl Functor for List[a] {\n" +
+        "  fun map[A, B](f: (A) => B, fa: List[A]): List[B] = when (fa) {\n" +
+        "    Nil -> Nil\n" +
+        "    Cons(h, t) -> Cons(f(h), map(f, t))\n" +
+        "  }\n" +
+        "}\n"
+
+    @Test
+    fun `HKT §7 自由式 map 字典分发通过`() {
+        assertTrue(ok(hktEnv + "fun main() {\n" +
+            "  var xs = Cons(1, Cons(2, Nil()))\n" +
+            "  var ys = map({ n -> n * 2 }, xs)\n" +
+            "}"))
+    }
+
+    @Test
+    fun `HKT F 单独出现报 E-KIND-MISMATCH（HKT-S5）`() {
+        // 类签名里 kind 形参 F 单独用作类型（无实参）——arity 表校验（checkTypeResolvable 带 classArity）
+        assertTrue(errs("class Functor[F[_]] { fun bad(): F }\nfun main() { }").contains("E-KIND-MISMATCH"))
+    }
+
+    @Test
+    fun `HKT F 实参数与 arity 不符报 E-KIND-MISMATCH（HKT-S1S2）`() {
+        // F arity=1，给 2 实参 → E-KIND-MISMATCH；正确应用 F[Nat] 则通过（HKT-S1 正确形态）
+        assertTrue(errs("class Functor[F[_]] { fun bad(x: F[Nat, Nat]): Null = null }\nfun main() { }").contains("E-KIND-MISMATCH"))
+    }
+
+    @Test
+    fun `HKT F 正确应用与签名通过（HKT-S1 正确形态）`() {
+        assertTrue(ok("class Functor[F[_]] { fun map[A, B](f: (A) => B, fa: F[A]): F[B] }"))
+    }
+
+    @Test
+    fun `HKT 缺方法报 E-IMPL-INCOMPLETE`() {
+        assertTrue(errs("class Functor[F[_]] { fun map[A, B](f: (A) => B, fa: F[A]): F[B] }\n" +
+            "impl Functor for List[a] { fun other(): Null = null }").contains("E-IMPL-INCOMPLETE"))
+    }
+
+    @Test
+    fun `HKT 字典名不含占位（HKT-D1）`() {
+        // dictNameOf：kind 型类 self 是构造子应用占位 → 只取构造子名
+        assertEquals("dict_Functor_List", dictNameOf("Functor", namedT("List", listOf(namedT("a")))))
+    }
+
     @Test
     fun `P7 id 泛型反推 n 类型 Nat`() {
         // §9.4 验收①：id(3) 的 T 从实参解出 Nat——needNat(id(3)) 通过即证明（id(3) 若解不出就是 synthetic/自由 T，实参核对报错）
