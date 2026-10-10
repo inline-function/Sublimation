@@ -1,3 +1,0 @@
-class Composer[F[_]] { fun go[A](x: F[List[A]]): Null }
-enum List[T] { Nil(), Cons(T, List[T]) }
-fun main() { }
