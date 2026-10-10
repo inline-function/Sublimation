@@ -57,8 +57,12 @@ internal fun Checker.checkImplsFrom(files: List<FileAst>) {
  *  无模块前缀（单文件/根模块）时保持旧名 dict_<Trait>_<Type>，向后兼容既有产物。 */
 internal fun dictNameOf(trait: String, self: Type, modulePath: String = ""): String {
     val p = mangleModule(modulePath)
-    return if (p.isEmpty()) "dict_${trait}_${sanitize(self.render())}"
-           else "dict_${p}_${trait}_${sanitize(self.render())}"
+    // HKT-D1（《高阶类型.md》§6.1）：kind 型类 self 是构造子应用占位（`List[a]` 的 a 为小写裸名）时，
+    // 字典名只取**构造子名**（dict_Functor_List），不含 `[a]`（列表/可选同型类区分保持）。
+    val selfName = if (self is NamedType && self.args.any { it is NamedType && isKindPlaceholder(it) }) self.name
+                   else self.render()
+    return if (p.isEmpty()) "dict_${trait}_${sanitize(selfName)}"
+           else "dict_${p}_${trait}_${sanitize(selfName)}"
 }
 
 internal fun sanitize(s: String): String = s.map { if (it.isLetterOrDigit()) it else '_' }.joinToString("")
