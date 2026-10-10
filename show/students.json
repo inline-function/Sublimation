@@ -1,0 +1,10 @@
+{
+  "teacher": "王老师",
+  "class": "三年二班",
+  "students": [
+    { "name": "张伟", "chinese": 92, "math": 88, "english": 79 },
+    { "name": "李娜", "chinese": 85, "math": 96, "english": 90 },
+    { "name": "王芳", "chinese": 78, "math": 82, "english": 85 },
+    { "name": "刘洋", "chinese": 90, "math": 65, "english": 72 }
+  ]
+}
