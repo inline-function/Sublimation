@@ -174,7 +174,10 @@ internal fun Checker.checkDeclTypes(decl: Decl) {
             } }
             // P0：impl 的 trait/self 若为限定类型，按模块可见性校验
             checkTypeResolvable(decl.trait, emptyList())
-            checkTypeResolvable(decl.self, emptyList())
+            // HKT（《高阶类型.md》HKT-S6）：impl self 的 kind 占位变量（`List[a]` 的 a）是隐式绑定，
+            // 属合法名字——并入 tps 放行（self 其余实参仍按普通类型检查）
+            val selfTps = decl.self.args.filterIsInstance<NamedType>().filter { it.args.isEmpty() }.map { it.name }
+            checkTypeResolvable(decl.self, selfTps)
         }
         is EnumDecl -> if (decl.name !in setOf("Bool", "Null", "Optional"))
             decl.ctors.forEach { c -> c.fields.forEach { checkTypeResolvable(it, tpNamesOf(decl)) } }

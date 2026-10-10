@@ -19,7 +19,16 @@ internal fun Checker.checkImplsFrom(files: List<FileAst>) {
             }
             // 登记型类的候选方法名（即使尚无实例）；实例匹配仍只认 impl 里的条目
             cls.members.forEach { m -> syms.traitMethods.add(m.name) }
-            val sub = tpNamesOf(cls).zip(impl.self.args.ifEmpty { listOf(impl.self) }).toMap()
+            // 形参绑定表：class 类型形参 → impl.self 的实参。
+            // 普通型类（Show[T] ↔ impl for Int）按旧逻辑 T↔Int（self.args 空则 self 本体）。
+            // HKT（《高阶类型.md》HKT-S6，方案 A）：kind 形参 F[_] ↔ `impl for List[a]` 时
+            // F 应绑到**构造子名** List（零实参），而非占位变量 a（self.args 是隐式占位，HKT-S6）。
+            val clsArity = tpArityOf(cls)
+            val sub: Map<String, Type> = tpNamesOf(cls).mapIndexed { i, pname ->
+                val ar = clsArity[pname] ?: 0
+                if (ar > 0) pname to (when (val s = impl.self) { is NamedType -> NamedType(s.name); else -> s })
+                else pname to (impl.self.args.getOrNull(i) ?: impl.self)
+            }.toMap()
             val classMethods = cls.members.associateBy { it.name }
             val implNames = impl.members.map { it.name }.toSet()
             for ((mname, msig) in classMethods) {
@@ -103,8 +112,32 @@ internal fun Checker.signatureMatch(sig: FunDecl, impl: FunDecl, sub: Map<String
     if (sig.params.size != impl.params.size) return false
     val sret = sig.retType ?: return impl.retType == null
     val iret = impl.retType ?: return false
-    if (!typeEq(sret.substT(sub), iret)) return false
-    return sig.params.zip(impl.params).all { typeEq(it.first.type.substT(sub), it.second.type) }
+    if (!typeEq(kindExpand(sret, sub), iret)) return false
+    return sig.params.zip(impl.params).all { typeEq(kindExpand(it.first.type, sub), it.second.type) }
+}
+
+/** HKT（《高阶类型.md》HKT-S6，方案 A）：把类签名里的 kind 形参应用展开为构造子应用——
+ *  `F[B]`（arity>0 的形参在 sub 里绑到构造子名 List）→ `List[B]`；普通形参仍走 substT-substT。 */
+private fun kindExpand(t: Type, sub: Map<String, Type>): Type = when (t) {
+    is NamedType ->
+        if (t.args.isNotEmpty()) {
+            // 形参是 kind 形参（sub 里有绑定且是零实参构造子名）→ 应用展开为构造子应用
+            val binding = sub[t.name]
+            if (binding is NamedType && binding.args.isEmpty())
+                NamedType(binding.name, t.args.map { kindExpand(it, sub) })
+            else NamedType(t.name, t.args.map { kindExpand(it, sub).substTRec(sub) })
+        } else t.substT(sub)
+    is FunType -> FunType(t.params.map { kindExpand(it, sub) }, kindExpand(t.ret, sub), t.purity)
+    is TupleType -> TupleType(t.items.map { kindExpand(it, sub) })
+    else -> t
+}
+
+/** 递归 substT（NamedType.substT 只替换零实参形参；kindExpand 已处理 kind 应用，此处补普通形参深替换） */
+private fun Type.substTRec(sub: Map<String, Type>): Type = when (this) {
+    is NamedType -> if (name in sub && args.isEmpty()) sub.getValue(name) else NamedType(name, args.map { it.substTRec(sub) })
+    is FunType -> FunType(params.map { it.substTRec(sub) }, ret.substTRec(sub), purity)
+    is TupleType -> TupleType(items.map { it.substTRec(sub) })
+    else -> this
 }
 
 internal fun StructDecl.typeArgsSub(t: Type): Map<String, Type> {
