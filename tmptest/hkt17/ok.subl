@@ -1,0 +1,2 @@
+class Composer[F[_], G[_]] { fun go[A](x: F[A]): Null = null }
+fun main() { }

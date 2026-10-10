@@ -484,6 +484,21 @@ class CheckerTest {
     }
 
     @Test
+    fun `HKT R1 嵌套 kind 变量报 E-NON-PATTERN-HKT`() {
+        // F[G[Nat]]：G 同为 kind 形参——实参须独立类型变量（HKT-R1）
+        assertTrue(errs("class Composer[F[_], G[_]] { fun go[A](x: F[G[Nat]]): Null }\nfun main() { }").contains("E-NON-PATTERN-HKT"))
+    }
+
+    @Test
+    fun `HKT R1 独立类型变量与具名应用放行`() {
+        // F[A]（独立变量）与 F[List[A]]（具名构造子应用，非 kind 变量）均合法；
+        // F[G[A]] 仍为嵌套（G 是 kind 形参）→ E-NON-PATTERN-HKT
+        assertTrue(ok("class Composer[F[_]] { fun go[A](x: F[A], y: F[List[A]]): Null }\n" +
+            "enum List[T] { Nil(), Cons(T, List[T]) }\nfun main() { }"))
+        assertTrue(errs("class Composer[F[_], G[_]] { fun go[A](x: F[G[A]]): Null }\nfun main() { }").contains("E-NON-PATTERN-HKT"))
+    }
+
+    @Test
     fun `HKT 字典名不含占位（HKT-D1）`() {
         // dictNameOf：kind 型类 self 是构造子应用占位 → 只取构造子名
         assertEquals("dict_Functor_List", dictNameOf("Functor", namedT("List", listOf(namedT("a")))))

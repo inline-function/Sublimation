@@ -234,7 +234,14 @@ internal fun Checker.checkTypeResolvable(t: Type, tps: List<String>, arity: Map<
                     t.args.isEmpty() -> d.error("E-KIND-MISMATCH", "", "类型构造子 ${t.name} 须应用（如 ${t.name}[_]，arity=$tpArity）——HKT-S5")
                     t.args.size != tpArity ->
                         d.error("E-KIND-MISMATCH", "", "构造子 ${t.name} 实参数 ${t.args.size} 与声明 arity $tpArity 不符——HKT-S1/S2")
-                    else -> {}
+                    else -> {
+                        // HKT-R1（《高阶类型.md》§4.1，E-NON-PATTERN-HKT）：kind 形参应用实参必须是独立类型
+                        // 变量/具体构造子——禁止嵌套 kind 变量（F[G[Nat]]，G 同为 arity>0 形参）。保 pattern 片段。
+                        t.args.forEach { a ->
+                            if (a is NamedType && (arity[a.name] ?: 0) > 0)
+                                d.error("E-NON-PATTERN-HKT", "", "嵌套 kind 变量 ${t.name}[${a.render()}]——实参须独立类型变量（HKT-R1）")
+                        }
+                    }
                 }
             }
             if (t.name in tps) return
