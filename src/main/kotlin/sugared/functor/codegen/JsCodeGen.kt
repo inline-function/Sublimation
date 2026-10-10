@@ -76,6 +76,9 @@ class JsCodeGen {
     private var channelUsed = false
     /** v2.0 异步（CH-5）：receive 智能转换（CallExpr → true）→ codegen 解包 `(…)[0]` */
     private var receiveSmartHits: Map<CallExpr, Boolean> = emptyMap()
+    /** HKT（《高阶类型.md》HKT-D2）：带参型类方法调用点 → kind 应用位下标（点号式 `xs.map(f)` 的 fa 位）。
+     *  字典签名 (d, f, fa) 无 __self——接收者按此重排，而非首参位。 */
+    private var hktKindPosHits: Map<CallExpr, Int> = emptyMap()
 
     fun generate(
         file: FileAst,
@@ -88,7 +91,8 @@ class JsCodeGen {
         awaitHits: Map<CallExpr, Boolean> = emptyMap(),
         channelUsed: Boolean = false,
         receiveSmartHits: Map<CallExpr, Boolean> = emptyMap(),
-    ): String = generateUnits(listOf("" to file), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, receiveSmartHits)
+        hktKindPosHits: Map<CallExpr, Int> = emptyMap(),
+    ): String = generateUnits(listOf("" to file), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, receiveSmartHits, hktKindPosHits)
 
     /** M8：全部模块合成一个 JS（顶层名字带模块前缀，根无前缀） */
     fun generateUnits(
@@ -102,6 +106,7 @@ class JsCodeGen {
         awaitHits: Map<CallExpr, Boolean> = emptyMap(),
         channelUsed: Boolean = false,
         receiveSmartHits: Map<CallExpr, Boolean> = emptyMap(),
+        hktKindPosHits: Map<CallExpr, Int> = emptyMap(),
     ): String {
         dicts = dictHits
         this.moduleHits = moduleHits
@@ -112,6 +117,7 @@ class JsCodeGen {
         this.awaitHits = awaitHits
         this.channelUsed = channelUsed
         this.receiveSmartHits = receiveSmartHits
+        this.hktKindPosHits = hktKindPosHits
         currentPrefix = ""
         structFields.clear()
         overloadsByUnit.clear()
@@ -726,6 +732,14 @@ class JsCodeGen {
         }
         val dn = dicts[e]
         if (dn != null && name != null) {
+            // HKT（HKT-D2）点号式 `xs.map(f)`：字典签名 (d, f, fa) 无 __self——接收者 xs 在 kind 应用位
+            // （fa），实参照形参序 [f, xs]；直接 `dn.map(dn, f, xs)`，不做首参位 selfJs。
+            val hktPos = hktKindPosHits[e]
+            if (hktPos != null && callee is FieldExpr) {
+                val arr = e.args.toMutableList().apply { add(hktPos.coerceIn(0, size), callee.target) }
+                val ra = arr.joinToString(", ") { if (it is VarExpr) varExprJs(it) else expr(it) }
+                return "$dn.${mangle(name)}($dn, $ra)"
+            }
             val selfJs: String; val realArgs: List<Expr>
             if (moduleHits[callee] == MODULE_METHOD_MARKER) { selfJs = expr(e.args[0]); realArgs = e.args.drop(1) }
             else if (callee is FieldExpr) { selfJs = expr(callee.target); realArgs = e.args }

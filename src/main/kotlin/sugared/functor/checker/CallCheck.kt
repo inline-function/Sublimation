@@ -64,17 +64,28 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
         syms.findFun(freeName) == null && !syms.ctors.containsKey(freeName) && !syms.structs.containsKey(freeName)
     // HKT（《高阶类型.md》§7.1，方案 A）：带参型类方法（`map(f, fa)`）的字典键是 **kind 应用位**（fa，含
     // arity>0 形参应用的那一参），不是首实参；且 fn 需要全部实参（self 即 fa 位，不 drop）。
-    val hktKindPos = if (isFreeFormMethod && freeName != null) hktKindParamIndex(freeName) else -1
+    val hktKindPos = when {
+        fieldCallee != null -> hktKindParamIndex(fieldCallee.name)
+        isFreeFormMethod -> hktKindParamIndex(freeName!!)   // isFreeFormMethod 蕴含 freeName != null
+        else -> -1
+    }
     val selfT: Type? = when {
         fieldCallee != null -> checkExpr(fieldCallee.target, f, pure)
         isFreeFormMethod && argTypes.isNotEmpty() ->
             if (hktKindPos >= 0) argTypes[hktKindPos.coerceAtMost(argTypes.size - 1)] else argTypes[0]   // 首实参已检查过，复用类型避免诊断翻倍
         else -> null
     }
-    val effArgs: List<Expr> = if (isFreeFormMethod)
-        (if (hktKindPos >= 0) c.args else c.args.drop(1)) else c.args
-    val effTypes: List<Type> = if (isFreeFormMethod)
-        (if (hktKindPos >= 0) argTypes else argTypes.drop(1)) else argTypes
+    val effArgs: List<Expr> = when {
+        isFreeFormMethod -> if (hktKindPos >= 0) c.args else c.args.drop(1)
+        // HKT 点号式 `xs.map(f)`：kind 应用位（fa）前没有该实参——把接收者插到 fa 位（其余照序）
+        fieldCallee != null && hktKindPos >= 0 -> c.args.toMutableList().apply { add(hktKindPos, fieldCallee.target) }
+        else -> c.args
+    }
+    val effTypes: List<Type> = when {
+        isFreeFormMethod -> if (hktKindPos >= 0) argTypes else argTypes.drop(1)
+        fieldCallee != null && hktKindPos >= 0 && selfT != null -> argTypes.toMutableList().apply { add(hktKindPos, selfT) }
+        else -> argTypes
+    }
     val isMethodPath = fieldCallee != null || isFreeFormMethod
     // P8（决策 84）：方法路径不支持命名参数——在方法入口显式拦截（方法参数管道不消费 namedArgs，否则静默丢弃）
     if (isMethodPath && c.namedArgs.isNotEmpty())
@@ -196,6 +207,8 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
                 val res = resolveDict(name, selfT, if (moduleTree == null) null else visiblePaths)
                 if (res != null) {
                     dictHits[c] = res.dictName
+                    // HKT 点号式 `xs.map(f)`：接收者 xs 在 kind 应用位（fa），codegen 按此重排（非首参位）
+                    if (hktKindPos >= 0) hktKindPosHits[c] = hktKindPos
                     res.entry.fn
                 } else {
                     // v1.1 集合方法糖：`o.m(args)` 且 m 是同名自由函数（首参类型匹配接收者）→ 脱糖为 m(o, args)
