@@ -368,6 +368,11 @@ class CheckerTest {
     }
 
     @Test
+    fun `多参 lambda 泛型 A B C 反推`() {
+        assertTrue(ok("fun zipWith[A, B, C](f: (A, B) => C, a: A, b: B): C = f(a, b)\nfun main() { var r = zipWith({ a, b -> a + b }, 20, 22)\nvar s: Str = zipWith({ a, b -> toStr(a) + b }, 7, \"x\")\nr }"))
+    }
+
+    @Test
     fun `解构 var 非元组初值报 E-TUPLE-DESTRUCT`() {
         assertTrue(errs("fun main() { var n = 5\nvar (b, c) = n }").contains("E-TUPLE-DESTRUCT"))
     }
