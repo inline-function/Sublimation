@@ -275,10 +275,15 @@ internal fun Checker.findCollectionMethod(name: String, selfT: Type): Pair<FunDe
 }
 
 /** v2.0：普通（自由函数）调用按**实参首类型**从重载里挑选匹配项；无重载则退回主声明（保留原诊断路径）。
- *  只查本模块（重载目前仅用于 stdlib 同模块方法名；跨模块走 findCollectionMethod）。 */
-private fun Checker.findCallable(name: String, argTypes: List<Type>): FunDecl? {
-    val main = syms.findFun(name)
-    val ovs = syms.funOverloads[name]
+ *  只查本模块（重载目前仅用于 stdlib 同模块方法名；跨模块走 findCallableIn）。 */
+private fun Checker.findCallable(name: String, argTypes: List<Type>): FunDecl? =
+    findCallableIn(syms, name, argTypes)
+
+/** 按目标模块符号表 + 实参首类型挑重载（限定调用 `stdlib.filter(xs, f)` 也须路由到 List 版，
+ *  否则主声明先注册（如 Set 版）导致检查阶段选错版本报「List[Nat] 与 Set[T] 不符」）。 */
+private fun Checker.findCallableIn(s: Symbols, name: String, argTypes: List<Type>): FunDecl? {
+    val main = s.findFun(name)
+    val ovs = s.funOverloads[name]
     if (ovs == null) return main
     val cands = ArrayList<FunDecl>(); main?.let { cands += it }; cands += ovs
     val arity = cands.filter { it.params.size == argTypes.size }
@@ -679,8 +684,10 @@ private fun Checker.checkQualifiedCall(q: QChain, c: CallExpr, f: Frame, pure: B
     }
     return when (sym.kind) {
         QSymKind.FUN -> {
-            val fn = sym.syms.funs[sym.name] ?: sym.syms.findFun(sym.name)!!
-            moduleHits[c.callee] = moduleJsName(node.absPath, sym.name)
+            // 跨模块限定调用：按目标模块符号表 + 实参首类型挑重载（`stdlib.filter(xs, f)` 路由到 List 版，而非先注册的 Set/Optional 版）
+            val fn = findCallableIn(sym.syms, sym.name, argTypes)
+                ?: run { d.error("E-UNBOUND-NAME", c.pos, "调用模块 ${node.absPath.ifEmpty { "/" }} 中无函数 ${sym.name}"); return syntheticT("限定调用") }
+            moduleHits[c.callee] = jsOverloadName(node.absPath, fn)
             checkFnCall(fn, sym.name, c, f, pure, c.args, argTypes, isMethodPath = false)
         }
         QSymKind.CTOR -> checkCtorCall(sym.syms.ctors.getValue(sym.name), sym.name, c, argTypes, node.absPath)

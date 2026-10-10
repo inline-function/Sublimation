@@ -323,6 +323,32 @@ class ModuleE2ETest {
     }
 
     @Test
+    fun `v2 跨模块限定自由函数重载 - stdlib filter map 路由到 List 版`() {
+        assumeTrue(nodeAvailable())
+        val list = File("stdlib/list.subl").readText()
+        val res = File("stdlib/result.subl").readText()
+        val col = File("stdlib/collection.subl").readText()
+        val main = "@unpure fun main() {\n" +
+            "var xs = stdlib.range(1, 6)\n" +
+            "var evens = stdlib.filter(xs, { x -> x % 2 == 0 })\n" +    // filter 跨 List/Optional/Result 重载——限定调用须路由到 List 版
+            "var doubled = stdlib.map(evens, { x -> x * 10 })\n" +      // map 同重载
+            "var j = stdlib.joinToString(doubled, \", \")\n" +
+            "print(\"evens=\${j}\")\n" +
+            "print(\"sum=\${stdlib.sum(doubled)}\")\n" +
+            "print(\"size=\${stdlib.size(evens)}\")\n" +                 // size 跨 List/Set/Map 重载
+            "}"
+        assertEquals(
+            "evens=20, 40\nsum=60\nsize=2",
+            runTree(mapOf(
+                "stdlib/list.subl" to list,
+                "stdlib/result.subl" to res,
+                "stdlib/collection.subl" to col,
+                "main.subl" to main,
+            )),
+        )
+    }
+
+    @Test
     fun `v2 新集合 API - sum maxNat minNat union intersect keys values`() {
         assumeTrue(nodeAvailable())
         val std = File("stdlib/list.subl").readText()
