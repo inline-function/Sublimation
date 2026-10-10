@@ -73,7 +73,7 @@ class DiagCoverageTest {
     @Test fun `E-IMPL-MISMATCH`() =
         assertTrue(has("class C { fun m1(): Str }\nimpl C for Nat { fun m1(): Nat { return 1 } }", "E-IMPL-MISMATCH"))
 
-    // ---------- 型类字典（决策 60/68） ----------
+    // ---------- 类型类字典（决策 60/68） ----------
 
     @Test fun `E-NO-INSTANCE`() =
         assertTrue(has("class Show { fun show(): Str }\nfun main() { show(3) }", "E-NO-INSTANCE"))
@@ -93,7 +93,7 @@ class DiagCoverageTest {
             "struct A(x: Nat)\nclass M { fun get(): Nat }\nimpl M for A { fun get(): Nat { return x } }\nfun main() { A(1).get(9) }",
             "E-METHOD-ARGS"))
 
-    @Test fun `E-SELF-UNKNOWN 型类成员带体`() =
+    @Test fun `E-SELF-UNKNOWN 类型类成员带体`() =
         assertTrue(has("class M { fun m(): Nat { return 1 } }", "E-SELF-UNKNOWN"))
 
     // ---------- Any 准入（决策 59） ----------
@@ -194,6 +194,12 @@ class DiagCoverageTest {
 
     @Test fun `W-DIV-ZERO`() =
         assertTrue(has("fun main() { var a = 1 / 0 }", "W-DIV-ZERO"))
+
+    @Test fun `W-UNUSED 未使用局部变量`() =
+        assertTrue(has("fun main() { var x = 1 }", "W-UNUSED"))
+
+    @Test fun `W-UNUSED 未使用参数`() =
+        assertTrue(has("fun f(x: Nat): Nat = 1", "W-UNUSED"))
 
     @Test fun `D-TYPE-INFERRED`() = assertTrue(has("fun main() { var a = 1 }", "D-TYPE-INFERRED"))
 

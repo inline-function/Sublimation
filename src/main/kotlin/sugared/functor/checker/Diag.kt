@@ -9,12 +9,25 @@ data class Diag(
     val pos: String,          // "line:col"，"" 表示无位置
     val message: String,
 ) {
-    fun render(): String {
+    fun render(source: String? = null): String {
         val tag = when (severity) {
             Severity.ERROR -> "[错误]"; Severity.WARN -> "[警告]"; Severity.HINT -> "[提示]"; Severity.SUPPLEMENT -> "[补充]"
         }
         val p = if (pos.isEmpty()) "" else "[$pos]"
-        return "$tag$p $code: $message"
+        val base = "$tag$p $code: $message"
+        // 报错增强（2026-10-11）：源码片段上下文——pos 为 "line:col" 且给出源文本时回读该行并画上箭头
+        if (source == null || pos.isEmpty()) return base
+        val m = Regex("(\\d+):(\\d+)").find(pos) ?: return base
+        val line = m.groupValues[1].toIntOrNull() ?: return base
+        val col = m.groupValues[2].toIntOrNull() ?: return base
+        val srcLines = source.split("\n")
+        if (line < 1 || line > srcLines.size) return base
+        val text = srcLines[line - 1]
+        val carets = " ".repeat((col - 1).coerceIn(0, text.length)) + "^"
+        val width = srcLines.size.toString().length
+        val lno = " ".repeat(width - line.toString().length) + line
+        val pad = " ".repeat(width)
+        return "$base\n  $lno | $text\n  $pad | $carets"
     }
 }
 
@@ -39,8 +52,8 @@ class DiagBag {
         all.clear(); all += out
     }
 
-    /** 默认不输出补充级（用户定义） */
-    fun report(includeSupplement: Boolean = false): String =
+    /** 默认不输出补充级（用户定义）；source 非空时每条诊断附源码行片段上下文（报错增强） */
+    fun report(includeSupplement: Boolean = false, source: String? = null): String =
         all.filter { includeSupplement || it.severity != Severity.SUPPLEMENT }
-            .joinToString("\n") { it.render() }
+            .joinToString("\n") { it.render(source) }
 }

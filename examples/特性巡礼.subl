@@ -69,7 +69,7 @@ fun signOf(n: Int): Str = when(var m = n * 2) {
     else -> "moved"
 }
 
-// ---------- 型类 + impl + 隐式 self（体内裸用字段 name ≡ self.name） ----------
+// ---------- 类型类 + impl + 隐式 self（体内裸用字段 name ≡ self.name） ----------
 class Named {
     fun describe(): Str
 }

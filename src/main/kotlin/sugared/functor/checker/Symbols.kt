@@ -114,7 +114,7 @@ internal fun Checker.collectDecl(decl: Decl) {
         }
         is ClassDecl -> {
             if (syms.classes.putIfAbsent(decl.name, decl) != null)
-                d.error("E-DUP-DECL", decl.pos, "型类 ${decl.name} 重复声明")
+                d.error("E-DUP-DECL", decl.pos, "类型类 ${decl.name} 重复声明")
             syms.typeParamNames[decl.name] = tpNamesOf(decl)
             // 决策 60（T5）：登记候选方法名，使"只有 class、没有 impl"的调用报 E-NO-INSTANCE
             decl.members.forEach { syms.traitMethods.add(it.name) }
@@ -174,8 +174,8 @@ internal fun Checker.checkDeclTypes(decl: Decl) {
             }
         }
         is ClassDecl -> decl.members.forEach { m ->
-            // O3（决策 69）：型类成员形参不允许默认值
-            m.params.forEach { p -> if (p.default != null) d.error("E-DEFAULT-PARAM", m.pos, "型类成员 ${m.name} 形参 ${p.name} 不允许默认值（决策 69）") }
+            // O3（决策 69）：类型类成员形参不允许默认值
+            m.params.forEach { p -> if (p.default != null) d.error("E-DEFAULT-PARAM", m.pos, "类型类成员 ${m.name} 形参 ${p.name} 不允许默认值（决策 69）") }
             // HKT：成员签名（形参/返回类型）走可解析性检查，并带 class 级 kind arity（《高阶类型.md》HKT-S5）
             val memberTps = tpNamesOf(decl) + tpNamesOf(m)
             val classArity = tpArityOf(decl)

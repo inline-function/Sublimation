@@ -535,7 +535,7 @@ class CheckerTest {
 
     @Test
     fun `HKT 字典名不含占位（HKT-D1）`() {
-        // dictNameOf：kind 型类 self 是构造子应用占位 → 只取构造子名
+        // dictNameOf：kind 类型类 self 是构造子应用占位 → 只取构造子名
         assertEquals("dict_Functor_List", dictNameOf("Functor", namedT("List", listOf(namedT("a")))))
     }
 

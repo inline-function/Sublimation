@@ -5,15 +5,31 @@ import sugared.functor.ast.*
 /**
  * 作用域帧：变量类型环境 + Γ 命题事实（弥散载体）。
  * 嵌套帧继承外层；块事实回溢父帧（函数体/语句块的弥散），lambda 帧隔离。
+ * W-UNUSED（报错增强）：post（非空）的声明进入"未使用审计"；used 沿父链上溢（子作用域用到即算外层用过）。
  */
 class Frame(val parent: Frame?) {
     val vars = LinkedHashMap<String, Type>()
     val facts = ArrayList<Prop>()
     private val muts = LinkedHashSet<String>()
+    val children = ArrayList<Frame>()
+    private val used = HashSet<String>()
+    private val audited = LinkedHashMap<String, String>()   // 名字 → 声明点 pos（仅 W-UNUSED 审计目标）
+    init { parent?.children?.add(this) }
     fun lookupVar(n: String): Type? = vars[n] ?: parent?.lookupVar(n)
     fun declareVar(n: String, t: Type) { vars[n] = t }
+    /** 声明并纳入未使用审计（pos 非空才审计；when 模式绑定/lambda 形参等传 "" 跳过） */
+    fun declareVar(n: String, t: Type, pos: String) { vars[n] = t; if (pos.isNotEmpty()) audited[n] = pos }
     fun declareMut(n: String) { muts.add(n) }
     fun isMut(n: String): Boolean = n in muts || (parent?.isMut(n) ?: false)
+    fun markUsed(n: String) { used.add(n); parent?.markUsed(n) }
+    fun isUsed(n: String): Boolean = n in used
+    /** 本帧（含子树）所有审计声明：名字 + 声明点 */
+    fun auditedDecls(): List<Pair<String, String>> {
+        val out = ArrayList<Pair<String, String>>()
+        fun walk(fr: Frame) { fr.audited.forEach { (n, p) -> out.add(n to p) }; fr.children.forEach { walk(it) } }
+        walk(this)
+        return out
+    }
     fun inject(p: Prop) { if (p != PTop && p !in facts) facts.add(p) }
     fun allFacts(): List<Prop> = (parent?.allFacts() ?: emptyList()) + facts
 }

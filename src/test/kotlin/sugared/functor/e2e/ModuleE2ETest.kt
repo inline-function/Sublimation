@@ -174,6 +174,69 @@ class ModuleE2ETest {
         )))
     }
 
+    // ============ v2.0 标准库补全（2026-10-10） ============
+
+    @Test
+    fun `v2 标准库 - strSplit 返回数组化 List`() {
+        assumeTrue(nodeAvailable())
+        val std = File("stdlib/list.subl").readText()
+        val main = "@unpure fun main() {\n" +
+            "var parts = strSplit(\"a,b,c\", \",\")\n" +
+            "print(parts.size())\n" +
+            "print(parts.joinToString(\"-\"))\n" +
+            "}"
+        assertEquals("3\na-b-c", runTree(mapOf("stdlib/list.subl" to std, "main.subl" to main)))
+    }
+
+    @Test
+    fun `v2 标准库 - List 补全 any 找不到返回 false`() {
+        assumeTrue(nodeAvailable())
+        val std = File("stdlib/list.subl").readText()
+        val main = "@unpure fun main() {\n" +
+            "var xs = stdlib.range(1, 4)\n" +
+            "print(xs.any({ x -> x > 5 }))\n" +
+            "print(xs.all({ x -> x > 0 }))\n" +
+            "}"
+        assertEquals("false\ntrue", runTree(mapOf("stdlib/list.subl" to std, "main.subl" to main)))
+    }
+
+    @Test
+    fun `v2 标准库 - List indexOf slice sortBy`() {
+        assumeTrue(nodeAvailable())
+        val std = File("stdlib/list.subl").readText()
+        val main = "@unpure fun main() {\n" +
+            "var xs = stdlib.range(1, 5)\n" +
+            "when(xs.indexOf(2)) { Some(i) -> print(i); None -> print(\"x\") }\n" +
+            "print(xs.slice(1, 3).joinToString(\",\"))\n" +
+            "print(xs.sortBy({ a, b -> a > b }).joinToString(\",\"))\n" +
+            "print(xs.sortBy({ a, b -> a < b }).joinToString(\",\"))\n" +
+            "}"
+        assertEquals("1\n2,3\n4,3,2,1\n1,2,3,4", runTree(mapOf("stdlib/list.subl" to std, "main.subl" to main)))
+    }
+
+    @Test
+    fun `v2 标准库 - IO 扩展 appendFile fileExists readDir`() {
+        assumeTrue(nodeAvailable())
+        val std = File("stdlib/list.subl").readText()
+        val res = File("stdlib/result.subl").readText()
+        val dir = Files.createTempDirectory("subl-v2-io").toFile()
+        try {
+            val p1 = File(dir, "a.txt").absolutePath.replace("\\", "\\\\")
+            val d = dir.absolutePath.replace("\\", "\\\\")
+            val main = "@unpure fun main() {\n" +
+                "writeFile(\"$p1\", \"x\")\n" +
+                "appendFile(\"$p1\", \"y\")\n" +
+                "var r = readFile(\"$p1\")\n" +
+                "when(r) { Ok(s) -> print(s); Err(e) -> print(e) }\n" +
+                "print(fileExists(\"$p1\"))\n" +
+                "var rd = readDir(\"$d\")\n" +
+                "when(rd) { Ok(xs) -> print(xs.size()); Err(e) -> print(e) }\n" +
+                "}"
+            assertEquals("xy\ntrue\n1", runTree(mapOf(
+                "stdlib/list.subl" to std, "stdlib/result.subl" to res, "main.subl" to main)))
+        } finally { dir.deleteRecursively() }
+    }
+
     // ============ P3 IO（v1.0 计划 §5） ============
 
     @Test

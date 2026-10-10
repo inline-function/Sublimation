@@ -14,13 +14,13 @@ internal fun Checker.checkImplsFrom(files: List<FileAst>) {
             val impl = e.decl as? ImplDecl ?: continue
             val cls = syms.classes[impl.trait.name]
             if (cls == null) {
-                d.error("E-UNBOUND-NAME", impl.pos, "impl 型类 ${impl.trait.render()} 未声明")
+                d.error("E-UNBOUND-NAME", impl.pos, "impl 类型类 ${impl.trait.render()} 未声明")
                 continue
             }
-            // 登记型类的候选方法名（即使尚无实例）；实例匹配仍只认 impl 里的条目
+            // 登记类型类的候选方法名（即使尚无实例）；实例匹配仍只认 impl 里的条目
             cls.members.forEach { m -> syms.traitMethods.add(m.name) }
             // 形参绑定表：class 类型形参 → impl.self 的实参。
-            // 普通型类（Show[T] ↔ impl for Int）按旧逻辑 T↔Int（self.args 空则 self 本体）。
+            // 普通类型类（Show[T] ↔ impl for Int）按旧逻辑 T↔Int（self.args 空则 self 本体）。
             // HKT（《高阶类型.md》HKT-S6，方案 A）：kind 形参 F[_] ↔ `impl for List[a]` 时
             // F 应绑到**构造子名** List（零实参），而非占位变量 a（self.args 是隐式占位，HKT-S6）。
             val clsArity = tpArityOf(cls)
@@ -46,19 +46,19 @@ internal fun Checker.checkImplsFrom(files: List<FileAst>) {
                 syms.methods.getOrPut(mfn.name) { ArrayList() }
                     .add(MethodEntry(impl.self, mfn, mfn.annotations, impl.trait.name, modulePath))
             }
-            // P6（决策 82）：登记「型类 → impl 条目」（约束解析用；含声明模块供跨模块可见性过滤）
+            // P6（决策 82）：登记「类型类 → impl 条目」（约束解析用；含声明模块供跨模块可见性过滤）
             syms.implsByTrait.getOrPut(cls.name) { ArrayList() }
                 .add(ImplEntry(cls.name, impl.self, impl.trait.name, modulePath))
         }
     }
 }
 
-/** 字典名（codegen 用）：dict_<模块前缀>_<型类>_<自类型>（P0 文档钉死单下划线分隔），非字母数字统一压成下划线。
+/** 字典名（codegen 用）：dict_<模块前缀>_<类型类>_<自类型>（P0 文档钉死单下划线分隔），非字母数字统一压成下划线。
  *  无模块前缀（单文件/根模块）时保持旧名 dict_<Trait>_<Type>，向后兼容既有产物。 */
 internal fun dictNameOf(trait: String, self: Type, modulePath: String = ""): String {
     val p = mangleModule(modulePath)
-    // HKT-D1（《高阶类型.md》§6.1）：kind 型类 self 是构造子应用占位（`List[a]` 的 a 为小写裸名）时，
-    // 字典名只取**构造子名**（dict_Functor_List），不含 `[a]`（列表/可选同型类区分保持）。
+    // HKT-D1（《高阶类型.md》§6.1）：kind 类型类 self 是构造子应用占位（`List[a]` 的 a 为小写裸名）时，
+    // 字典名只取**构造子名**（dict_Functor_List），不含 `[a]`（列表/可选同类型类区分保持）。
     val selfName = if (self is NamedType && self.args.any { it is NamedType && isKindPlaceholder(it) }) self.name
                    else self.render()
     return if (p.isEmpty()) "dict_${trait}_${sanitize(selfName)}"
@@ -67,7 +67,7 @@ internal fun dictNameOf(trait: String, self: Type, modulePath: String = ""): Str
 
 internal fun sanitize(s: String): String = s.map { if (it.isLetterOrDigit()) it else '_' }.joinToString("")
 
-/** 型类字典解析（决策 60，T5）：按方法名 + 实参类型在 impl 表中找唯一匹配实例。
+/** 类型类字典解析（决策 60，T5）：按方法名 + 实参类型在 impl 表中找唯一匹配实例。
  *  v1 的 Int/Nat 等数值类型经 TypeInfer.join 提升，故用 typeLooseEq 做宽松匹配（Nat↔Int 放行）。
  *  零匹配 → E-NO-INSTANCE；多匹配 → E-AMBIGUOUS-INSTANCE。返回 null 表示已报错。
  *  P0（M6，impl 也要挂载）：visible 非空时按可见路径集合跨模块收集 impl；
@@ -162,7 +162,7 @@ private fun Checker.doesSelfMatch(self: Type, argT: Type): Boolean {
 }
 
 private fun kindWildcardMatch(self: Type, argT: Type): Boolean = when {
-    // 构造子本体通配（HKT-D2）：约束/合一解出的裸构造子名 `List`（零实参）匹配任何同型类占位
+    // 构造子本体通配（HKT-D2）：约束/合一解出的裸构造子名 `List`（零实参）匹配任何同类型类占位
     // 应用 self `List[a]`（占位数任意）——字典 self 是构造子，不是具体类型。size 不等则归此分支。
     self is NamedType && argT is NamedType && self.args.isNotEmpty() && argT.args.isEmpty() &&
         self.name == argT.name && self.args.all { it is NamedType && isKindPlaceholder(it) } -> true

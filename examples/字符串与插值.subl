@@ -1,13 +1,14 @@
 // ============================================================
 // 特性：字符串与插值（concat/length/charAt/substring/strCmp/parseNat/toStr
-//       + 字符串插值 + 命名参数 + 元组解构）
+//       + 插值 + 命名参数 + 元组解构 + v2.0 字符串扩展 + Math 扩展 + Time/Random）
 // 预期输出（每行一个）：
 //   abcd / 4 / b / bc / -1 / 12 / 42 / sum=5 product=35 / hello, hi -> bob! / 27
+//   ABC / abc / x / true / true / a+b+c / 2 / 1.5 / 3 / 5 / 3 / t / r
 // ============================================================
 
 fun greet(name: Str, target: Str): Str = "hello, $name -> ${target}!"
 
-// 常规元组参数 + when 解构（@tuple 变长元组演示见 T4 测试；运行时行为待修，见说明）
+// 常规元组参数 + when 解构（@tuple 变长元组的 codegen 已修复，见 E2ETest「@tuple 变长元组运行」）
 fun mulPair(t: (Nat, Nat)): Nat = when(t) {
     (a, b) -> a * b
     else -> 0
@@ -30,4 +31,21 @@ fun main() {
     unchecked print("sum=$x product=${x * y}")     // sum=5 product=35
     unchecked print(greet(target = "bob", name = "hi"))  // 命名参数按形参顺序重排
     unchecked print(mulPair((3, 9)))               // 27（元组解构）
+    // ---- v2.0 字符串扩展（内建 JS 映射，单文件即可用） ----
+    unchecked print(strUpper("abC"))               // ABC
+    unchecked print(strLower("AbC"))               // abc
+    unchecked print(strTrim("  x  "))              // x
+    unchecked print(startsWith("hello", "he"))     // true
+    unchecked print(endsWith("hello", "lo"))       // true
+    unchecked print(strReplace("a-b-c", "-", "+")) // a+b+c
+    when(strIndexOf("hello", "ll")) { Some(i) -> { unchecked print(i) }; None -> { unchecked print("x") } }  // 2
+    // ---- v2.0 Math 扩展 ----
+    unchecked print(mathMin(3.0, 1.5))             // 1.5
+    unchecked print(mathMax(3.0, 1.5))             // 3
+    unchecked print(mathClamp(9.0, 0.0, 5.0))      // 5
+    unchecked print(mathRound(2.6))                // 3
+    // ---- v2.0 Time / Random（@unpure）----
+    if (timeNow() > 0) { unchecked print("t") }    // t
+    var rr = rand()
+    if (rr < 1.0) { unchecked print("r") }        // r
 }

@@ -5,7 +5,7 @@ import sugared.functor.ast.*
 /** 基本类型集（prelude 内建；决策 45：单值类型=Null，None 专属 Optional[T]；决策 52：Any 受限顶类型；决策 62：元组具名形态；P2：Array[T]） */
 val BASE_TYPES = setOf("Nat", "Int", "Rat", "Str", "Bool", "Null", "Nothing", "Any",
     "EmptyTuple", "SingleTuple", "Array",
-    "Task", "Channel",   // v2.0 异步（决策 93）：内建泛型类型（无用户声明，形如 Array）
+    "Task", "Channel",   // v2.0 异步（决策 93）：内建泛类型类型（无用户声明，形如 Array）
     "Json")              // v2.0 基本库（内建 JS 实现）：JSON 值（编译成 JS 原生 JSON 对象/数组/字面量）
 
 /** 合成类型（v1 类型推导不完整时的占位：泛型未绑定、lambda、$ 命题变量等） */
@@ -48,6 +48,19 @@ fun builtinUnpure(name: String): FunDecl? = when (name) {
     "sleep" -> FunDecl("sleep", listOf("unpure", "async"), emptyList(),
         listOf(Param("ms", namedT("Nat"))), emptyList(),
         namedT("Null"), emptyList(), null)
+    // ---- v2.0 标准库补全（本会话加）：IO 扩展 / Time / Random——JS 原生映射，codegen 特判 ----
+    "appendFile" -> FunDecl("appendFile", listOf("unpure", "async"), emptyList(),
+        listOf(Param("p", namedT("Str")), Param("s", namedT("Str"))), emptyList(),
+        namedT("Result", listOf(namedT("Null"), namedT("Str"))), emptyList(), null)
+    "fileExists" -> FunDecl("fileExists", listOf("unpure"), emptyList(),
+        listOf(Param("p", namedT("Str"))), emptyList(), namedT("Bool"), emptyList(), null)
+    "readDir" -> FunDecl("readDir", listOf("unpure", "async"), emptyList(),
+        listOf(Param("p", namedT("Str"))), emptyList(),
+        namedT("Result", listOf(namedT("List", listOf(namedT("Str"))), namedT("Str"))), emptyList(), null)
+    "timeNow" -> FunDecl("timeNow", listOf("unpure"), emptyList(), emptyList(),
+        emptyList(), namedT("Nat"), emptyList(), null)
+    "rand" -> FunDecl("rand", listOf("unpure"), emptyList(), emptyList(),
+        emptyList(), namedT("Rat"), emptyList(), null)
     else -> null
 }
 
@@ -96,6 +109,45 @@ fun builtinPure(name: String): FunDecl? = when (name) {
     "pow" -> FunDecl("pow", emptyList(), emptyList(),
         listOf(Param("x", namedT("Rat")), Param("y", namedT("Rat"))), emptyList(),
         namedT("Rat", emptyList()), emptyList(), null)
+    // ---- v2.0 标准库补全（本会话加）：字符串扩展 / Math 扩展——JS 原生映射，codegen 特判 ----
+    "strUpper" -> FunDecl("strUpper", emptyList(), emptyList(),
+        listOf(Param("s", namedT("Str"))), emptyList(), namedT("Str"), emptyList(), null)
+    "strLower" -> FunDecl("strLower", emptyList(), emptyList(),
+        listOf(Param("s", namedT("Str"))), emptyList(), namedT("Str"), emptyList(), null)
+    "strTrim" -> FunDecl("strTrim", emptyList(), emptyList(),
+        listOf(Param("s", namedT("Str"))), emptyList(), namedT("Str"), emptyList(), null)
+    "startsWith" -> FunDecl("startsWith", emptyList(), emptyList(),
+        listOf(Param("s", namedT("Str")), Param("p", namedT("Str"))), emptyList(),
+        namedT("Bool"), emptyList(), null)
+    "endsWith" -> FunDecl("endsWith", emptyList(), emptyList(),
+        listOf(Param("s", namedT("Str")), Param("p", namedT("Str"))), emptyList(),
+        namedT("Bool"), emptyList(), null)
+    "strReplace" -> FunDecl("strReplace", emptyList(), emptyList(),
+        listOf(Param("s", namedT("Str")), Param("a", namedT("Str")), Param("b", namedT("Str"))), emptyList(),
+        namedT("Str"), emptyList(), null)
+    "strSplit" -> FunDecl("strSplit", emptyList(), emptyList(),
+        listOf(Param("s", namedT("Str")), Param("sep", namedT("Str"))), emptyList(),
+        namedT("List", listOf(namedT("Str"))), emptyList(), null)   // List 数组化：直接返回 JS 数组
+    "strIndexOf" -> FunDecl("strIndexOf", emptyList(), emptyList(),
+        listOf(Param("s", namedT("Str")), Param("p", namedT("Str"))), emptyList(),
+        namedT("Optional", listOf(namedT("Nat"))), emptyList(), null)
+    "mathMin" -> FunDecl("mathMin", emptyList(), emptyList(),
+        listOf(Param("a", namedT("Rat")), Param("b", namedT("Rat"))), emptyList(),
+        namedT("Rat"), emptyList(), null)
+    "mathMax" -> FunDecl("mathMax", emptyList(), emptyList(),
+        listOf(Param("a", namedT("Rat")), Param("b", namedT("Rat"))), emptyList(),
+        namedT("Rat"), emptyList(), null)
+    "mathClamp" -> FunDecl("mathClamp", emptyList(), emptyList(),
+        listOf(Param("x", namedT("Rat")), Param("lo", namedT("Rat")), Param("hi", namedT("Rat"))),
+        emptyList(), namedT("Rat"), emptyList(), null)
+    "mathRound" -> FunDecl("mathRound", emptyList(), emptyList(),
+        listOf(Param("x", namedT("Rat"))), emptyList(), namedT("Rat"), emptyList(), null)
+    "mathSin" -> FunDecl("mathSin", emptyList(), emptyList(),
+        listOf(Param("x", namedT("Rat"))), emptyList(), namedT("Rat"), emptyList(), null)
+    "mathCos" -> FunDecl("mathCos", emptyList(), emptyList(),
+        listOf(Param("x", namedT("Rat"))), emptyList(), namedT("Rat"), emptyList(), null)
+    "mathTan" -> FunDecl("mathTan", emptyList(), emptyList(),
+        listOf(Param("x", namedT("Rat"))), emptyList(), namedT("Rat"), emptyList(), null)
     // ---- P2 数组原语（v1.0 计划 §4.2 步骤 A）：JS 原生映射，codegen 特判 ----
     "arrayOf" -> FunDecl("arrayOf", listOf("vararg"), listOf(TypeParam("T", null)),
         listOf(Param("items", namedT("T"))), emptyList(),
@@ -156,13 +208,16 @@ fun builtinPure(name: String): FunDecl? = when (name) {
 val ROOT_WHITELIST: Set<String> = setOf(
     // builtinUnpure（IO/副作用入口）
     "print", "readLine", "readFile", "writeFile", "getArgs", "sleep",
-    // builtinPure：元组 / 字符串（P1）/ 浮点（P10）/ 数组（P2）/ JSON（v2.0）
+    "appendFile", "fileExists", "readDir", "timeNow", "rand",
+    // builtinPure：元组 / 字符串（P1 + v2.0 补全）/ 浮点（P10）/ Math（v2.0 补全）/ 数组（P2）/ JSON（v2.0）
     "emptyTuple", "singleTuple",
     "concat", "length", "charAt", "substring", "strCmp", "toStr", "parseNat",
+    "strUpper", "strLower", "strTrim", "startsWith", "endsWith", "strReplace", "strSplit", "strIndexOf",
+    "mathMin", "mathMax", "mathClamp", "mathRound", "mathSin", "mathCos", "mathTan",
     "toRat", "parseRat", "abs", "sqrt", "floor", "ceil", "pow",
     "arrayOf", "arrayGet", "arraySet", "arrayLength",
     "jsonParse", "jsonGet", "jsonAt", "jsonLen", "jsonStr", "jsonNum", "jsonBool",
-    "jsonIsNull", "jsonIsArr", "jsonToStr",
+    "jsonIsNull", "jsonIsArr", "jsonToStr", "jsonToList",
 )
 
 /** 类型 → 命题层的项表示；函数/元组类型用哨兵名（v1 不参与命题推理） */
@@ -204,7 +259,7 @@ data class MethodEntry(
     val modulePath: String = "",
 )
 
-/** 型类字典解析结果（决策 60，T5）：方法名 + 实参类型 → 唯一实例 */
+/** 类型类字典解析结果（决策 60，T5）：方法名 + 实参类型 → 唯一实例 */
 data class DictResolution(val entry: MethodEntry, val dictName: String)
 
 /** 全局符号表：一次收集，全文件可见（Rust 骨架的实体语义基准） */
@@ -220,11 +275,11 @@ class Symbols {
     /** v1.1：表达式体省略返回类型时的**推导**返回类型表（函数名 → 类型），供调用点查询 */
     val inferredRets = LinkedHashMap<String, Type>()
     val methods = LinkedHashMap<String, MutableList<MethodEntry>>()
-    /** 型类声明里的候选方法名（决策 60，T5）：无 impl 实例时用于把调用判为 E-NO-INSTANCE */
+    /** 类型类声明里的候选方法名（决策 60，T5）：无 impl 实例时用于把调用判为 E-NO-INSTANCE */
     val traitMethods = LinkedHashSet<String>()
     val typeParamNames = LinkedHashMap<String, List<String>>()   // 声明名 → 其类型参数
     val aliases = LinkedHashMap<String, TypeAliasDecl>()          // 类型别名（决策 30）
-    /** P6（决策 82）：型类 → 实现条目（含声明模块路径）。约束 `T: Show` 的字典解析用（I-22 复用可见性过滤） */
+    /** P6（决策 82）：类型类 → 实现条目（含声明模块路径）。约束 `T: Show` 的字典解析用（I-22 复用可见性过滤） */
     val implsByTrait = HashMap<String, MutableList<ImplEntry>>()
 
     fun findFun(name: String): FunDecl? = builtinUnpure(name) ?: builtinPure(name) ?: funs[name]

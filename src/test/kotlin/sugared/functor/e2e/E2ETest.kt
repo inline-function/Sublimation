@@ -115,7 +115,7 @@ class E2ETest {
     }
 
     @Test
-    fun `型类字典`() {
+    fun `类型类字典`() {
         assumeTrue(nodeAvailable())
         // 决策 60/68（O2）：impl 生成字典，接收者隐式；show(5) 自由式按 5 的类型分发
         val src = "class Show { fun show(): Str }\n" +
@@ -125,7 +125,7 @@ class E2ETest {
     }
 
     @Test
-    fun `型类字典接收者字段`() {
+    fun `类型类字典接收者字段`() {
         assumeTrue(nodeAvailable())
         // 回归护栏：字典隐藏首参曾与实参错位；O2 后接收者隐式，方法体裸用字段名取 self 的值。
         val src = "struct A(name: Str)\n" +
@@ -197,6 +197,62 @@ class E2ETest {
         assertEquals("alice", out.first(), "巡礼示例首行应为 alice")
         assertEquals("done", out.last(), "巡礼示例末行应为 done")
         assertEquals(15, out.size, "巡礼示例应输出 15 行，实际 ${out.size} 行：\n$out")
+    }
+
+    @Test
+    fun `@tuple 变长元组运行`() {
+        assumeTrue(nodeAvailable())
+        // 修复 2026-10-10：codegen 曾只输出打包实参、丢掉函数调用（sum((1,2)) → [[1,2]]）；
+        // 现生成 sum([1,2]) 且首个形参即 @tuple、带前缀形参形式都正确。
+        val src = "fun sum(@tuple t: (Nat, Nat)): Nat = when(t) { (a, b) -> a + b else -> 0 }\n" +
+            "fun mul2(x: Nat, @tuple t: (Nat, Nat)): Nat = when(t) { (a, b) -> x * a * b else -> 0 }\n" +
+            "fun keep(@tuple t: (Nat, Nat)): (Nat, Nat) = t\n" +
+            "@unpure fun main() {\n" +
+            "print(sum((12, 30)))\n" +
+            "print(mul2(2, (3, 5)))\n" +
+            "when(keep((4, 6))) { (a, b) -> print(a + b) }\n" +
+            "}"
+        assertEquals("42\n30\n10", run(src))
+    }
+
+    @Test
+    fun `v2 标准库 - 字符串扩展`() {
+        assumeTrue(nodeAvailable())
+        val src = "@unpure fun main() {\n" +
+            "print(strUpper(\"abC\"))\n" +
+            "print(strLower(\"AbC\"))\n" +
+            "print(strTrim(\"  x  \"))\n" +
+            "print(startsWith(\"hello\", \"he\"))\n" +
+            "print(endsWith(\"hello\", \"lo\"))\n" +
+            "print(strReplace(\"a-b-c\", \"-\", \"+\"))\n" +
+            "when(strIndexOf(\"hello\", \"ll\")) { Some(i) -> print(i); None -> print(\"-\") }\n" +
+            "}"
+        assertEquals("ABC\nabc\nx\ntrue\ntrue\na+b+c\n2", run(src))
+    }
+
+    @Test
+    fun `v2 标准库 - Math 扩展`() {
+        assumeTrue(nodeAvailable())
+        val src = "@unpure fun main() {\n" +
+            "print(mathMin(3.0, 1.5))\n" +
+            "print(mathMax(3.0, 1.5))\n" +
+            "print(mathClamp(9.0, 0.0, 5.0))\n" +
+            "print(mathRound(2.6))\n" +
+            "print(mathSin(0.0))\n" +
+            "}"
+        assertEquals("1.5\n3\n5\n3\n0", run(src))
+    }
+
+    @Test
+    fun `v2 标准库 - timeNow 与 rand`() {
+        assumeTrue(nodeAvailable())
+        // rand() ∈ [0,1) 恒真，无需 &&（语言逻辑与是 ∧；此处单条件即可）
+        val src = "@unpure fun main() {\n" +
+            "print(timeNow() > 0)\n" +
+            "var r = rand()\n" +
+            "if (r < 1.0) { print(\"r\") }\n" +
+            "}"
+        assertEquals("true\nr", run(src))
     }
 
     // ============ P1 字符串内建端到端（决策 77） ============

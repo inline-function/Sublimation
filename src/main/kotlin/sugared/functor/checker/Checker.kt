@@ -30,12 +30,12 @@ class Checker(
     internal var covCounter = 0
     /** 当前是否处于 unchecked 上下文（决策 59：Any 结构体准入判据） */
     internal var uncheckedDepth = 0
-    /** 型类方法调用的字典留痕（决策 60，T5；O2 改键）：**调用点实例** → 字典名。
+    /** 类型类方法调用的字典留痕（决策 60，T5；O2 改键）：**调用点实例** → 字典名。
      *  IdentityHashMap 而非按名键——同名方法对不同实参类型各有 impl 时，按名会互相覆盖；
      *  CallExpr 是 data class，普通 HashMap 的结构相等也会让"长得一样"的两处调用互相污染。 */
     internal val dictHits = java.util.IdentityHashMap<CallExpr, String>()
     /**
-     * P6（决策 82）：当前函数的约束字典槽——类型参数名 → (型类, 槽 JS 名)。
+     * P6（决策 82）：当前函数的约束字典槽——类型参数名 → (类型类, 槽 JS 名)。
      * `fun f[T: Show]` 体内 `x.show()`（x: T）由槽解析：槽 d_Show_T 是 f 的隐藏首参。
      * checkFun 设置、体检查完清理（不跨函数泄漏）。
      */
@@ -44,7 +44,7 @@ class Checker(
     internal val consHits = java.util.IdentityHashMap<CallExpr, String>()
     /** P6：带约束泛型函数的调用点字典实参留痕（调用点实例 → 按声明顺序的字典名），codegen 前插实参 */
     internal val dictSubHits = java.util.IdentityHashMap<CallExpr, List<String>>()
-    /** HKT（《高阶类型.md》HKT-D2）：带参型类方法（如 `Functor.map`）的字典分发——接收者是 **kind 应用位**
+    /** HKT（《高阶类型.md》HKT-D2）：带参类型类方法（如 `Functor.map`）的字典分发——接收者是 **kind 应用位**
      *  （fa，非首参位）。记录调用点 → kind 应用位下标，供 codegen 把接收者表达式插到该位（点号式
      *  `xs.map(f)` → `map(f, xs)`；自由式实参已在 fa 位，不入此表）。⟨目标⟩ */
     internal val hktKindPosHits = java.util.IdentityHashMap<CallExpr, Int>()
@@ -164,9 +164,9 @@ class Checker(
         when (decl) {
             is FunDecl -> if (decl.body != null) checkFun(decl)
             is ClassDecl -> decl.members.forEach {
-                // O2（决策 68）：型类成员 v1 只允许无体签名——self 类型在声明期未定
+                // O2（决策 68）：类型类成员 v1 只允许无体签名——self 类型在声明期未定
                 if (it.body != null)
-                    d.error("E-SELF-UNKNOWN", it.pos, "型类 ${decl.name} 的成员 ${it.name} 不能有函数体，体属于 impl")
+                    d.error("E-SELF-UNKNOWN", it.pos, "类型类 ${decl.name} 的成员 ${it.name} 不能有函数体，体属于 impl")
             }
             // O2：impl 成员带隐式 self（决策 68，用户样本形态），方法体内可裸用自类型字段
             is ImplDecl -> {
@@ -254,7 +254,7 @@ class Checker(
             // O2：参数名遮蔽了 self 字段 → 提示（遮蔽合法，但要让用户知道裸名从此指向参数）
             if (selfT != null && p.name != "self" && p.name in structFieldNames(selfT))
                 d.hint("H-FIELD-SHADOW", fn.body?.pos ?: "", "参数 ${p.name} 遮蔽了 ${selfT.render()} 的同名字段，体内裸用 ${p.name} 将指向参数")
-            f.declareVar(p.name, pt)
+            f.declareVar(p.name, pt, fn.pos)   // 参数警告锚定函数声明位置（fn.body.pos 对表达式体可能为空）
             f.inject(PAtom(":", listOf(NameRef(p.name), typeToExpr(pt))))
         }
         // 决策 65（T6）：上/下文里的 $n 替换为参数名，并发提示级诊断；越界报错。
@@ -304,7 +304,19 @@ class Checker(
         curFunAsync = savedFunAsync
         startedTasks = savedStarted
         localChannels = savedLocals
+        // W-UNUSED（报错增强）：函数参数 / 语句与表达式 var（含解构分量）声明后从未使用
+        emitWUnused(f, fn)
         closedChannels = savedClosed
+    }
+
+    /** W-UNUSED：`_` 前缀名字视为有意的未使用，不警告；用法沿父链上溢标记（子作用域用到即算用过） */
+    private fun emitWUnused(f: Frame, fn: FunDecl) {
+        val rootVars = f.vars.keys
+        for ((name, posStr) in f.auditedDecls()) {
+            if (f.isUsed(name) || name.startsWith("_")) continue
+            val kind = if (name in rootVars) "参数 $name" else "变量 $name"
+            d.warn("W-UNUSED", posStr, "$kind 声明后从未使用（可加 _ 前缀抑制）")
+        }
     }
 
     /** O2（决策 68）：结构体自类型的裸字段名集合（枚举/基类型无裸字段） */
@@ -342,7 +354,7 @@ class Checker(
                     } else {
                         val mut = "mut" in s.annotations
                         s.destruct.forEachIndexed { i, nm ->
-                            f.declareVar(nm, tup.items[i])
+                            f.declareVar(nm, tup.items[i], s.pos)
                             if (mut) f.declareMut(nm)
                             d.supplement("D-TYPE-INFERRED", s.pos, "var $nm 推导为 ${tup.items[i].render()}")
                         }
@@ -364,7 +376,7 @@ class Checker(
                         d.error("E-TYPE-MISMATCH", s.pos, "var ${s.name}: 标注 ${s.type.render()} 与初值 ${t.render()} 不可统一")
                     else t = want
                 }
-                f.declareVar(s.name, t)
+                f.declareVar(s.name, t, s.pos)
                 // v2.0 异步（CH-5）：`var ch = Channel<…>()` 登记为本地通道——receive 智能转换据此
                 // 返回 T（编译器确定通道未关闭）；参数位/未知一律 T?。
                 if (t is NamedType && t.name == "Channel") localChannels += s.name
@@ -458,8 +470,10 @@ class Checker(
             d.error("E-PARAM-REF-IN-BODY", e.pos, "函数体内不能用 \$${e.index} 引用参数，请直接使用参数名")
             paramTypes.getOrNull(e.index - 1) ?: syntheticT("参数引用")
         }
-        is NameRef -> f.lookupVar(e.name)
-            ?: run {
+        is NameRef -> {
+            val vt = f.lookupVar(e.name)
+            if (vt != null) { f.markUsed(e.name); vt }
+            else run {
                 when {
                     syms.ctors.containsKey(e.name) -> {
                         // 零参构造子作值引用：带多态类型参数（None : Optional<T> 对任意 T）
@@ -476,6 +490,7 @@ class Checker(
                     else -> { d.error("E-UNBOUND-NAME", e.pos, "未定义名字 ${e.name}"); syntheticT("未定义") }
                 }
             }
+        }
         is UniExpr -> {
             val ot = checkExpr(e.operand, f, pure)
             if (e.op == "-") ot else namedT("Bool", emptyList())   // 负号保数值类型，!/¬ 才是 Bool
@@ -666,7 +681,7 @@ class Checker(
                     d.error("E-TYPE-MISMATCH", e.pos, "var ${e.name}: 标注 ${e.type.render()} 与初值 ${t.render()} 不可统一")
                 else t = want
             }
-            f.declareVar(e.name, t)
+            f.declareVar(e.name, t, e.pos)
             val mut = "mut" in e.annotations
             if (mut) f.declareMut(e.name)
             if (isPureValue(e.value) && !mut) f.inject(PAtom("=", listOf(NameRef(e.name), e.value)))

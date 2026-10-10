@@ -72,7 +72,7 @@ data class Ctor(val name: String, val fields: List<Type>)
 
 sealed interface TheoryParam
 
-/** `[T]` 或 `[T: Show]` —— 类型参数，可带型类约束。
+/** `[T]` 或 `[T: Show]` —— 类型参数，可带类型类约束。
  *  高阶类型（远期宪法第二条，主人拍板）：`[F[_]]` → arity=1，`[F[_, _]]` → arity=2；
  *  arity 是类型构造子的**实参个数**（kind `*→…→*` 的广度），0 = 普通类型变量。 */
 data class TypeParam(val name: String, val constraint: String?, val arity: Int = 0) : TheoryParam

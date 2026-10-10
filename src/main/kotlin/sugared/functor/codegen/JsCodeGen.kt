@@ -38,7 +38,7 @@ class JsCodeGen {
     /** 带 @tuple 形参的函数名（键 = 模块前缀全名）→ 该形参的位置（决策 61；P0 键带前缀防跨模块同名） */
     private val tupleParamPos = HashMap<String, Int>()
 
-    /** 型类方法调用的字典留痕（决策 60，T5；O2 改键）：调用点实例 → 字典名，由语义层传入。
+    /** 类型类方法调用的字典留痕（决策 60，T5；O2 改键）：调用点实例 → 字典名，由语义层传入。
      *  IdentityHashMap 语义：同构但不同实例的调用点各自独立。 */
     private var dicts: Map<CallExpr, String> = emptyMap()
     /** P6（决策 82）：约束槽方法调用留痕（调用点实例 → 槽名）——`d_Show_T.m(d_Show_T, self, ...)` */
@@ -63,8 +63,8 @@ class JsCodeGen {
     private val structFields = HashMap<String, List<String>>()
     /** v2.0：重载函数名集合（同名 >1 声明）——这些名字在 JS 里需按首参标签唯一化，避免同名覆盖 */
     private val overloadedFns = HashSet<String>()
-    /** HKT（《高阶类型.md》HKT-D2）：kind 型类名集合（类声明 theory 含 arity>0 形参，如 Functor[F[_]]）。
-     *  其字典方法签名**无 __self**（self 显式在形参表 fa 位）——`(d, f, fa...)`，与零参型类 `(d, __self)` 区分。 */
+    /** HKT（《高阶类型.md》HKT-D2）：kind 类型类名集合（类声明 theory 含 arity>0 形参，如 Functor[F[_]]）。
+     *  其字典方法签名**无 __self**（self 显式在形参表 fa 位）——`(d, f, fa...)`，与零参类型类 `(d, __self)` 区分。 */
     private val kindTraits = HashSet<String>()
     /** v2.0：每模块的重载函数名集合（模块路径 → 名），声明侧按此加后缀（与 Checker 侧 moduleHits 判定一致） */
     private val overloadsByUnit = HashMap<String, Set<String>>()
@@ -76,7 +76,7 @@ class JsCodeGen {
     private var channelUsed = false
     /** v2.0 异步（CH-5）：receive 智能转换（CallExpr → true）→ codegen 解包 `(…)[0]` */
     private var receiveSmartHits: Map<CallExpr, Boolean> = emptyMap()
-    /** HKT（《高阶类型.md》HKT-D2）：带参型类方法调用点 → kind 应用位下标（点号式 `xs.map(f)` 的 fa 位）。
+    /** HKT（《高阶类型.md》HKT-D2）：带参类型类方法调用点 → kind 应用位下标（点号式 `xs.map(f)` 的 fa 位）。
      *  字典签名 (d, f, fa) 无 __self——接收者按此重排，而非首参位。 */
     private var hktKindPosHits: Map<CallExpr, Int> = emptyMap()
     /** v2.0 基本库（内建 JS 实现）：**数组化 List** 的构造子名集合（名为 `List` 的枚举的构造子）。
@@ -131,8 +131,8 @@ class JsCodeGen {
             val s = e.decl as? StructDecl ?: continue
             structFields[s.name] = s.fields.map { it.name }
         }
-        // HKT（《高阶类型.md》HKT-D2）：收集 kind 型类名（theory 含 arity>0 形参）——genDict 按此决定
-        // 字典方法签名是否含 __self（kind 型类 self 显式在形参表，签名无 __self）
+        // HKT（《高阶类型.md》HKT-D2）：收集 kind 类型类名（theory 含 arity>0 形参）——genDict 按此决定
+        // 字典方法签名是否含 __self（kind 类型类 self 显式在形参表，签名无 __self）
         kindTraits.clear()
         for ((_, fa) in units) for (e in fa.entries) if (e is DeclEntry) {
             val c = e.decl as? ClassDecl ?: continue
@@ -335,7 +335,7 @@ class JsCodeGen {
         }
     }
 
-    /** impl → 型类字典对象：`const dict_<Trait>_<Type> = { m: function (d, __self, args…) { … } };`
+    /** impl → 类型类字典对象：`const dict_<Trait>_<Type> = { m: function (d, __self, args…) { … } };`
      *  （O2，决策 68；第四轮：块体方法用 `function` 形式展平语句，让 return 真正退出方法）
      *  P0（M6）：字典名带声明模块前缀（与 Checker resolveDict 的 dictNameOf 同参数） */
     private fun genDict(impl: ImplDecl) {
@@ -345,8 +345,8 @@ class JsCodeGen {
         val fields = structFields[(impl.self as? NamedType)?.name ?: ""] ?: emptyList()
         for ((i, m) in impl.members.withIndex()) {
             val body = m.body ?: continue
-            // 隐藏首参 d（字典自身，供体内递归分发）。零参型类加隐式接收者 __self（决策 68）；
-            // kind 型类（HKT-D2）self 已显式在形参表（map(f, fa) 的 fa 位），签名无 __self——(d, f, fa...)。
+            // 隐藏首参 d（字典自身，供体内递归分发）。零参类型类加隐式接收者 __self（决策 68）；
+            // kind 类型类（HKT-D2）self 已显式在形参表（map(f, fa) 的 fa 位），签名无 __self——(d, f, fa...)。
             val ps = if (impl.trait.name in kindTraits)
                 (listOf("d") + m.params.map { mangle(it.name) }).joinToString(", ")
             else
@@ -694,6 +694,15 @@ class JsCodeGen {
             return awaited(e, "(() => { try { return stdlib__Ok(require('fs').readFileSync(${expr(e.args[0])}, 'utf8')); } catch (x) { return stdlib__Err(x.message); } })()")
         if (name == "writeFile" && e.args.size == 2)
             return awaited(e, "(() => { try { require('fs').writeFileSync(${expr(e.args[0])}, ${expr(e.args[1])}); return stdlib__Ok(null); } catch (x) { return stdlib__Err(x.message); } })()")
+        // v2.0 标准库补全：IO 扩展——appendFile/readDir 返回 Result（同 readFile 的 try/catch 包 Ok/Err）
+        if (name == "appendFile" && e.args.size == 2)
+            return awaited(e, "(() => { try { require('fs').appendFileSync(${expr(e.args[0])}, ${expr(e.args[1])}); return stdlib__Ok(null); } catch (x) { return stdlib__Err(x.message); } })()")
+        if (name == "fileExists" && e.args.size == 1)
+            return "require('fs').existsSync(${expr(e.args[0])})"
+        if (name == "readDir" && e.args.size == 1)
+            return awaited(e, "(() => { try { return stdlib__Ok(require('fs').readdirSync(${expr(e.args[0])})); } catch (x) { return stdlib__Err(x.message); } })()")
+        if (name == "timeNow" && e.args.isEmpty()) return "Date.now()"
+        if (name == "rand" && e.args.isEmpty()) return "Math.random()"
         if (name == "getArgs" && e.args.isEmpty())
             // v2.0 基本库（内建 JS 实现）：List 数组化后 getArgs 直接返回 JS 数组（List[Str] 表示 = 数组）
             return "process.argv.slice(2)"
@@ -717,6 +726,19 @@ class JsCodeGen {
             return "String(${expr(e.args[0])})"
         if (name == "parseNat" && e.args.size == 1)
             return "(() => { const m = String(${expr(e.args[0])}).match(/^(0|[1-9][0-9]*)$/); return m ? Some(Number(m[0])) : None(); })()"
+        // v2.0 标准库补全：字符串扩展——JS 原生映射（strSplit 返回 JS 数组 = 数组化 List[Str]）
+        if (name == "strUpper" && e.args.size == 1) return "(${expr(e.args[0])}).toUpperCase()"
+        if (name == "strLower" && e.args.size == 1) return "(${expr(e.args[0])}).toLowerCase()"
+        if (name == "strTrim" && e.args.size == 1) return "(${expr(e.args[0])}).trim()"
+        if (name == "startsWith" && e.args.size == 2) return "(${expr(e.args[0])}).startsWith(${expr(e.args[1])})"
+        if (name == "endsWith" && e.args.size == 2) return "(${expr(e.args[0])}).endsWith(${expr(e.args[1])})"
+        if (name == "strReplace" && e.args.size == 3)
+            return "((${expr(e.args[0])}).split(${expr(e.args[1])})).join(${expr(e.args[2])})"
+        if (name == "strSplit" && e.args.size == 2) return "(${expr(e.args[0])}).split(${expr(e.args[1])})"
+        if (name == "strIndexOf" && e.args.size == 2) {
+            val s = expr(e.args[0]); val p = expr(e.args[1])
+            return "(() => { const i = ($s).indexOf($p); return i === -1 ? None() : Some(i); })()"
+        }
         // P10 浮点数 Rat（决策 86，候选 A：IEEE double via JS Number）：JS 原生映射
         if (name == "toRat" && e.args.size == 1)
             return "Number(${expr(e.args[0])})"
@@ -727,6 +749,15 @@ class JsCodeGen {
         if (name == "floor" && e.args.size == 1) return "Math.floor(${expr(e.args[0])})"
         if (name == "ceil" && e.args.size == 1) return "Math.ceil(${expr(e.args[0])})"
         if (name == "pow" && e.args.size == 2) return "Math.pow(${expr(e.args[0])}, ${expr(e.args[1])})"
+        // v2.0 标准库补全：Math 扩展
+        if (name == "mathMin" && e.args.size == 2) return "Math.min(${expr(e.args[0])}, ${expr(e.args[1])})"
+        if (name == "mathMax" && e.args.size == 2) return "Math.max(${expr(e.args[0])}, ${expr(e.args[1])})"
+        if (name == "mathClamp" && e.args.size == 3)
+            return "Math.min(Math.max(${expr(e.args[0])}, ${expr(e.args[1])}), ${expr(e.args[2])})"
+        if (name == "mathRound" && e.args.size == 1) return "Math.round(${expr(e.args[0])})"
+        if (name == "mathSin" && e.args.size == 1) return "Math.sin(${expr(e.args[0])})"
+        if (name == "mathCos" && e.args.size == 1) return "Math.cos(${expr(e.args[0])})"
+        if (name == "mathTan" && e.args.size == 1) return "Math.tan(${expr(e.args[0])})"
         // P2 数组原语（v1.0 计划 §4.2 步骤 A）：JS 原生映射
         if (name == "arrayOf") return "[${e.args.joinToString(", ") { expr(it) }}]"
         if (name == "arrayLength" && e.args.size == 1) return "(${expr(e.args[0])}).length"
@@ -809,6 +840,15 @@ class JsCodeGen {
                 // —— 元素查询/统计：语义直译 ——
                 "contains" -> if (e.args.size == 2) return "($xs).includes(${expr(e.args[1])})"
                 "count" -> if (e.args.size == 2) return "($xs).filter(${expr(e.args[1])}).length"
+                // —— v2.0 基本库补全（2026-10-10）：any/all/indexOf/slice/sortBy ——
+                "any" -> if (e.args.size == 2) return "($xs).some(${expr(e.args[1])})"
+                "all" -> if (e.args.size == 2) return "($xs).every(${expr(e.args[1])})"
+                "indexOf" -> if (e.args.size == 2) {
+                    val x = expr(e.args[1])
+                    return "(() => { const i = ($xs).indexOf($x); return i === -1 ? None() : Some(i); })()"
+                }
+                "slice" -> if (e.args.size == 3) return "($xs).slice(${expr(e.args[1])}, ${expr(e.args[2])})"
+                "sortBy" -> if (e.args.size == 2) { val f = expr(e.args[1]); return "($xs).slice().sort((a, b) => ($f)(a, b) ? -1 : 1)" }
                 "joinToString" -> if (e.args.size == 2) return "($xs).map(x => String(x)).join(${expr(e.args[1])})"
                 "sum" -> if (e.args.size == 1) return "($xs).reduce((a, b) => a + b, 0)"
                 "forEach" -> if (e.args.size == 2) { val f = expr(e.args[1]); return "($xs).forEach(x => ($f)(x))" }
@@ -821,14 +861,27 @@ class JsCodeGen {
         // 元组构造（决策 62）：prelude 内建，无用户声明对应
         if (name == "emptyTuple") return "[]"
         if (name == "singleTuple") return "[${e.args.joinToString(", ") { expr(it) }}]"
-        // @tuple 形参调用：从该位起的实参在 JS 里打包成一个数组参数（决策 61；P0 键带模块前缀）
+        // @tuple 形参调用（决策 61；P0 键带模块前缀）：@tuple 形参只收元组字面量（CallCheck E-TUPLE-VARARG），
+        // 实参即元组值——直接把元组字面量作为单个实参传递，不额外包裹（否则双嵌套 [[..]]）。
+        // 修复 2026-10-10：旧代码只 return 实参串、丢了函数调用本身（sum((1,2)) 生成 [[1,2]] 而非 sum([1,2])）。
         val tp = if (name != null) (tupleParamPos[moduleHits[callee] ?: moduleJsName(currentPrefix, name)] ?: -1) else -1
         if (tp >= 0 && e.args.size > tp) {
             val fixed = e.args.take(tp).joinToString(", ") { expr(it) }
-            val packed = "[" + e.args.drop(tp).joinToString(", ") { expr(it) } + "]"
-            return listOf(fixed, packed).filter { it.isNotEmpty() }.joinToString(", ")
+            val dropped = e.args.drop(tp)
+            val packed = if (dropped.size == 1) expr(dropped[0])
+                else "[" + dropped.joinToString(", ") { expr(it) } + "]"   // 防御：多实参时打包成变长元组
+            val argsJs = listOf(fixed, packed).filter { it.isNotEmpty() }.joinToString(", ")
+            val calleeJs = when (callee) {
+                is NameRef -> moduleHits[callee] ?: mangle(callee.name)
+                is FieldExpr -> moduleHits[callee] ?: "${expr(callee.target)}.${mangle(callee.name)}"
+                is InstExpr -> expr(callee.target)
+                else -> expr(callee)
+            }
+            val callJs = "$calleeJs($argsJs)"
+            val withAwait = if (awaitHits[e] == true) "await $callJs" else callJs
+            return if (receiveSmartHits[e] == true) "($withAwait)[0]" else withAwait
         }
-        // 决策 60/68（O2）：型类方法调用按调用点查字典分发，方法体签名为 (d, __self, args…)。
+        // 决策 60/68（O2）：类型类方法调用按调用点查字典分发，方法体签名为 (d, __self, args…)。
         // 点号形态 o.m(args) 与自由式 m(o, args) 统一补齐隐藏字典 d 与接收者 __self。
         // P0：限定方法 `core.show(p)` 用 MODULE_METHOD_MARKER 标记——首实参即接收者（自由形态语义）。
         // P6（决策 82）：约束槽方法调用 `x.show()`（x: T, T: Show）→ `d_Show_T.show(d_Show_T, x)`

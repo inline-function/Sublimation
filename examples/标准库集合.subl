@@ -2,7 +2,7 @@
 // 特性：标准库集合（List 常用高阶：size/map/filter/fold/range/joinToString）
 // 注：单文件模式不挂 stdlib，List 与高阶函数内联声明；目录模式下 stdlib/
 //     会自动隐式挂载（见仓库 show/ 演示包与 模块系统/）
-// 预期输出（每行一个）：4 / 2,4,6,8 / 3,4 / 10 / 20
+// 预期输出（每行一个）：4 / 2,4,6,8 / 3,4 / 10 / 20 / false / false / 1 / 1,2,3,4 / 4,3,2,1
 // ============================================================
 
 enum List[T] { Nil(), Cons(T, List[T]) }
@@ -39,6 +39,32 @@ fun range(a: Nat, b: Nat): List[Nat] {
 fun joinToString[T](xs: List[T], sep: Str): Str =
     fold(xs, "", { x, acc -> if (acc == "") { toStr(x) } else { concat(acc, concat(sep, toStr(x))) } })
 
+// ---- v2.0 标准库补全：any / all / indexOf / sortBy（自包含版；目录模式走 stdlib/list.subl + codegen 特判） ----
+fun any[T](xs: List[T], f: (T) => Bool): Bool = when(xs) {
+    Nil -> false
+    Cons(h, t) -> if (f(h)) { true } else { any(t, f) }
+}
+
+fun all[T](xs: List[T], f: (T) => Bool): Bool = when(xs) {
+    Nil -> true
+    Cons(h, t) -> if (f(h)) { all(t, f) } else { false }
+}
+
+fun indexOf[T](xs: List[T], x: T): Optional[Nat] = when(xs) {
+    Nil -> None()
+    Cons(h, t) -> if (h == x) { Some(0) } else { when(indexOf(t, x)) { Some(n) -> Some(n + 1); None -> None() } }
+}
+
+fun insertSort[T](x: T, xs: List[T], f: (T, T) => Bool): List[T] = when(xs) {
+    Nil -> Cons(x, Nil())
+    Cons(h, t) -> if (f(x, h)) { Cons(x, Cons(h, t)) } else { Cons(h, insertSort(x, t, f)) }
+}
+
+fun sortBy[T](xs: List[T], f: (T, T) => Bool): List[T] = when(xs) {
+    Nil -> Nil()
+    Cons(h, t) -> insertSort(h, sortBy(t, f), f)
+}
+
 @unpure
 fun main() {
     var xs = range(1, 5)                                          // [1,2,3,4]
@@ -47,4 +73,10 @@ fun main() {
     unchecked print(joinToString(filter(xs, { x -> x > 2 }), ",")) // 3,4
     unchecked print(fold(xs, 0, { x, acc -> acc + x }))            // 10
     unchecked print(fold(map(xs, { x -> x * 2 }), 0, { x, acc -> acc + x }))  // 20
+    // ---- v2.0 补全：any/all/indexOf/sortBy ----
+    unchecked print(any(xs, { x -> x > 4 }))                       // false（1..4 无 >4）
+    unchecked print(all(xs, { x -> x > 1 }))                        // false（1 不 >1）
+    when(indexOf(xs, 2)) { Some(i) -> { unchecked print(i) }; None -> { unchecked print("x") } }  // 1
+    unchecked print(joinToString(sortBy(xs, { a, b -> a < b }), ","))   // 1,2,3,4
+    unchecked print(joinToString(sortBy(xs, { a, b -> a > b }), ","))   // 4,3,2,1
 }

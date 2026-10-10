@@ -117,6 +117,7 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
     }
 
     private fun parseFun(anns: List<String>): FunDecl {
+        val sl = cur().line; val sc = cur().col   // 报错增强：函数声明位置（W-UNUSED/位置诊断用）
         at(Kind.FUN)
         val name = nameToken()
         val theory = if (peek(Kind.LBRACKET)) parseTheory() else emptyList()
@@ -145,7 +146,7 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
             peek(Kind.LBRACE) -> parseBlock()
             else -> null
         }
-        return FunDecl(name, anns, theory, params, preps, ret, posts, body)
+        return FunDecl(name, anns, theory, params, preps, ret, posts, body, "$sl:$sc")
     }
 
     private fun parseTheory(): List<TheoryParam> {
@@ -383,13 +384,14 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
     }
 
     private fun parseVar(anns: List<String>): VarStmt {
+        val sl = cur().line; val sc = cur().col   // 报错增强：变量声明位置（W-UNUSED/位置诊断用）
         at(Kind.VAR)
         val destruct = parseVarDestruct()
         val name = if (destruct != null) destruct.first() else nameToken()
         val ty = if (peek(Kind.COLON)) { pos++; parseType() } else null
         at(Kind.ASSIGN)
         val v = parseExpr(angle = false)
-        return VarStmt(name, anns, ty, v, destruct)
+        return VarStmt(name, anns, ty, v, destruct, "$sl:$sc")
     }
 
     /** 元组解构声明 `var (a, b) = e`：`var` 后紧跟 `(` 则读扁平分量名列表。 */

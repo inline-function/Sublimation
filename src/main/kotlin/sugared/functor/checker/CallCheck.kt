@@ -59,7 +59,7 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
     // 方法路径上自由形态的首实参是 self，剩余实参才是形参表。
     // 自由形态仅在"是方法名且不是具名函数/构造子/结构体"时成立——具名函数优先（现行解析顺序）。
     // P0（M6，impl 也要挂载）：方法名判定跨可见模块（含兄弟/挂载模块的 impl），不再只看本模块。
-    // v2.0 异步（决策 93）：Task 对象方法（start/join/isAlive）需纳入方法路径——它们不是型类方法/自由函数，
+    // v2.0 异步（决策 93）：Task 对象方法（start/join/isAlive）需纳入方法路径——它们不是类型类方法/自由函数，
     // 但必须是接收者形态（o.start()）走 Task 特判；裸名 start(...) 不会被误解析。
     val fieldCallee: FieldExpr? = (c.callee as? FieldExpr)?.takeIf { isMethodName(it.name) || hasFreeFun(it.name) || it.name in taskMethods || it.name in channelMethods }
     val freeName = (c.callee as? NameRef)?.name
@@ -67,7 +67,7 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
     val isFreeFormMethod = fieldCallee == null && freeName != null &&
         isMethodName(freeName) &&
         syms.findFun(freeName) == null && !syms.ctors.containsKey(freeName) && !syms.structs.containsKey(freeName)
-    // HKT（《高阶类型.md》§7.1，方案 A）：带参型类方法（`map(f, fa)`）的字典键是 **kind 应用位**（fa，含
+    // HKT（《高阶类型.md》§7.1，方案 A）：带参类型类方法（`map(f, fa)`）的字典键是 **kind 应用位**（fa，含
     // arity>0 形参应用的那一参），不是首实参；且 fn 需要全部实参（self 即 fa 位，不 drop）。
     val hktKindPos = when {
         fieldCallee != null -> hktKindParamIndex(fieldCallee.name)
@@ -188,9 +188,9 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
                 methodSugarArgs[c]!!, listOfNotNull(selfT) + argTypes, isMethodPath = true)
     }
 
-    val fn: FunDecl = (if (fieldCallee != null) null else findCallable(name, argTypes))   // O2：点号形态直指型类方法，不被同名自由函数截胡；v2.0 按实参挑重载
+    val fn: FunDecl = (if (fieldCallee != null) null else findCallable(name, argTypes))   // O2：点号形态直指类型类方法，不被同名自由函数截胡；v2.0 按实参挑重载
         ?: run {
-            // 型类方法调用（决策 60，T5；O2 双形态）：按 self 类型解析字典，按调用点留痕给 codegen
+            // 类型类方法调用（决策 60，T5；O2 双形态）：按 self 类型解析字典，按调用点留痕给 codegen
             if (isMethodName(name)) {
                 // O2：自由式 `m()` 无实参 → 缺接收者，专属码（区别于"有类型但无实例"）
                 if (selfT == null) {
@@ -205,7 +205,7 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
                 } else null
                 if (consSlot != null) {
                     consHits[c] = consSlot.second
-                    // 返回类型取类成员签名（约束型类方法通常返回具体类型，如 show → Str）
+                    // 返回类型取类成员签名（约束类型类方法通常返回具体类型，如 show → Str）
                     val sig = syms.classes[consSlot.first]?.members?.firstOrNull { it.name == name }
                     return sig?.retType ?: syntheticT("约束方法${consSlot.first}.$name")
                 }
@@ -295,13 +295,13 @@ private fun Checker.findCallableIn(s: Symbols, name: String, argTypes: List<Type
     return main
 }
 
-/** HKT（《高阶类型.md》§7.1，方案 A）：带参型类方法（`map(f, fa)`）的 kind 应用位——
+/** HKT（《高阶类型.md》§7.1，方案 A）：带参类型类方法（`map(f, fa)`）的 kind 应用位——
  *  类声明签名里含 arity>0 形参应用的那一参下标（如 Functor[F[_]] 的 map 里 `fa: F[A]` 是第 1 位）。
- *  无 kind 形参（普通型类如 Show）→ -1，调用方按旧「首参即 self」逻辑。 */
+ *  无 kind 形参（普通类型类如 Show）→ -1，调用方按旧「首参即 self」逻辑。 */
 private fun Checker.hktKindParamIndex(name: String): Int {
     val entries = syms.methods[name] ?: return -1
     if (entries.isEmpty()) return -1
-    // 取任一 impl 条目的型类，读类声明的成员签名（impl 方法形参已实例化如 List[A]，看不出 kind 位）
+    // 取任一 impl 条目的类型类，读类声明的成员签名（impl 方法形参已实例化如 List[A]，看不出 kind 位）
     val trait = entries.first().trait
     val cls = syms.classes[trait] ?: return -1
     val arity = tpArityOf(cls)
@@ -337,7 +337,7 @@ private fun Checker.paramMatchesRecv(want0: Type, self0: Type): Boolean {
 
 // ============ P0：跨模块限定调用与公共检查段 ============
 
-/** 方法名判定（决策 60，T5）：本模块 impl/型类候选，或可见模块（M6：impl 也要挂载）里的。 */
+/** 方法名判定（决策 60，T5）：本模块 impl/类型类候选，或可见模块（M6：impl 也要挂载）里的。 */
 private fun Checker.isMethodName(n: String): Boolean =
     n in syms.methods || n in syms.traitMethods ||
         (moduleTree != null && visiblePaths.any { p ->
