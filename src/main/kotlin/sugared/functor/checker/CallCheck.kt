@@ -439,7 +439,7 @@ internal fun Checker.checkFnCall(
     fn.params.forEachIndexed { i, p ->
         if (i < effTypes.size) {
             val at = effTypes[i]
-            if (!at.isSynthetic()) extractTpBinding(p.type, at, tps.toSet(), tsub)
+            if (!at.isSynthetic()) extractTpBinding(p.type, at, tps.toSet(), tsub, tpArityOf(fn))
         }
     }
     // P2 定点反推（compose 等链式泛型）：lambda 返回类型反推可能依赖**另一个 lambda 先解出的类型参数**——
@@ -584,8 +584,8 @@ private fun Checker.typeOf(e: Expr): Type = when (e) {
  * 之上增加 occurs check（拒绝 `T → List<T>` 环）与已绑定一致性（静默，typeLooseEq 宽容，语义同 P2 putIfAbsent）。
  * 合成类型不绑定（unifyInto 宽容 true）。解不出就留空（报错走 E-TYPE-MISMATCH 既有通道）。
  */
-private fun extractTpBinding(want: Type, got: Type, tps: Set<String>, tsub: LinkedHashMap<String, Type>) {
-    unifyInto(want, got, tps, tsub)   // 同包顶层函数（TypeInfer.kt）
+private fun extractTpBinding(want: Type, got: Type, tps: Set<String>, tsub: LinkedHashMap<String, Type>, arity: Map<String, Int> = emptyMap()) {
+    unifyInto(want, got, tps, tsub, arity)   // 同包顶层函数（TypeInfer.kt）
 }
 
 /** P9（决策 44，递归停机）：实参是否为某形参的语法子项。

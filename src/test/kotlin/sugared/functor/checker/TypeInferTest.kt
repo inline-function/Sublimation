@@ -2,6 +2,7 @@ package sugared.functor.checker
 
 import sugared.functor.ast.FunType
 import sugared.functor.ast.Type
+import sugared.functor.ast.NamedType
 import sugared.functor.ast.namedT
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -123,4 +124,33 @@ class TypeInferTest {
         assertEquals("Nat", TypeInfer.unify(namedT("Nat"), namedT("Nat"))?.render())
         assertEquals("Str", TypeInfer.unify(namedT("Str"), namedT("Str"))?.render())
     }
+
+    @Test
+    fun `kind 应用合一 F 绑构造子并递归实参`() {
+        val sub = mutable()
+        // F[A] ~ List[Nat] → F:=List, A:=Nat（HKT-U2，方案 A：NamedType 复用）
+        val fa = NamedType("F", listOf(namedT("A")))
+        val lstNat = NamedType("List", listOf(namedT("Nat")))
+        assertTrue(unifyInto(fa, lstNat, setOf("F", "A"), sub, arityOf("F" to 1)))
+        assertEquals("List", sub["F"]?.render())
+        assertEquals("Nat", sub["A"]?.render())
+    }
+
+    @Test
+    fun `kind 应用合一构造子不一致失败`() {
+        val sub = mutable()
+        val ar = arityOf("F" to 1)
+        assertTrue(unifyInto(NamedType("F", listOf(namedT("A"))), NamedType("List", listOf(namedT("Nat"))), setOf("F", "A"), sub, ar))
+        // F 已绑 List，二次遇 Optional → false（HKT-U2 构造子一致校验）
+        assertFalse(unifyInto(NamedType("F", listOf(namedT("A"))), NamedType("Optional", listOf(namedT("Nat"))), setOf("F", "A"), sub, ar))
+    }
+
+    @Test
+    fun `kind 形参与普通类型变量不混淆`() {
+        val sub = mutable()
+        // F[Nat] ~ T：T 是普通类型变量（arity 0 不在 arity 表），F 是构造子形参——宽容失败（HKT-U3）
+        assertTrue(unifyInto(NamedType("F", listOf(namedT("Nat"))), namedT("T"), setOf("F", "T"), sub, arityOf("F" to 1)))
+    }
+
+    private fun arityOf(vararg pairs: Pair<String, Int>) = mapOf(*pairs)
 }

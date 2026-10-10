@@ -7,11 +7,21 @@ import sugared.functor.ast.*
  * - **类型变量**：变量 = 名字在 vars 且零实参的 NamedType（如 `T`）；变量-类型 → 绑定，变量-变量 → 单向绑定；
  * - **occurs check**：`T` 绑定到包含 `T` 的类型（`Optional<T>`）→ 失败（拒绝无限类型）；
  * - **结构递归**：NamedType 同形逐实参、FunType 参数+返回、TupleType 逐项；
+ * - **kind 应用合一**（《高阶类型.md》HKT-U2，方案 A：NamedType 复用）：arity 表中 arity>0 的形参
+ *   （如 `F[_]`）与同名数的具体构造子应用合一时——绑 F→构造子名，递归合一实参；
+ *   二次出现时校验构造子一致（F 已绑 List → 再遇 Optional 失败）。仅支持"一端是构造子形参应用"，
+ *   两端都是构造子形参（F[A] ~ G[B]）暂回落常规分支（宽松失败，不误放行，留待 HKT-2）。⟨目标⟩
  * - **数值升格**：已绑定变量遇更高数值类型（Nat→Int）走 typeLooseEq 静默保持（与 P2 putIfAbsent 语义一致，不破坏既有行为）；
  * - **synthetic 宽容**：合成类型不产生约束（true）。
  * deref 递归展开 sub 链（防环，steps 上限）。
  */
-fun unifyInto(a: Type, b: Type, vars: Set<String>, sub: MutableMap<String, Type>): Boolean {
+fun unifyInto(
+    a: Type,
+    b: Type,
+    vars: Set<String>,
+    sub: MutableMap<String, Type>,
+    arity: Map<String, Int> = emptyMap(),
+): Boolean {
     val aa = deref(a, vars, sub)
     val bb = deref(b, vars, sub)
     val aVar = aa is NamedType && aa.args.isEmpty() && aa.name in vars
@@ -36,14 +46,29 @@ fun unifyInto(a: Type, b: Type, vars: Set<String>, sub: MutableMap<String, Type>
         sub[bb.name] = aa
         return true
     }
+    // kind 应用合一（HKT-U2，方案 A）：`F[A] ~ List[Nat]` → F:=List, A:=Nat；`F[A] ~ List[B]`（F 已绑）→ 递归 A~B。
+    // 仅当 arity 表里 aa.name 是构造子形参（arity>0）且 bb 是同样实参数的具体构造子应用。
+    if (aa is NamedType && bb is NamedType && aa.args.isNotEmpty() && aa.args.size == bb.args.size) {
+        val ka = arity[aa.name]
+        if (ka != null && ka > 0 && arity[bb.name] == null) {
+            val cur = sub[aa.name]
+            if (cur != null) {                            // F 已有绑定：构造子必须一致
+                if (cur !is NamedType || cur.name != bb.name || !cur.args.isEmpty()) return false
+            } else {
+                if (aa.name in vars) sub[aa.name] = NamedType(bb.name)   // F := List（构造子名，零实参）
+                else return false
+            }
+            return aa.args.zip(bb.args).all { unifyInto(it.first, it.second, vars, sub, arity) }
+        }
+    }
     return when {
         aa is FunType && bb is FunType ->
-            aa.params.zip(bb.params).all { unifyInto(it.first, it.second, vars, sub) } &&
-                unifyInto(aa.ret, bb.ret, vars, sub)
+            aa.params.zip(bb.params).all { unifyInto(it.first, it.second, vars, sub, arity) } &&
+                unifyInto(aa.ret, bb.ret, vars, sub, arity)
         aa is TupleType && bb is TupleType && aa.items.size == bb.items.size ->
-            aa.items.zip(bb.items).all { unifyInto(it.first, it.second, vars, sub) }
+            aa.items.zip(bb.items).all { unifyInto(it.first, it.second, vars, sub, arity) }
         aa is NamedType && bb is NamedType && aa.name == bb.name && aa.args.size == bb.args.size ->
-            aa.args.zip(bb.args).all { unifyInto(it.first, it.second, vars, sub) }
+            aa.args.zip(bb.args).all { unifyInto(it.first, it.second, vars, sub, arity) }
         // P7：类型-类型核对用宽松相等（数值升格 Nat↔Int 放行、synthetic 放行）——提取语义非核对语义
         else -> looseEq(aa, bb)
     }
