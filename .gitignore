@@ -47,9 +47,6 @@ bin/
 
 ### Sublimation generated/build artifacts ###
 out.js
-show/show.js
-show/show.log
-show/sublimation.jar
 **/build/libs/*.jar
 
 ### Internal docs (not for public repo) ###
