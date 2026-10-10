@@ -16,9 +16,13 @@ import sugared.functor.ast.*
 internal fun Checker.registerPureFacts() {
     globalFacts.clear()
     for ((name, fn) in syms.funs) {
-        if ("unpure" !in fn.annotations) globalFacts += PAtom("pure", listOf(NameRef(name)))
+        // v2.0 @root：无体内建声明的纯度/副作用由**内建表**决定（builtinUnpure/builtinPure），用户注解不参与——
+        // 否则用户 `@root fun readFile(...)`（无 @unpure）会被误注册 pure<readFile>，制造错误证明。
+        val builtin = builtinUnpure(name) ?: builtinPure(name)
+        val anns = if (builtin != null) builtin.annotations else fn.annotations
+        if ("unpure" !in anns) globalFacts += PAtom("pure", listOf(NameRef(name)))
         // v2.0 异步（决策 93）：@async 函数注册自然命题 async<name>——同步上下文调用须显式供给/放行
-        if ("async" in fn.annotations) globalFacts += PAtom("async", listOf(NameRef(name)))
+        if ("async" in anns) globalFacts += PAtom("async", listOf(NameRef(name)))
     }
     // impl 方法同样注册（按方法名）
     for ((name, entries) in syms.methods) {
@@ -158,6 +162,16 @@ internal fun Checker.checkDeclTypes(decl: Decl) {
             // O4（决策 70）：main 作为自动入口必须 0 形参 0 类型参（重复声明由 E-DUP-DECL 兜底）
             if (decl.name == "main" && (decl.params.isNotEmpty() || decl.theory.isNotEmpty()))
                 d.error("E-MAIN-PARAMS", decl.pos, "入口函数 main 不能有形参或类型参数（决策 70）")
+            // v2.0 @root 机制：无体函数必须标注 @root 且名字在内建白名单（编译器按名字特判出 JS 实现）
+            if (decl.body == null) {
+                when {
+                    "root" !in decl.annotations ->
+                        d.error("E-FUN-NO-BODY", decl.pos, "函数 ${decl.name} 没有函数体。普通函数必须写出实现；内建函数请标注 @root（编译器对白名单开放）")
+                    decl.name !in ROOT_WHITELIST ->
+                        d.error("E-ROOT-NOT-ALLOWED", decl.pos, "函数 ${decl.name} 标注 @root 但不在内建白名单中。@root 仅对编译器已实现 JS 内建的名字开放（ROOT_WHITELIST）")
+                    else -> d.hint("H-ROOT-BUILTIN", decl.pos, "@root 函数 ${decl.name} 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）")
+                }
+            }
         }
         is ClassDecl -> decl.members.forEach { m ->
             // O3（决策 69）：型类成员形参不允许默认值

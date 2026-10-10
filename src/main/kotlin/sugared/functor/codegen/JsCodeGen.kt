@@ -79,6 +79,12 @@ class JsCodeGen {
     /** HKT（《高阶类型.md》HKT-D2）：带参型类方法调用点 → kind 应用位下标（点号式 `xs.map(f)` 的 fa 位）。
      *  字典签名 (d, f, fa) 无 __self——接收者按此重排，而非首参位。 */
     private var hktKindPosHits: Map<CallExpr, Int> = emptyMap()
+    /** v2.0 基本库（内建 JS 实现）：**数组化 List** 的构造子名集合（名为 `List` 的枚举的构造子）。
+     *  List 在 JS 层直接表示为数组：`Nil()` → `[]`、`Cons(h,t)` → `[h, ...t]`，
+     *  模式解构 `Nil ->` / `Cons(h,t) ->` 翻译为 `length`/`slice`——
+     *  语义层（enum List 声明、when 检查、Optional 空安全）完全不动，纯 codegen 表示变换。
+     *  仅按枚举名 List 收集，用户自定义 `enum Foo { Nil() }` 不受影响；单文件无 stdlib 时集合为空。 */
+    private val listCtorSet = LinkedHashSet<String>()
 
     fun generate(
         file: FileAst,
@@ -139,9 +145,18 @@ class JsCodeGen {
         nullaryCtors.clear()
         nullaryCtors += listOf("None")   // prelude 零参构造子（Some 有参不含；true/false/null 走字面量）
         tupleParamPos.clear()
+        listCtorSet.clear()   // v2.0 基本库：数组化 List（枚举名 List 的构造子集合，见字段注释）
         for ((p, fa) in units) for (e in fa.entries) if (e is DeclEntry) {
             when (val ed = e.decl) {
-                is EnumDecl -> ed.ctors.forEach { ctorNames += it.name; if (it.fields.isEmpty()) nullaryCtors += it.name }
+                is EnumDecl -> {
+                    if (ed.name == "List") for (c in ed.ctors) {
+                        // 数组化 List 只认 Nil()/Cons(T, List[T]) 形态（v2.0 基本库约定）——
+                        // 用户自定义 `enum List { A(), B() }`（构造子非 Nil/Cons 形态）不受影响
+                        if ((c.name == "Nil" && c.fields.isEmpty()) || (c.name == "Cons" && c.fields.size == 2))
+                            listCtorSet += c.name
+                    }
+                    ed.ctors.forEach { ctorNames += it.name; if (it.fields.isEmpty()) nullaryCtors += it.name }
+                }
                 is FunDecl -> ed.params.forEachIndexed { i, pp ->
                     if ("tuple" in pp.annotations) tupleParamPos[moduleJsName(p, ed.name)] = i
                 }
@@ -164,6 +179,8 @@ class JsCodeGen {
         line("  if (t === \"Bool\") return typeof v === \"boolean\";")
         line("  if (t === \"Null\") return v === null || (v && v.tag === \"Null\");")
         line("  if (t === \"(fn)\") return typeof v === \"function\";")
+        // v2.0 基本库（内建 JS 实现）：数组化 List 的类型判定 = Array.isArray（List 在 JS 层是数组，无 tag）
+        line("  if (t === \"List\") return Array.isArray(v);")
         line("  return v !== null && typeof v === \"object\" && v.tag === t;")
         line("};")
         // 结构相等助手（决策 32/53）：仅在源码用到 ==/!= 时注入，保持"未用则零运行时"
@@ -301,6 +318,9 @@ class JsCodeGen {
             }
             is EnumDecl -> for (c in decl.ctors) {
                 if (c.name == "true" || c.name == "false") continue   // Bool 用 JS 字面量
+                // v2.0 基本库（内建 JS 实现）：数组化 List 的构造子不生成 tag 对象工厂——
+                // List 在 JS 层是数组（Nil→[]、Cons(h,t)→[h,...t]），工厂由调用点/模式特判承接
+                if (c.name in listCtorSet) continue
                 if (c.fields.isEmpty()) line("const ${moduleJsName(currentPrefix, c.name)} = () => ({ tag: ${q(c.name)} });")
                 else {
                     val ps = c.fields.indices.joinToString(", ") { "a$it" }
@@ -507,6 +527,8 @@ class JsCodeGen {
         is StrLit -> q(e.value)
         is NameRef -> when {
             e.name == "true" || e.name == "false" || e.name == "null" -> e.name   // JS 字面量
+            // v2.0 基本库：数组化 List 的零参构造子值引用 → 空数组（工厂已跳过生成，不能调 stdlib__Nil()）
+            e.name in nullaryCtors && e.name in listCtorSet -> "[]"
             e.name in nullaryCtors -> "${moduleHits[e] ?: mangle(e.name)}()"       // 零参构造子值引用→调用
             // P0（M8）：全局引用按 Checker 留痕的 mangle 名；局部变量/字段不留痕
             moduleHits.containsKey(e) -> moduleHits.getValue(e)
@@ -648,6 +670,14 @@ class JsCodeGen {
         // 构造子/枚举名：Bool 的 true/false 特判
         if (name == "true") return "true"
         if (name == "false") return "false"
+        // v2.0 基本库（内建 JS 实现）：数组化 List 的构造调用——Nil() → []、Cons(h,t) → [h, ...t]
+        // （List 在 JS 层是数组；语义层 enum 声明与类型检查完全不动，纯表示变换）
+        if (name != null && name in listCtorSet) {
+            when (e.args.size) {
+                0 -> return "[]"
+                2 -> return "[${expr(e.args[0])}, ...(${expr(e.args[1])})]"
+            }
+        }
         // v2.0 异步（异步 §5.4）：Channel 创建 `Channel<T>()` / `Channel<T>(cap)` → new Channel(cap)
         if (name == "Channel")
             return "new Channel(${if (e.args.isEmpty()) "0" else expr(e.args[0])})"
@@ -665,7 +695,8 @@ class JsCodeGen {
         if (name == "writeFile" && e.args.size == 2)
             return awaited(e, "(() => { try { require('fs').writeFileSync(${expr(e.args[0])}, ${expr(e.args[1])}); return stdlib__Ok(null); } catch (x) { return stdlib__Err(x.message); } })()")
         if (name == "getArgs" && e.args.isEmpty())
-            return "(() => { const a = process.argv.slice(2); let r = stdlib__Nil(); for (let i = a.length - 1; i >= 0; i--) r = stdlib__Cons(a[i], r); return r; })()"
+            // v2.0 基本库（内建 JS 实现）：List 数组化后 getArgs 直接返回 JS 数组（List[Str] 表示 = 数组）
+            return "process.argv.slice(2)"
         // v2.0 异步（异步 §6 阶段 6）：sleep(ms) 显式延时——Promise + setTimeout，恒为挂起点
         if (name == "sleep" && e.args.size == 1)
             return awaited(e, "new Promise(r => setTimeout(r, ${expr(e.args[0])}))")
@@ -699,9 +730,89 @@ class JsCodeGen {
         // P2 数组原语（v1.0 计划 §4.2 步骤 A）：JS 原生映射
         if (name == "arrayOf") return "[${e.args.joinToString(", ") { expr(it) }}]"
         if (name == "arrayLength" && e.args.size == 1) return "(${expr(e.args[0])}).length"
+        // v2.0 基本库（内建 JS 实现）：JSON —— 编译成 JS 原生 JSON.parse / 对象·数组访问；语义保空安全（Optional）
+        // jsonParse 解析失败（语法错/非法 JSON）→ None()，不抛异常——与语言"无运行时异常"哲学一致
+        // 临时变量名用 __jv + 计数器，避免实参恰叫 v/o 时 TDZ（const v = v）
+        if (name == "jsonParse" && e.args.size == 1)
+            return "(() => { try { return Some(JSON.parse(${expr(e.args[0])})); } catch (x) { return None(); } })()"
+        if (name == "jsonGet" && e.args.size == 2) {
+            val j = expr(e.args[0]); val k = expr(e.args[1]); val n = "__jv${subjCounter++}"
+            return "(() => { const $n = $j; const v = ($n == null) ? undefined : $n[$k]; return (v === undefined ? None() : Some(v)); })()"
+        }
+        if (name == "jsonAt" && e.args.size == 2) {
+            val j = expr(e.args[0]); val i = expr(e.args[1]); val n = "__jv${subjCounter++}"
+            return "(() => { const $n = $j; const v = ($n == null) ? undefined : $n[$i]; return (v === undefined ? None() : Some(v)); })()"
+        }
+        if (name == "jsonLen" && e.args.size == 1) {
+            val j = expr(e.args[0]); val n = "__jv${subjCounter++}"
+            return "(() => { const $n = $j; if ($n == null) return None(); if (Array.isArray($n)) return Some($n.length); if (typeof $n === \"object\") return Some(Object.keys($n).length); return None(); })()"
+        }
+        if (name == "jsonStr" && e.args.size == 1) {
+            val j = expr(e.args[0]); val n = "__jv${subjCounter++}"
+            return "(() => { const $n = $j; return (typeof $n === \"string\") ? Some($n) : None(); })()"
+        }
+        if (name == "jsonNum" && e.args.size == 1) {
+            val j = expr(e.args[0]); val n = "__jv${subjCounter++}"
+            return "(() => { const $n = $j; return (typeof $n === \"number\") ? Some($n) : None(); })()"
+        }
+        if (name == "jsonBool" && e.args.size == 1) {
+            val j = expr(e.args[0]); val n = "__jv${subjCounter++}"
+            return "(() => { const $n = $j; return (typeof $n === \"boolean\") ? Some($n) : None(); })()"
+        }
+        if (name == "jsonIsNull" && e.args.size == 1) return "(${expr(e.args[0])} === null)"
+        if (name == "jsonIsArr" && e.args.size == 1) return "Array.isArray(${expr(e.args[0])})"
+        if (name == "jsonToStr" && e.args.size == 1) return "JSON.stringify(${expr(e.args[0])})"
+        // v2.0 基本库：JSON 数组 → List[Json]（List 数组化零转换）；非数组 → None
+        if (name == "jsonToList" && e.args.size == 1) {
+            val j = expr(e.args[0]); val n = "__jv${subjCounter++}"
+            return "(() => { const $n = $j; return Array.isArray($n) ? Some($n) : None(); })()"
+        }
         if (name == "arrayGet" && e.args.size == 2) {
             val arr = expr(e.args[0]); val idx = expr(e.args[1])
             return "(() => { const e = ($arr)[$idx]; return (e === undefined ? None() : Some(e)); })()"
+        }
+        // v2.0 基本库（内建 JS 实现）：**List 方法特判成 JS 原生数组方法**——
+        // moduleHits 精确匹配：重载组（map/filter/fold/size/contains/isEmpty…同上 Optional/Result/Set/Map 复用名字）带
+        // `$List` 后缀；无重载的专属函数（append/reverse/take/drop/joinToString/head…）是裸 `stdlib__name`。
+        // 因此判据 = 裸名恰好相等 **或** `$List` 后缀——Set/Map/$Optional/$Result 版天然不命中。
+        // 数组化 List = JS 数组：map→.map、filter→.filter、fold→.reduce、size→.length……
+        // 语义保持语言风格：函数式（返回新数组，无原地修改）、空安全（head/last/elementAt 包装 Optional）。
+        val listCallee = moduleHits[callee]
+        if (name != null && listCallee != null && (listCallee == "stdlib__$name" || listCallee == "stdlib__${name}\$List")) {
+            val xs = if (e.args.isNotEmpty()) expr(e.args[0]) else "undefined"
+            when (name) {
+                // —— 元信息：O(1) 原生 ——
+                "size", "listLength" -> if (e.args.size == 1) return "($xs).length"
+                "isEmpty" -> if (e.args.size == 1) return "($xs).length === 0"
+                // —— 访问：空安全（Optional 包装，无运行时异常）——
+                "head" -> if (e.args.size == 1) return "(() => { const a = $xs; return a.length ? Some(a[0]) : None(); })()"
+                "last" -> if (e.args.size == 1) return "(() => { const a = $xs; return a.length ? Some(a[a.length - 1]) : None(); })()"
+                "elementAt" -> if (e.args.size == 2) {
+                    val i = expr(e.args[1])
+                    return "(() => { const a = $xs; const i = $i; return i >= 0 && i < a.length ? Some(a[i]) : None(); })()"
+                }
+                // —— 函数式变换：返回新数组（不可变，无副作用）——
+                "map" -> if (e.args.size == 2) return "($xs).map(${expr(e.args[1])})"
+                "filter" -> if (e.args.size == 2) return "($xs).filter(${expr(e.args[1])})"
+                "flatMap" -> if (e.args.size == 2) return "($xs).flatMap(${expr(e.args[1])})"
+                "reverse" -> if (e.args.size == 1) return "($xs).slice().reverse()"
+                "append" -> if (e.args.size == 2) return "($xs).concat(${expr(e.args[1])})"
+                "take" -> if (e.args.size == 2) return "($xs).slice(0, ${expr(e.args[1])})"
+                "drop" -> if (e.args.size == 2) return "($xs).slice(${expr(e.args[1])})"
+                "fold" -> if (e.args.size == 3) {
+                    // fold(xs, init, f) 中 f: (T, U) => U、累加顺序 f(元素, acc) —— JS reduce 回调是 (acc, 元素)，
+                    // 包一层翻转参数序，保持语言 fold 语义不变。f 是 lambda 表达式文本，须包括号后调用 `($f)(...)`，
+                    // 否则生成 `(acc, x) => (x, acc) => (acc + x)(x, acc)` 被解析成 lambda 直接调用。
+                    val init = expr(e.args[1]); val f = expr(e.args[2])
+                    return "($xs).reduce((acc, x) => ($f)(x, acc), $init)"
+                }
+                // —— 元素查询/统计：语义直译 ——
+                "contains" -> if (e.args.size == 2) return "($xs).includes(${expr(e.args[1])})"
+                "count" -> if (e.args.size == 2) return "($xs).filter(${expr(e.args[1])}).length"
+                "joinToString" -> if (e.args.size == 2) return "($xs).map(x => String(x)).join(${expr(e.args[1])})"
+                "sum" -> if (e.args.size == 1) return "($xs).reduce((a, b) => a + b, 0)"
+                "forEach" -> if (e.args.size == 2) { val f = expr(e.args[1]); return "($xs).forEach(x => ($f)(x))" }
+            }
         }
         if (name == "arraySet" && e.args.size == 3) {
             val arr = expr(e.args[0]); val idx = expr(e.args[1]); val v = expr(e.args[2])
@@ -909,6 +1020,16 @@ class JsCodeGen {
                 p.items.forEachIndexed { i, ip -> matchJs(ip, "$path[$i]", conds, binds) }
             }
             is PatCtor -> {
+                // v2.0 基本库（内建 JS 实现）：数组化 List 的模式解构——Nil → 空数组、Cons(h,t) → [0]/slice(1)
+                if (p.name in listCtorSet) {
+                    if (p.args.isEmpty()) {
+                        conds += "(Array.isArray($path) && $path.length === 0)"
+                    } else {
+                        conds += "(Array.isArray($path) && $path.length >= 1)"
+                        p.args.forEachIndexed { i, ap -> matchJs(ap, if (i == 0) "$path[0]" else "$path.slice(1)", conds, binds) }
+                    }
+                    return
+                }
                 if (p.args.isEmpty()) {
                     if (p.name in ctorNames) when (p.name) {
                         "true", "false" -> conds += "$path === ${p.name}"

@@ -204,4 +204,15 @@ class DiagCoverageTest {
 
     @Test fun `E-ANY-INFER 为预留码当前不触发`() =
         assertTrue(diags("fun inner(x: Any): Null {}").none { it.code == "E-ANY-INFER" })
+
+    // ---------- v2.0 @root 机制（内建声明白名单） ----------
+
+    @Test fun `E-FUN-NO-BODY 无体且未标 @root`() =
+        assertTrue(has("fun ghost(): Nat", "E-FUN-NO-BODY"))
+
+    @Test fun `E-ROOT-NOT-ALLOWED @root 但不在白名单`() =
+        assertTrue(has("@root fun myMagic(): Nat", "E-ROOT-NOT-ALLOWED"))
+
+    @Test fun `H-ROOT-BUILTIN @root 命中白名单发提示`() =
+        assertTrue(has("@root fun jsonParse(s: Str): Optional[Json]", "H-ROOT-BUILTIN"))
 }

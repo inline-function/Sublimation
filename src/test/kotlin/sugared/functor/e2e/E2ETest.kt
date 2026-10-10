@@ -332,4 +332,61 @@ class E2ETest {
             "}"
         assertEquals("12", run(src))
     }
+
+    // ============ v2.0 基本库（内建 JS 实现）：JSON ============
+
+    @Test
+    fun `JSON 内建 parse get str num len`() {
+        assumeTrue(nodeAvailable())
+        // 语言风格验证：jsonParse 失败返回 None 而非异常（空安全）；纯函数无需 unchecked；Optional 解构
+        val src = "@unpure fun main() {\n" +
+            "when(jsonParse(\"{\\\"name\\\":\\\"alice\\\",\\\"age\\\":30,\\\"tags\\\":[1,2,3]}\")) {\n" +
+            "    Some(j) -> {\n" +
+            "        when(jsonGet(j, \"name\")) { Some(v) -> print(\"name=\" + jsonToStr(v))  None -> print(\"no-name\") }\n" +
+            "        when(jsonGet(j, \"age\")) { Some(v) -> when(jsonNum(v)) { Some(n) -> print(toStr(n))  None -> print(\"age-not-num\") }  None -> print(\"no-age\") }\n" +
+            "        when(jsonGet(j, \"tags\")) {\n" +
+            "            Some(t) -> when(jsonAt(t, 1)) { Some(v) -> when(jsonNum(v)) { Some(n) -> print(\"tag1=\" + toStr(n))  None -> print(\"tag1-not-num\") }  None -> print(\"no-tag1\") }\n" +
+            "            None -> print(\"no-tags\")\n" +
+            "        }\n" +
+            "    }\n" +
+            "    None -> print(\"parse-fail\")\n" +
+            "}\n" +
+            "when(jsonParse(\"not json\")) { Some(_) -> print(\"should-not\")  None -> print(\"parse-fail-ok\") }\n" +
+            "}"
+        assertEquals("name=\"alice\"\n30\ntag1=2\nparse-fail-ok", run(src))
+    }
+
+    @Test
+    fun `JSON 内建 布尔 null 数组 序列化`() {
+        assumeTrue(nodeAvailable())
+        val src = "@unpure fun main() {\n" +
+            "when(jsonParse(\"[true, false, null, 1.5, \\\"x\\\"]\")) {\n" +
+            "    Some(j) -> {\n" +
+            "        print(\"isArr=\" + toStr(jsonIsArr(j)))\n" +
+            "        when(jsonAt(j, 0)) { Some(v) -> when(jsonBool(v)) { Some(b) -> print(\"b0=\" + toStr(b))  None -> print(\"not-bool\") }  None -> print(\"no-0\") }\n" +
+            "        when(jsonAt(j, 2)) { Some(v) -> print(\"null=\" + toStr(jsonIsNull(v)))  None -> print(\"no-2\") }\n" +
+            "        when(jsonAt(j, 3)) { Some(v) -> when(jsonNum(v)) { Some(n) -> print(\"n3=\" + toStr(n))  None -> print(\"no-3\") }  None -> print(\"no-3\") }\n" +
+            "        print(\"dump=\" + jsonToStr(j))\n" +
+            "    }\n" +
+            "    None -> print(\"parse-fail\")\n" +
+            "}\n" +
+            "}"
+        assertEquals("isArr=true\nb0=true\nnull=true\nn3=1.5\ndump=[true,false,null,1.5,\"x\"]", run(src))
+    }
+
+    @Test
+    fun `@root 声明内建可调用且不生成定义`() {
+        assumeTrue(nodeAvailable())
+        // 用户以 @root 声明内建签名（无函数体），调用点仍走编译器内建 JS 实现
+        val src = "@root fun jsonParse(s: Str): Optional[Json]\n" +
+            "@root fun jsonGet(j: Json, k: Str): Optional[Json]\n" +
+            "@root fun jsonNum(j: Json): Optional[Rat]\n" +
+            "@unpure fun main() {\n" +
+            "when(jsonParse(\"{\\\"age\\\":30}\")) {\n" +
+            "    Some(j) -> when(jsonGet(j, \"age\")) { Some(v) -> when(jsonNum(v)) { Some(n) -> print(toStr(n))  None -> print(\"not-num\") }  None -> print(\"no-field\") }\n" +
+            "    None -> print(\"parse-fail\")\n" +
+            "}\n" +
+            "}"
+        assertEquals("30", run(src))
+    }
 }

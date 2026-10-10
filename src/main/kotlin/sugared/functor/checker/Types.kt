@@ -5,7 +5,8 @@ import sugared.functor.ast.*
 /** 基本类型集（prelude 内建；决策 45：单值类型=Null，None 专属 Optional[T]；决策 52：Any 受限顶类型；决策 62：元组具名形态；P2：Array[T]） */
 val BASE_TYPES = setOf("Nat", "Int", "Rat", "Str", "Bool", "Null", "Nothing", "Any",
     "EmptyTuple", "SingleTuple", "Array",
-    "Task", "Channel")   // v2.0 异步（决策 93）：内建泛型类型（无用户声明，形如 Array）
+    "Task", "Channel",   // v2.0 异步（决策 93）：内建泛型类型（无用户声明，形如 Array）
+    "Json")              // v2.0 基本库（内建 JS 实现）：JSON 值（编译成 JS 原生 JSON 对象/数组/字面量）
 
 /** 合成类型（v1 类型推导不完整时的占位：泛型未绑定、lambda、$ 命题变量等） */
 fun syntheticT(reason: String): Type = namedT("(推导:$reason)")
@@ -108,10 +109,61 @@ fun builtinPure(name: String): FunDecl? = when (name) {
     "arrayLength" -> FunDecl("arrayLength", emptyList(), listOf(TypeParam("T", null)),
         listOf(Param("a", namedT("Array", listOf(namedT("T"))))), emptyList(),
         namedT("Nat"), emptyList(), null)
+    // ---- v2.0 基本库（内建 JS 实现）：JSON —— 编译成 JS 原生 JSON.parse/对象访问，语义保空安全（Optional）----
+    "jsonParse" -> FunDecl("jsonParse", emptyList(), emptyList(),
+        listOf(Param("s", namedT("Str"))), emptyList(),
+        namedT("Optional", listOf(namedT("Json"))), emptyList(), null)
+    "jsonGet" -> FunDecl("jsonGet", emptyList(), emptyList(),
+        listOf(Param("j", namedT("Json")), Param("k", namedT("Str"))), emptyList(),
+        namedT("Optional", listOf(namedT("Json"))), emptyList(), null)
+    "jsonAt" -> FunDecl("jsonAt", emptyList(), emptyList(),
+        listOf(Param("j", namedT("Json")), Param("i", namedT("Nat"))), emptyList(),
+        namedT("Optional", listOf(namedT("Json"))), emptyList(), null)
+    "jsonLen" -> FunDecl("jsonLen", emptyList(), emptyList(),
+        listOf(Param("j", namedT("Json"))), emptyList(),
+        namedT("Optional", listOf(namedT("Nat"))), emptyList(), null)
+    "jsonStr" -> FunDecl("jsonStr", emptyList(), emptyList(),
+        listOf(Param("j", namedT("Json"))), emptyList(),
+        namedT("Optional", listOf(namedT("Str"))), emptyList(), null)
+    "jsonNum" -> FunDecl("jsonNum", emptyList(), emptyList(),
+        listOf(Param("j", namedT("Json"))), emptyList(),
+        namedT("Optional", listOf(namedT("Rat"))), emptyList(), null)
+    "jsonBool" -> FunDecl("jsonBool", emptyList(), emptyList(),
+        listOf(Param("j", namedT("Json"))), emptyList(),
+        namedT("Optional", listOf(namedT("Bool"))), emptyList(), null)
+    "jsonIsNull" -> FunDecl("jsonIsNull", emptyList(), emptyList(),
+        listOf(Param("j", namedT("Json"))), emptyList(),
+        namedT("Bool"), emptyList(), null)
+    "jsonIsArr" -> FunDecl("jsonIsArr", emptyList(), emptyList(),
+        listOf(Param("j", namedT("Json"))), emptyList(),
+        namedT("Bool"), emptyList(), null)
+    "jsonToStr" -> FunDecl("jsonToStr", emptyList(), emptyList(),
+        listOf(Param("j", namedT("Json"))), emptyList(),
+        namedT("Str"), emptyList(), null)
+    // v2.0 基本库：JSON 数组 → List[Json]。List 数组化后零转换（底层同为 JS 数组），非数组返回 None
+    "jsonToList" -> FunDecl("jsonToList", emptyList(), emptyList(),
+        listOf(Param("j", namedT("Json"))), emptyList(),
+        namedT("Optional", listOf(namedT("List", listOf(namedT("Json"))))), emptyList(), null)
     else -> null
 }
 
-// 注：Type.substT 现为各子类型的成员方法（T1），原顶层扩展已删除。
+/**
+ * @root 白名单（v2.0 基本库机制）：允许用户以 `@root fun 名字(...)` 声明且**不写函数体**的内建函数名集合。
+ * 语义：@root 声明 = 告知编译器「该签名对应编译期内建 JS 实现」，codegen 按名字特判翻译（Types.kt 内建表 + JsCodeGen.call()）。
+ * 守卫：仅白名单内名字允许 @root（否则 E-ROOT-NOT-ALLOWED）；有 @root 才允许无体（否则 E-FUN-NO-BODY）。
+ * 名字全集 = builtinUnpure + builtinPure 的键（与 codegen 特判一一对应）。
+ */
+val ROOT_WHITELIST: Set<String> = setOf(
+    // builtinUnpure（IO/副作用入口）
+    "print", "readLine", "readFile", "writeFile", "getArgs", "sleep",
+    // builtinPure：元组 / 字符串（P1）/ 浮点（P10）/ 数组（P2）/ JSON（v2.0）
+    "emptyTuple", "singleTuple",
+    "concat", "length", "charAt", "substring", "strCmp", "toStr", "parseNat",
+    "toRat", "parseRat", "abs", "sqrt", "floor", "ceil", "pow",
+    "arrayOf", "arrayGet", "arraySet", "arrayLength",
+    "jsonParse", "jsonGet", "jsonAt", "jsonLen", "jsonStr", "jsonNum", "jsonBool",
+    "jsonIsNull", "jsonIsArr", "jsonToStr",
+)
 
 /** 类型 → 命题层的项表示；函数/元组类型用哨兵名（v1 不参与命题推理） */
 fun typeToExpr(t: Type): Expr = when (t) {
