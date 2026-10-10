@@ -31,6 +31,14 @@ class DiagBag {
     /** 合并（P0 多模块：各模块 Checker 的 d 汇入总袋） */
     fun absorb(other: DiagBag) { all += other.all }
 
+    /** 去重（按 code+pos+message）：类型推导定点迭代重查 lambda 时可能产生重复诊断，循环后清理保留首轮权威错误 */
+    fun dedupe() {
+        val seen = HashSet<Triple<String, String, String>>()
+        val out = ArrayList<Diag>(all.size)
+        for (x in all) if (seen.add(Triple(x.code, x.pos, x.message))) out += x
+        all.clear(); all += out
+    }
+
     /** 默认不输出补充级（用户定义） */
     fun report(includeSupplement: Boolean = false): String =
         all.filter { includeSupplement || it.severity != Severity.SUPPLEMENT }

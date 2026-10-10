@@ -442,20 +442,37 @@ internal fun Checker.checkFnCall(
             if (!at.isSynthetic()) extractTpBinding(p.type, at, tps.toSet(), tsub)
         }
     }
+    // P2 定点反推（compose 等链式泛型）：lambda 返回类型反推可能依赖**另一个 lambda 先解出的类型参数**——
+    // `compose[A,B,C](f:(B)=>C, g:(A)=>B, x:A): C` 中 f 的返回 C 要等 g 解出 B 才可知。按声明序检查 f 先于 g，
+    // 首轮 f 拿不到 B → lt.ret synthetic → C 解不出。故把 lambda 检查包进迭代环：每轮按当前 tsub 解参数，
+    // 直到 tsub 无新解（上限 8 防环）。重复检查 lambda 体可能重发诊断，循环后 diag.dedupe() 收敛。
+    var rounds = 0
+    while (rounds < 8) {
+        val beforeTsub = tsub.size
+        fn.params.forEachIndexed { i, p ->
+            if (i >= effTypes.size) return@forEachIndexed
+            val want = syms.expand(p.type).substT(tsub)   // 别名展开（决策 30）
+            if (want is FunType) {
+                // T2：lambda 实参带期望类型二次检查（双向推导）；非 lambda 实参宽松放行
+                val a = effArgs[i]
+                if (a is LambdaExpr) {
+                    val lt = checkExpr(a, f, pure, want)
+                    // P2（决策 78）：lambda 实际返回类型反推类型参数（map 的 U 只能由 lambda 体推出）
+                    val wr = want.ret
+                    if (lt is FunType && wr is NamedType && wr.name in tps && wr.args.isEmpty() && !lt.ret.isSynthetic())
+                        tsub.putIfAbsent(wr.name, lt.ret)
+                }
+            }
+        }
+        rounds++
+        if (tsub.size == beforeTsub) break
+    }
+    if (rounds > 1) d.dedupe()
+    // 非 lambda 实参核对（仅一次，避免迭代重复报错）
     fn.params.forEachIndexed { i, p ->
         if (i >= effTypes.size) return@forEachIndexed
-        val want = syms.expand(p.type).substT(tsub)   // 别名展开（决策 30）
-        if (want is FunType) {
-            // T2：lambda 实参带期望类型二次检查（双向推导）；非 lambda 实参宽松放行
-            val a = effArgs[i]
-            if (a is LambdaExpr) {
-                val lt = checkExpr(a, f, pure, want)
-                // P2（决策 78）：lambda 实际返回类型反推类型参数（map 的 U 只能由 lambda 体推出）
-                val wr = want.ret
-                if (lt is FunType && wr is NamedType && wr.name in tps && wr.args.isEmpty() && !lt.ret.isSynthetic())
-                    tsub.putIfAbsent(wr.name, lt.ret)
-            }
-        } else if (!effTypes[i].isSynthetic() && !p.type.name.startsWith("(")) {
+        val want = syms.expand(p.type).substT(tsub)
+        if (want !is FunType && !effTypes[i].isSynthetic() && !p.type.name.startsWith("(")) {
             if (want.isNominal() && !typeLooseEq(want, effTypes[i])) {
                 // 决策 59：Any 形参接受任意实参（受限顶类型）；其余仍须名义相等
                 if (!(want.name == "Any" && want.args.isEmpty())) {
