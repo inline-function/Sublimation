@@ -8,7 +8,7 @@
 
 语言名取自物理现象「凝华」——气态不经液态直接成固态。正如本文的命题不经运行时、直接在编译期析出为程序的静态保证。
 
-> ✅ v1.0 完成：全部 P0–P11 落盘，285 项测试全绿
+> ✅ v2.0 完成：空安全 / 可变性控制 / 异步 + HKT 高阶类型，350 项测试全绿
 
 ---
 
@@ -23,6 +23,10 @@
 - **数值类型**——`Nat`（自然数）/ `Int`（整数）/ `Rat`（有理数），不丢精度的实数/复数类型留名待续。
 - **零运行时库**——源到源生成纯 JavaScript，`node` 直接运行。
 - **递归停机判定（P9）**——纯函数自递归须满足结构子项约束，否则编译期拒绝（`unchecked` 逃逸放行）。
+- **空安全（v2.0）**——`T?` 可空类型 + `?:` Elvis + `?T` 类型测 + `is T` 智能转换自动收窄。
+- **可变性控制（v2.0）**——`@mut` 显式可变 + `immutable<T>` 不可变命题 + `untouch<param>` 形参只读保证。
+- **异步（v2.0）**——`@async` 函数 + `Task` 并发 + `Channel` 通信 + 自动 `await` 挂起点；`main` 天然 async。
+- **高阶类型 HKT（v2.0）**——`[F[_]]` kind 形参、`impl Functor for List[a]` 字典占位、`F[A]~List[Nat]` kind 合一（详见《高阶类型.md》）。
 
 ## 快速开始
 
@@ -105,11 +109,11 @@ impl Show for Grade {
 │   ├── sugared/functor/checker/   M3 语义（弥散/合一/模块树/类型类）
 │   ├── sugared/functor/codegen/   M4 JS 代码生成
 │   └── sugared/functor/ast/       AST 定义
-├── src/test/kotlin/          285 项测试
-├── stdlib/                   标准库（.subl 自举：List/Result）
-├── examples/                 P11 压测示例（json-parser 241 行、v1-showcase 巡礼等）
+├── src/test/kotlin/          350 项测试（8 个测试类）
+├── stdlib/                   标准库（.subl 自举：List/Set/Map/Result）
+├── examples/                 P11 压测示例（json-parser 241 行、v1/v2-showcase 巡礼等）
 ├── show/                     特性展示目录（自包含，双击 run.bat 即可演示）
-└── doc/                      设计文档（语言简介/语法/模块系统/任务链等）
+└── doc/                      设计文档（语言简介/语法/模块系统/空安全/异步/HKT 等）
 ```
 
 ## 演示：`show/`
@@ -135,15 +139,23 @@ show\run.bat run      # 仅运行现有的 show.js
 gradlew.bat test --rerun-tasks
 ```
 
-当前 **285 项全绿**：词法 / 语法 / 语义 / 类型推理 / 模块树 / 端到端 / 诊断码覆盖面体检。
+当前 **350 项全绿**（8 个测试类）：词法 / 语法 / 语义 / 类型推理 / 模块树 / 端到端 / 诊断码覆盖面体检。
 
 ## 文档
 
 | 文档 | 内容 |
 |---|---|
-| [doc/语言简介.md](doc/语言简介.md) | 定位、核心特性、模块系统、v1.0 进度 |
+| [doc/语言简介.md](doc/语言简介.md) | 定位、语言立场、编译管线、当前进度 |
 | [doc/快速上手.md](doc/快速上手.md) | 新人向心智模型 |
 | [doc/语言语法.md](doc/语言语法.md) | 详细文法 |
-| [doc/模块系统.md](doc/模块系统.md) | P0 模块系统设计 |
-| [doc/工程规范.md](doc/工程规范.md) | 不变量 I-1 ~ I-24 |
-| [doc/v1-压测报告.md](doc/v1-压测报告.md) | P11 验收经验 |
+| [doc/模块系统.md](doc/模块系统.md) | 目录即模块、挂载、可见性 |
+| [doc/上下文系统.md](doc/上下文系统.md) | 命题弥散、智能转换泛化 |
+| [doc/形式化规范.md](doc/形式化规范.md) | 语言核心与已实现语义的规范 |
+| [doc/空安全系统.md](doc/空安全系统.md) | v2.0 空安全（T?/?:/>:/?T） |
+| [doc/副作用与可变性控制.md](doc/副作用与可变性控制.md) | 纯度规范与 @mut/immutable/untouch |
+| [doc/异步.md](doc/异步.md) | v2.0 异步（@async/Task/Channel） |
+| [doc/高阶类型.md](doc/高阶类型.md) | v2.0 HKT（kind/字典分发/kind 合一） |
+| [doc/样式规范.md](doc/样式规范.md) | 代码风格与书写规范 |
+| [doc/术语表.md](doc/术语表.md) | 专门术语收拢 |
+
+> 内部文档（决策日志《草案思路》、阶段蓝图《v1.0 补全计划》、P11 压测报告等）位于 `doc2/`，不随公共仓库发布。
