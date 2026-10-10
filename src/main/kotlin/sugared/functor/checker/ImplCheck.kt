@@ -83,7 +83,9 @@ internal fun Checker.resolveDict(name: String, argT: Type, visible: Set<String>?
         }
         return null
     }
-    val cands = raw.filter { typeLooseEq(it.self, argT) }
+    // HKT（《高阶类型.md》HKT-S6）：self 是构造子应用（`List[a]`，占位 a 为小写裸名）时，
+    // 占位与任意同位置实参通配匹配（typeLooseEq 逐实参比较会让 a vs Nat 失败）。
+    val cands = raw.filter { doesSelfMatch(it.self, argT) }
     return when {
         cands.isEmpty() -> { d.error("E-NO-INSTANCE", "", "方法 $name 对类型 ${argT.render()} 无 impl 实例"); null }
         cands.size > 1 -> { d.error("E-AMBIGUOUS-INSTANCE", "", "方法 $name 对类型 ${argT.render()} 有 ${cands.size} 个实例"); null }
@@ -144,3 +146,22 @@ internal fun StructDecl.typeArgsSub(t: Type): Map<String, Type> {
     val tps = theory.filterIsInstance<TypeParam>().map { it.name }
     return tps.zip(t.args).toMap()
 }
+
+/** HKT（《高阶类型.md》HKT-S6，方案 A）：impl self 是否匹配实参类型。
+ *  普通 self（`Show[Int]` for Int）走 typeLooseEq；self 是**构造子应用占位**（`List[a]` 的 a 为小写裸名）
+ *  时按 kind 通配——同构造子同 arity 即匹配，占位变量接受任何同位置实参（含嵌套，如 `List[a]` vs `List[Nat]`）。 */
+private fun Checker.doesSelfMatch(self: Type, argT: Type): Boolean {
+    if (typeLooseEq(self, argT)) return true
+    return kindWildcardMatch(self, argT)
+}
+
+private fun kindWildcardMatch(self: Type, argT: Type): Boolean = when {
+    self is NamedType && argT is NamedType && self.name == argT.name && self.args.size == argT.args.size ->
+        self.args.zip(argT.args).all { (s, a) -> kindWildcardMatch(s, a) || (s is NamedType && isKindPlaceholder(s)) }
+    else -> false
+}
+
+/** 占位变量判据（HKT-S6）：零实参、名字首字母小写、未声明为类型别名/基类型——即 `List[a]` 里的 a */
+private fun isKindPlaceholder(t: NamedType): Boolean =
+    t.name.firstOrNull()?.isLowerCase() == true && t.args.isEmpty()
+
