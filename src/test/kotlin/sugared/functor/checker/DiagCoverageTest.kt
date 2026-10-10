@@ -2,6 +2,7 @@ package sugared.functor.checker
 
 import sugared.functor.parser.parseSource
 import kotlin.test.Test
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -200,6 +201,9 @@ class DiagCoverageTest {
 
     @Test fun `W-UNUSED 未使用参数`() =
         assertTrue(has("fun f(x: Nat): Nat = 1", "W-UNUSED"))
+
+    @Test fun `W-UNUSED 调用者位置不误报`() =
+        assertFalse(has("fun apply(f: (Nat) => Nat, x: Nat): Nat = f(x)", "W-UNUSED"))
 
     @Test fun `D-TYPE-INFERRED`() = assertTrue(has("fun main() { var a = 1 }", "D-TYPE-INFERRED"))
 

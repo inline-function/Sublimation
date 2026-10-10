@@ -64,6 +64,10 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
     val fieldCallee: FieldExpr? = (c.callee as? FieldExpr)?.takeIf { isMethodName(it.name) || hasFreeFun(it.name) || it.name in taskMethods || it.name in channelMethods }
     val freeName = (c.callee as? NameRef)?.name
         ?: ((c.callee as? InstExpr)?.target as? NameRef)?.name
+    // W-UNUSED（报错增强，v2.0）：callee 位置的参数引用也算使用。此前只在 checkExpr 的 NameRef 分支
+    // markUsed（实参/主体位），callee 位被直接按名字解析、从不 markUsed —— 导致 `fun f(x:..)=f(x)` 里
+    // 的函数型参数 f 被误报「从未使用」（stdlib Result.map/flatMap 等全部中招）。
+    if (freeName != null && f.lookupVar(freeName) != null) f.markUsed(freeName)
     val isFreeFormMethod = fieldCallee == null && freeName != null &&
         isMethodName(freeName) &&
         syms.findFun(freeName) == null && !syms.ctors.containsKey(freeName) && !syms.structs.containsKey(freeName)
