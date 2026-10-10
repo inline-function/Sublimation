@@ -63,6 +63,9 @@ class JsCodeGen {
     private val structFields = HashMap<String, List<String>>()
     /** v2.0：重载函数名集合（同名 >1 声明）——这些名字在 JS 里需按首参标签唯一化，避免同名覆盖 */
     private val overloadedFns = HashSet<String>()
+    /** HKT（《高阶类型.md》HKT-D2）：kind 型类名集合（类声明 theory 含 arity>0 形参，如 Functor[F[_]]）。
+     *  其字典方法签名**无 __self**（self 显式在形参表 fa 位）——`(d, f, fa...)`，与零参型类 `(d, __self)` 区分。 */
+    private val kindTraits = HashSet<String>()
     /** v2.0：每模块的重载函数名集合（模块路径 → 名），声明侧按此加后缀（与 Checker 侧 moduleHits 判定一致） */
     private val overloadsByUnit = HashMap<String, Set<String>>()
     /** v2.0：空安全 SafeCall 调用点的 JS 方法名（Checker 登记；SafeCallExpr → 函数名） */
@@ -115,6 +118,13 @@ class JsCodeGen {
         for ((_, fa) in units) for (e in fa.entries) if (e is DeclEntry) {
             val s = e.decl as? StructDecl ?: continue
             structFields[s.name] = s.fields.map { it.name }
+        }
+        // HKT（《高阶类型.md》HKT-D2）：收集 kind 型类名（theory 含 arity>0 形参）——genDict 按此决定
+        // 字典方法签名是否含 __self（kind 型类 self 显式在形参表，签名无 __self）
+        kindTraits.clear()
+        for ((_, fa) in units) for (e in fa.entries) if (e is DeclEntry) {
+            val c = e.decl as? ClassDecl ?: continue
+            if (c.theory.any { it is TypeParam && it.arity > 0 }) kindTraits += c.name
         }
         for ((p, fa) in units) overloadsByUnit[p] = collectOverloads(fa)
         // 收集构造子名：prelude + 全部模块 enum；tuple 形参位置键带模块前缀
@@ -309,8 +319,12 @@ class JsCodeGen {
         val fields = structFields[(impl.self as? NamedType)?.name ?: ""] ?: emptyList()
         for ((i, m) in impl.members.withIndex()) {
             val body = m.body ?: continue
-            // 隐藏首参 d（字典自身，供体内递归分发）+ 隐式接收者 __self（决策 68）
-            val ps = (listOf("d", "__self") + m.params.map { mangle(it.name) }).joinToString(", ")
+            // 隐藏首参 d（字典自身，供体内递归分发）。零参型类加隐式接收者 __self（决策 68）；
+            // kind 型类（HKT-D2）self 已显式在形参表（map(f, fa) 的 fa 位），签名无 __self——(d, f, fa...)。
+            val ps = if (impl.trait.name in kindTraits)
+                (listOf("d") + m.params.map { mangle(it.name) }).joinToString(", ")
+            else
+                (listOf("d", "__self") + m.params.map { mangle(it.name) }).joinToString(", ")
             val comma = if (i == impl.members.lastIndex) "" else ","
             // 字段裸用重写上下文：字段名 − 体内一切绑定名（保守：存在同名局部绑定时整体不重写，
             // 宁可 JS 报未定义也不产出静默错值）

@@ -44,6 +44,10 @@ class Checker(
     internal val consHits = java.util.IdentityHashMap<CallExpr, String>()
     /** P6：带约束泛型函数的调用点字典实参留痕（调用点实例 → 按声明顺序的字典名），codegen 前插实参 */
     internal val dictSubHits = java.util.IdentityHashMap<CallExpr, List<String>>()
+    /** HKT（《高阶类型.md》HKT-D1/D2）：带参型类方法（如 `Functor.map(fa, f)`）的字典分发——
+     *  接收者即 kind 应用位（首个形参），既是字典键又是 fn 的首个实参。记录调用点 → selfT，
+     *  供 checkFnCall 实参注入（普通型类零参方法不受影响）。⟨目标⟩ */
+    internal val hktSelfInj = java.util.IdentityHashMap<CallExpr, Type>()
     /** P8（决策 84）：命名参数规范化后的实参留痕（调用点实例 → 按形参声明顺序的实参列表），codegen 重排 */
     internal val namedArgOrder = java.util.IdentityHashMap<CallExpr, List<Expr>>()
     /** v1.1 集合方法糖留痕：`xs.map(f)` → 同名自由函数 `map(xs, f)`（接收者前置）。

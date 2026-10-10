@@ -62,13 +62,19 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
     val isFreeFormMethod = fieldCallee == null && freeName != null &&
         isMethodName(freeName) &&
         syms.findFun(freeName) == null && !syms.ctors.containsKey(freeName) && !syms.structs.containsKey(freeName)
+    // HKT（《高阶类型.md》§7.1，方案 A）：带参型类方法（`map(f, fa)`）的字典键是 **kind 应用位**（fa，含
+    // arity>0 形参应用的那一参），不是首实参；且 fn 需要全部实参（self 即 fa 位，不 drop）。
+    val hktKindPos = if (isFreeFormMethod && freeName != null) hktKindParamIndex(freeName) else -1
     val selfT: Type? = when {
         fieldCallee != null -> checkExpr(fieldCallee.target, f, pure)
-        isFreeFormMethod && argTypes.isNotEmpty() -> argTypes[0]   // 首实参已检查过，复用类型避免诊断翻倍
+        isFreeFormMethod && argTypes.isNotEmpty() ->
+            if (hktKindPos >= 0) argTypes[hktKindPos.coerceAtMost(argTypes.size - 1)] else argTypes[0]   // 首实参已检查过，复用类型避免诊断翻倍
         else -> null
     }
-    val effArgs: List<Expr> = if (isFreeFormMethod) c.args.drop(1) else c.args
-    val effTypes: List<Type> = if (isFreeFormMethod) argTypes.drop(1) else argTypes
+    val effArgs: List<Expr> = if (isFreeFormMethod)
+        (if (hktKindPos >= 0) c.args else c.args.drop(1)) else c.args
+    val effTypes: List<Type> = if (isFreeFormMethod)
+        (if (hktKindPos >= 0) argTypes else argTypes.drop(1)) else argTypes
     val isMethodPath = fieldCallee != null || isFreeFormMethod
     // P8（决策 84）：方法路径不支持命名参数——在方法入口显式拦截（方法参数管道不消费 namedArgs，否则静默丢弃）
     if (isMethodPath && c.namedArgs.isNotEmpty())
@@ -264,6 +270,29 @@ private fun Checker.findCallable(name: String, argTypes: List<Type>): FunDecl? {
         argTypes.isNotEmpty() && paramMatchesRecv(syms.expand(p0), argTypes[0])
     }?.let { return it }
     return main
+}
+
+/** HKT（《高阶类型.md》§7.1，方案 A）：带参型类方法（`map(f, fa)`）的 kind 应用位——
+ *  类声明签名里含 arity>0 形参应用的那一参下标（如 Functor[F[_]] 的 map 里 `fa: F[A]` 是第 1 位）。
+ *  无 kind 形参（普通型类如 Show）→ -1，调用方按旧「首参即 self」逻辑。 */
+private fun Checker.hktKindParamIndex(name: String): Int {
+    val entries = syms.methods[name] ?: return -1
+    if (entries.isEmpty()) return -1
+    // 取任一 impl 条目的型类，读类声明的成员签名（impl 方法形参已实例化如 List[A]，看不出 kind 位）
+    val trait = entries.first().trait
+    val cls = syms.classes[trait] ?: return -1
+    val arity = tpArityOf(cls)
+    if (arity.isEmpty() || arity.values.none { it > 0 }) return -1
+    val msig = cls.members.firstOrNull { it.name == name } ?: return -1
+    return msig.params.indexOfFirst { p -> containsKindApp(syms.expand(p.type), arity) }
+}
+
+/** 类型里是否含 kind 形参应用（NamedType 名是 arity>0 的形参且带实参，如 `F[A]`） */
+private fun containsKindApp(t: Type, arity: Map<String, Int>): Boolean = when (t) {
+    is NamedType -> (arity[t.name] ?: 0) > 0 && t.args.isNotEmpty() || t.args.any { containsKindApp(it, arity) }
+    is FunType -> t.params.any { containsKindApp(it, arity) } || containsKindApp(t.ret, arity)
+    is TupleType -> t.items.any { containsKindApp(it, arity) }
+    else -> false
 }
 
 /** 首参（want）与接收者（self）类型匹配：同基名；类型实参递归（List[T] vs List[Nat]：T 是类型参数则通配）
