@@ -267,6 +267,29 @@ class CheckerTest {
     }
 
     @Test
+    fun `T0 绑定式分支吸收多字段枚举 - 无假阳性`() {
+        val src = "enum Tree { Leaf(Nat), Node(Tree, Tree) }\n" +
+            "enum Box[T] { B(T) }\n" +
+            "fun f(b: Box[Tree]): Null { when(b) { B(t) -> 1 } }"
+        assertTrue(warns(src).none { it == "W-NON-EXHAUSTIVE" }, "B(t) 绑定式吸收 B 全部值（含 Leaf/Node 细分），应穷尽")
+    }
+
+    @Test
+    fun `T0 嵌套模式仍不吸收 - 缺内层细分分支`() {
+        val src = "enum Tree { Leaf(Nat), Node(Tree, Tree) }\n" +
+            "enum Box[T] { B(T) }\n" +
+            "fun f(b: Box[Tree]): Null { when(b) { B(Leaf(x)) -> 1 } }"
+        assertTrue(warns(src).contains("W-NON-EXHAUSTIVE"), "B(Leaf(x)) 嵌套不吸收 Node，应判非穷尽")
+    }
+
+    @Test
+    fun `T0 绑定式分支缺构造子仍非穷尽`() {
+        val src = "enum Tree { Leaf(Nat), Node(Tree, Tree) }\n" +
+            "fun g(t: Tree): Null { when(t) { Node(l, r) -> 1 } }"
+        assertTrue(warns(src).contains("W-NON-EXHAUSTIVE"), "Node 绑定式吸收 Node，但缺 Leaf 分支，应判非穷尽")
+    }
+
+    @Test
     fun `T0 嵌套模式等式保留完整结构`() {
         val src = "fun f(o: Optional[Optional[Nat]]): Nat = when(o) { Some(Some(y)) -> y else -> 0 }"
         assertTrue(ok(src))

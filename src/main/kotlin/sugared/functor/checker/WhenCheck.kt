@@ -141,17 +141,45 @@ internal fun Checker.checkWhen(e: WhenExpr, f: Frame, pure: Boolean): Type {
     //    不打扰用户：这不是用户写错，而是编译器判不出。
     // 两种情形都退化为 unsealedT（Null）；流向非 Null 上下文仍由 E-NON-SEALED-MATCH 兜住（决策 49）。
     val cov = if (subjT is NamedType && !subjT.isSynthetic()) enumCoverageDisj(subjRef, subjT) else null
-    val exhaustive = sawCatchAll || branchProps.isEmpty() || run {
+    var exhaustive = sawCatchAll || branchProps.isEmpty() || run {
         val goal = branchProps.reduce { a, b -> POr(a, b) }
         val premises = if (cov != null) f.allFacts() + cov else f.allFacts()
         proveOrDeep(premises, goal)
     }
+    if (!exhaustive && cov != null && bindingCovered(e.arms, subjT)) exhaustive = true
     if (!exhaustive) {
         if (cov != null)
             d.warn("W-NON-EXHAUSTIVE", e.pos, "when 非穷尽（缺 else 或覆盖不全），作为表达式时值类型退化为 Null")
         return unsealedT()
     }
     return lastT ?: namedT("Null", emptyList())
+}
+
+/**
+ * 兜底穷尽判定（假阳性修复）：绑定式构造子分支 `C(x1,…,xn)`（实参全为裸绑定/通配、无守卫）
+ * 在值空间上**恒覆盖**构造子 C 的全部值——与字段类型无关，无需证明器。
+ * 例：`when(o: Optional[List[Nat]]) { Some(xs) -> …  None -> … }`——coverShapes 深展开 List
+ * （Cons 两字段）产出 `o=Some(Cons(..))` 等细分形状，而绑定式 `Some(xs)` 产生的 ∃ 形状
+ * （∃xs. o=Some(xs)）与之不同构，证明器缺 ∃ 泛化桥接不了 → 原判假阳性警告。
+ * 按构造子名逐一看则 Some/None 都有绑定式分支，穷尽成立。
+ * 健全性：嵌套模式（`Some(Cons(h,t))`）实参不全为 PatBind → 不吸收该构造子；
+ * 某构造子缺绑定式分支 → 判定不通过，仍走严格证明器路径——绝不会把 partial when 误判穷尽。
+ */
+private fun Checker.bindingCovered(arms: List<WhenArm>, subjT: Type): Boolean {
+    val ed = findVisibleEnum(subjT.name) ?: return false
+    val covered = HashSet<String>()
+    for (arm in arms) {
+        if (arm.guard != null) continue                     // 守卫缩小匹配集，吸收不成立
+        val p = arm.pattern
+        // 顶层必须是构造子模式；实参全为"吸收字段值"形态——
+        //  PatBind（`_`/绑定）；或 parser 把单标识符解析成的 PatCtor(n,[])（879-892 行「与无参
+        //  构造子同形，语义层判定」），当 n 不是已知构造子时 bindPattern 退化为绑定（210-211 行）。
+        //  已知构造子（如 None/Nil）是真正匹配构造子值，不能算绑定。
+        if (p is PatCtor && p.args.all { a ->
+                a is PatBind || (a is PatCtor && a.args.isEmpty() && findVisibleCtor(a.name) == null)
+            }) covered += p.name
+    }
+    return ed.ctors.all { it.name in covered }
 }
 
 /** 绑定模式：返回该分支命题（∃ 封闭），并把解构变量注入分支帧 */
