@@ -244,7 +244,7 @@ class Checker(
         val savedParamTypes = paramTypes
         paramTypes = fn.params.map { syms.expand(it.type) }
         fn.params.forEach { p ->
-            checkTypeResolvable(p.type, tps)
+            checkTypeResolvable(p.type, tps, tpArityOf(fn))
             // 决策 61：@tuple 形参在函数体内即元组本身（类型实参由调用处匹配，声明期无替换表）
             val pt = syms.expand(p.type)
             // O2：参数名遮蔽了 self 字段 → 提示（遮蔽合法，但要让用户知道裸名从此指向参数）
@@ -259,6 +259,7 @@ class Checker(
         preRewritten.forEach { f.inject(PropLogic.fromExpr(it)) }
         if (fn.body == null) { paramTypes = savedParamTypes; return }
         // v1.1 返回类型：显式标注取之；省略时——块体 = Null（Kotlin Unit 语义），表达式体 = 推导。
+        fn.retType?.let { checkTypeResolvable(it, tps, tpArityOf(fn)) }
         val rtDeclared = fn.retType?.let { syms.expand(it) }
         val isExprBody = fn.body !is BlockExpr
         val rt = rtDeclared ?: namedT("Null", emptyList())

@@ -159,9 +159,15 @@ internal fun Checker.checkDeclTypes(decl: Decl) {
             if (decl.name == "main" && (decl.params.isNotEmpty() || decl.theory.isNotEmpty()))
                 d.error("E-MAIN-PARAMS", decl.pos, "入口函数 main 不能有形参或类型参数（决策 70）")
         }
-        is ClassDecl -> decl.members.forEach { m -> m.params.forEach { p ->
-            if (p.default != null) d.error("E-DEFAULT-PARAM", m.pos, "型类成员 ${m.name} 形参 ${p.name} 不允许默认值（决策 69）")
-        } }
+        is ClassDecl -> decl.members.forEach { m ->
+            // O3（决策 69）：型类成员形参不允许默认值
+            m.params.forEach { p -> if (p.default != null) d.error("E-DEFAULT-PARAM", m.pos, "型类成员 ${m.name} 形参 ${p.name} 不允许默认值（决策 69）") }
+            // HKT：成员签名（形参/返回类型）走可解析性检查，并带 class 级 kind arity（《高阶类型.md》HKT-S5）
+            val memberTps = tpNamesOf(decl) + tpNamesOf(m)
+            val classArity = tpArityOf(decl)
+            m.retType?.let { checkTypeResolvable(it, memberTps, classArity) }
+            m.params.forEach { checkTypeResolvable(it.type, memberTps, classArity) }
+        }
         is ImplDecl -> {
             decl.members.forEach { m -> m.params.forEach { p ->
                 if (p.default != null) d.error("E-DEFAULT-PARAM", m.pos, "impl 方法 ${m.name} 形参 ${p.name} 不允许默认值（决策 69）")
@@ -191,10 +197,20 @@ internal fun Checker.tpNamesOf(decl: Decl): List<String> = when (decl) {
     else -> emptyList()
 }
 
-internal fun Checker.checkTypeResolvable(t: Type, tps: List<String>) {
+/** HKT（《高阶类型.md》HKT-S1）：声明名 → 类型参数名 → arity（kind `*ⁿ→*` 的 n；0 = 普通类型变量）。
+ *  供 checkTypeResolvable 做 kind 形参的应用校验（单独出现 / 实参数不符 → E-KIND-MISMATCH）。 */
+internal fun Checker.tpArityOf(decl: Decl): Map<String, Int> = when (decl) {
+    is StructDecl -> decl.theory.filterIsInstance<TypeParam>().associate { it.name to it.arity }
+    is EnumDecl -> decl.theory.filterIsInstance<TypeParam>().associate { it.name to it.arity }
+    is ClassDecl -> decl.theory.filterIsInstance<TypeParam>().associate { it.name to it.arity }
+    is FunDecl -> decl.theory.filterIsInstance<TypeParam>().associate { it.name to it.arity }
+    else -> emptyMap()
+}
+
+internal fun Checker.checkTypeResolvable(t: Type, tps: List<String>, arity: Map<String, Int> = emptyMap()) {
     when (t) {
-        is FunType -> { t.params.forEach { checkTypeResolvable(it, tps) }; checkTypeResolvable(t.ret, tps) }
-        is TupleType -> t.items.forEach { checkTypeResolvable(it, tps) }
+        is FunType -> { t.params.forEach { checkTypeResolvable(it, tps, arity) }; checkTypeResolvable(t.ret, tps, arity) }
+        is TupleType -> t.items.forEach { checkTypeResolvable(it, tps, arity) }
         is QualifiedType -> {
             // P0：跨模块限定类型——目标模块须可见且含该类型名（struct/enum/class/别名/基类型）
             val target = resolveTypeModule(t)
@@ -205,13 +221,23 @@ internal fun Checker.checkTypeResolvable(t: Type, tps: List<String>) {
                 if (ts == null || ts.baseOf(namedT(t.name)) == null)
                     d.error("E-UNBOUND-NAME", "", "模块 ${target.absPath.ifEmpty { "/" }} 中无类型 ${t.name}")
             }
-            t.args.forEach { checkTypeResolvable(it, tps) }
+            t.args.forEach { checkTypeResolvable(it, tps, arity) }
         }
         is NamedType -> {
+            // HKT（《高阶类型.md》）：构造子形参 F（arity>0）只能以应用形态出现——单独用作类型报错
+            val tpArity = arity[t.name]
+            if (tpArity != null && tpArity > 0) {
+                when {
+                    t.args.isEmpty() -> d.error("E-KIND-MISMATCH", "", "类型构造子 ${t.name} 须应用（如 ${t.name}[_]，arity=$tpArity）——HKT-S5")
+                    t.args.size != tpArity ->
+                        d.error("E-KIND-MISMATCH", "", "构造子 ${t.name} 实参数 ${t.args.size} 与声明 arity $tpArity 不符——HKT-S1/S2")
+                    else -> {}
+                }
+            }
             if (t.name in tps) return
             // P6（决策 82）：跨模块类型引用——裸名 List/Result 在类型位置也可解析（可见模块兜底）
-            if (syms.baseOf(t) == null && !typeVisible(t.name)) d.error("E-UNBOUND-NAME", "", "未知类型 ${t.render()}")
-            t.args.forEach { checkTypeResolvable(it, tps) }
+            if (syms.baseOf(t) == null && !typeVisible(t.name) && tpArity == null) d.error("E-UNBOUND-NAME", "", "未知类型 ${t.render()}")
+            t.args.forEach { checkTypeResolvable(it, tps, arity) }
         }
     }
 }
