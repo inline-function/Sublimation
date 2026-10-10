@@ -111,19 +111,21 @@ impl Show for Grade {
 │   └── sugared/functor/ast/       AST 定义
 ├── src/test/kotlin/          350 项测试（8 个测试类）
 ├── stdlib/                   标准库（.subl 自举：List/Set/Map/Result）
-├── examples/                 P11 压测示例（json-parser 241 行、v1/v2-showcase 巡礼等）
-├── show/                     特性展示目录（自包含，双击 run.bat 即可演示）
+├── examples/                 示例集（json-parser 241 行、v1/v2-showcase 巡礼、when/value/goal/diffuse/optional、json-studio 多模块）
+├── show/                     v2.0 应用示例：读 students.json → 统计成绩（自包含，双击 run.bat）
 └── doc/                      设计文档（语言简介/语法/模块系统/空安全/异步/HKT 等）
 ```
 
 ## 演示：`show/`
 
-`show/` 是一个**自包含**的特性展示包（含编译器 fat jar），拷走整个目录即可对外演示：
+`show/` 是一个**自包含**的 v2.0 应用示例包（含编译器 fat jar）：读入 `students.json`（学生姓名 + 语数英成绩）→ 纯 .subl JSON parser 解析 → 统计每人总分/平均分、班级各科平均分、最高/最低总分。拷走整个目录即可对外演示：
 
 ```
 show/
 ├── run.bat          双击：编译 show 目录 → show.js，运行并写 show.log
-├── show.subl        展示源码（模块挂载/集合高阶/类型类/命题/命名参数）
+├── show.subl        主程序（readFile → parse → 统计 → 输出）
+├── jsonparser.subl  自包含 JSON parser（移植自 examples/json-parser.subl）
+├── students.json    数据文件（班级/教师/学生语数英成绩）
 ├── stdlib/          隐式挂载的标准库
 └── sublimation.jar  编译器 fat jar
 ```
