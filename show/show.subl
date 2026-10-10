@@ -1,43 +1,39 @@
 // ============================================================
 // Sublimation（凝华）语言 v2.0 示例：学生成绩统计
-// 模块结构：show/ 为编译入口根目录（根模块 = show.subl），
-//   show/stdlib/ 为自动挂载的标准库，show/jsonparser.subl 为 JSON parser。
+// 模块结构：show/ 为编译入口根目录（根模块 = show.subl），show/stdlib/ 为自动挂载的标准库。
 // 运行：show\run.bat（compile show 目录 -> show.js，运行并输出 show.log）
-// 功能：读取 students.json（含学生姓名与语数英成绩）→ 解析 JSON
+// 功能：读取 students.json（含学生姓名与语数英成绩）→ 内建 JSON 解析（jsonParse/jsonGet/jsonToList）
 //       → 计算每人总分/平均分、班级各科平均分、最高/最低总分。
-// 覆盖特性：P3 IO（readFile）+ P5 Result 错误处理 + P7 合一/泛型反推
-//       + P8 字符串插值 + JSON parser（P11 产物移植）+ P9 结构递归放行
-//       + 接收者风格 stdlib 方法（fold/map）+ 模式解构（when Ok/Err、
-//         JCons/JObj）+ 命名参数（parseAt）。
+// v2.0 基本库亮点：JSON 内建编译成 JS 原生（JSON.parse 等），坏 JSON 返回 None 而非异常（空安全）；
+//       List 底层数组化——jsonToList 零转换（JSON 数组=JS 数组），stdlib 的 map/fold/forEach
+//       编译成 JS 原生数组方法（.map/.reduce/.forEach）。
+// 覆盖特性：P3 IO（readFile）+ P5 Result 错误处理 + P8 字符串插值 + v2.0 内建 JSON + 空安全 Optional
+//       + 接收者风格 stdlib 方法（map/fold/forEach）+ 模式解构（when Ok/Err、Some/None）。
 // ============================================================
 
-// ---------- JSON 提取辅助（从解析后的 Json 树取值） ----------
-// 在对象字段表里按 key 取值；找不到返回 JNull
-fun objField(pairs: JList[Pair], key: Str): Json = when(pairs) {
-    JNil() -> JNull()
-    JCons(pr, t) -> if (==(pr.k, key)) { pr.v } else { objField(t, key) }
-    _ -> JNull()
+// ---------- 内建 JSON 访问辅助（Optional 空安全解构；失败按缺省值） ----------
+// 对象字段 -> Optional[Json]（字段缺失返回 None）
+fun fieldOf(j: Json, k: Str): Optional[Json] = jsonGet(j, k)
+
+// Optional[Json] -> Str（非字符串/缺失一律 "?"）
+fun optStr(o: Optional[Json]): Str = when(o) {
+    Some(v) -> when(jsonStr(v)) { Some(s) -> s  None -> "?" }
+    None -> "?"
 }
 
-// Json -> 数值（非 JNum 一律按 0 处理）
-fun numOf(j: Json): Rat = when(j) {
-    JNum(n) -> n
-    _ -> 0.0
-}
-
-// 从学生对象取某一科成绩（name/chinese/math/english）
-fun subjectOf(j: Json, key: Str): Rat = when(j) {
-    JObj(p) -> numOf(objField(p, key))
-    _ -> 0.0
+// Optional[Json] -> Rat（非数值/缺失一律 0）
+fun optNum(o: Optional[Json]): Rat = when(o) {
+    Some(v) -> when(jsonNum(v)) { Some(n) -> n  None -> 0.0 }
+    None -> 0.0
 }
 
 // 学生姓名（对象字段 "name"）
-fun nameOf(j: Json): Str = when(j) {
-    JObj(p) -> strOf(objField(p, "name"))
-    _ -> "?"
-}
+fun nameOf(j: Json): Str = optStr(fieldOf(j, "name"))
 
-// ---------- 统计原语（构造子解构 → P9 结构递归放行） ----------
+// 从学生对象取某一科成绩（chinese/math/english）
+fun subjectOf(j: Json, key: Str): Rat = optNum(fieldOf(j, key))
+
+// ---------- 统计 ----------
 // 单人总分 = 语文 + 数学 + 英语
 fun totalOf(j: Json): Rat = subjectOf(j, "chinese") + subjectOf(j, "math") + subjectOf(j, "english")
 
@@ -48,22 +44,22 @@ fun avgOf(j: Json): Rat = totalOf(j) / 3.0
 fun maxOf2(a: Rat, b: Rat): Rat = if (a > b) { a } else { b }
 fun minOf2(a: Rat, b: Rat): Rat = if (a < b) { a } else { b }
 
-// 全班某一科总和 / 总分总和 / 平均
-fun sumSubj(xs: JList[Json], key: Str): Rat = jFold(0.0, { j, acc -> acc + subjectOf(j, key) }, xs)
-fun sumTotal(xs: JList[Json]): Rat = jFold(0.0, { j, acc -> acc + totalOf(j) }, xs)
-fun avgSubj(xs: JList[Json], key: Str): Rat = sumSubj(xs, key) / toRat(jLen(xs))
+// 全班某一科总和
+fun sumSubj(xs: List[Json], key: Str): Rat = xs.fold(0.0) { j, acc -> acc + subjectOf(j, key) }
+fun sumTotal(xs: List[Json]): Rat = xs.fold(0.0) { j, acc -> acc + totalOf(j) }
+fun avgSubj(xs: List[Json], key: Str): Rat = sumSubj(xs, key) / toRat(xs.listLength())
 
-// 最高/最低总分（累加器递归于 JCons 的 t，P9 放行；min 用首元素做初值，杜绝 0 兜底）
-fun maxTotal(xs: JList[Json]): Rat = when(xs) {
-    JCons(h, t) -> maxOf2(totalOf(h), maxTotal(t))
+// 最高/最低总分（P9 结构递归于 List 的 Cons 尾；min 用首元素做初值，杜绝 0 兜底）
+fun maxTotal(xs: List[Json]): Rat = when(xs) {
+    Cons(h, t) -> maxOf2(totalOf(h), maxTotal(t))
     _ -> 0.0
 }
-fun minRest(xs: JList[Json], m: Rat): Rat = when(xs) {
-    JCons(h, t) -> minRest(t, minOf2(m, totalOf(h)))
+fun minRest(xs: List[Json], m: Rat): Rat = when(xs) {
+    Cons(h, t) -> minRest(t, minOf2(m, totalOf(h)))
     _ -> m
 }
-fun minTotal(xs: JList[Json]): Rat = when(xs) {
-    JCons(h, t) -> minRest(t, totalOf(h))
+fun minTotal(xs: List[Json]): Rat = when(xs) {
+    Cons(h, t) -> minRest(t, totalOf(h))
     _ -> 0.0
 }
 
@@ -75,42 +71,34 @@ fun lineOf(j: Json): Str =
         concat(toStr(subjectOf(j, "english")), concat("   总分 = ",
         concat(toStr(totalOf(j)), concat("  平均 = ", toStr(avgOf(j)))))))))))))
 
-// 逐人打印（顶层递归；构造子解构 t 是结构子项 → P9 放行）
-@unpure
-fun printAll(l: JList[Json]): Null = when(l) {
-    JCons(h, t) -> { print(lineOf(h)); printAll(t) }
-    _ -> null
-}
-
-// ---------- main：读文件 -> 解析 -> 统计 ----------
+// ---------- main：读文件 -> 内建 JSON 解析 -> 统计 ----------
 @unpure
 fun main() {
     var r = readFile("students.json")
     when(r) {
-        Ok(content) -> {
-            when(parse(content)) {
-                JOk(root, _) -> when(root) {
-                    JObj(pairs) -> {
-                        var cls = strOf(objField(pairs, "class"))
-                        var tch = strOf(objField(pairs, "teacher"))
-                        var studs = when(objField(pairs, "students")) {
-                            JArr(l) -> l
-                            _ -> JNil()
+        Ok(content) -> when(jsonParse(content)) {
+            Some(root) -> {
+                var cls = optStr(fieldOf(root, "class"))
+                var tch = optStr(fieldOf(root, "teacher"))
+                when(fieldOf(root, "students")) {
+                    Some(s) -> when(jsonToList(s)) {
+                        Some(studs) -> {
+                            print("班级: $cls  教师: $tch  学生数: ${studs.listLength()}")
+                            print("--- 个人成绩 ---")
+                            studs.forEach({ j -> print(lineOf(j)) })
+                            print("--- 班级统计 ---")
+                            var cAvg = avgSubj(studs, "chinese")
+                            var mAvg = avgSubj(studs, "math")
+                            var eAvg = avgSubj(studs, "english")
+                            print("语文平均 = $cAvg  数学平均 = $mAvg  英语平均 = $eAvg")
+                            print("总分平均 = ${sumTotal(studs) / toRat(studs.listLength())}  最高总分 = ${maxTotal(studs)}  最低总分 = ${minTotal(studs)}")
                         }
-                        print("班级: $cls  教师: $tch  学生数: ${jLen(studs)}")
-                        print("--- 个人成绩 ---")
-                        printAll(studs)
-                        print("--- 班级统计 ---")
-                        var cAvg = avgSubj(studs, "chinese")
-                        var mAvg = avgSubj(studs, "math")
-                        var eAvg = avgSubj(studs, "english")
-                        print("语文平均 = $cAvg  数学平均 = $mAvg  英语平均 = $eAvg")
-                        print("总分平均 = ${sumTotal(studs) / toRat(jLen(studs))}  最高总分 = ${maxTotal(studs)}  最低总分 = ${minTotal(studs)}")
+                        None -> print("students 字段不是数组")
                     }
-                    _ -> print("JSON 根不是对象")
+                    None -> print("students 字段缺失")
                 }
-                JFail(e) -> print("JSON 解析失败: $e")
             }
+            None -> print("JSON 解析失败")
         }
         Err(e) -> print("读取 students.json 失败: $e")
     }
