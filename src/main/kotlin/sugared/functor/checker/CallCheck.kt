@@ -23,6 +23,9 @@ internal fun Checker.checkStructCtor(e: StructCtorExpr, f: Frame, pure: Boolean)
     }
     if (st.fields.any { it.type.containsAny() } && uncheckedDepth == 0)
         d.error("E-ANY-STRUCT", e.pos, "结构体 ${e.struct} 含 Any 成员，创建需 unchecked 逃逸（决策 59）")
+    // HKT-2（《高阶类型.md》§7.2）：命名字段构造同样反推类型实参（Pair(first = 1, second = "a") → Pair[Nat, Str]）
+    val tps = st.theory.filterIsInstance<TypeParam>().map { it.name }
+    val inferred = LinkedHashMap<String, Type>()
     val seen = LinkedHashSet<String>()
     for ((fname, valExpr) in e.assigns) {
         if (!seen.add(fname)) d.error("E-DUP-FIELD", e.pos, "构造 ${e.struct} 重复字段 $fname")
@@ -30,7 +33,9 @@ internal fun Checker.checkStructCtor(e: StructCtorExpr, f: Frame, pure: Boolean)
             d.error("E-UNBOUND-NAME", e.pos, "结构体 ${e.struct} 无字段 $fname")
         val vt = checkExpr(valExpr, f, pure)
         val fp = st.fields.firstOrNull { it.name == fname } ?: continue
-        val want = syms.expand(fp.type)
+        if (!vt.isSynthetic())
+            extractTpBinding(fp.type, vt, tps.toSet(), inferred)
+        val want = syms.expand(fp.type).substT(inferred)
         if (!vt.isSynthetic() && want.isNominal() && !typeLooseEq(want, vt) &&
             !(want.name == "Any" && want.args.isEmpty()))
             d.error("E-TYPE-MISMATCH", e.pos, "构造 ${e.struct} 字段 $fname 的实参 ${vt.render()} 与 ${want.render()} 不符")
@@ -39,7 +44,7 @@ internal fun Checker.checkStructCtor(e: StructCtorExpr, f: Frame, pure: Boolean)
         if (fp.name !in seen && fp.default == null)
             d.error("E-FIELD-MISSING", e.pos, "构造 ${e.struct} 缺字段 ${fp.name} 且无默认值")
     }
-    return namedT(e.struct, emptyList())
+    return namedT(e.struct, tps.map { inferred[it] ?: syntheticT("类型参数$it") })
 }
 
 internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
@@ -373,6 +378,14 @@ internal fun Checker.checkStructCall(st: StructDecl, name: String, c: CallExpr, 
     // 决策 59：含 Any 成员的结构体禁止直接创建（unchecked 逃逸）
     if (st.fields.any { it.type.containsAny() } && uncheckedDepth == 0)
         d.error("E-ANY-STRUCT", c.pos, "结构体 $name 含 Any 成员，创建需 unchecked 逃逸（决策 59）")
+    // HKT-2（《高阶类型.md》§7.2）：struct 泛型实参推断——与 enum 构造同逻辑（字段实参反推类型参数，
+    // 如 Pair(1, "a") → Pair[Nat, Str]），HKT 构造子应用（Bifunctor for Pair[a,b]）依赖它拿到命名类型
+    val tps = st.theory.filterIsInstance<TypeParam>().map { it.name }
+    val inferred = LinkedHashMap<String, Type>()
+    st.fields.forEachIndexed { i, fp ->
+        if (i < argTypes.size && !argTypes[i].isSynthetic())
+            extractTpBinding(fp.type, argTypes[i], tps.toSet(), inferred)
+    }
     // O3（决策 69）：位置式允许缺省尾部——前提是尾部字段全有声明默认值
     // （命名字段构造 `A(name = e)` 由解析器产出独立节点 StructCtorExpr，走独立检查）
     if (st.fields.size < argTypes.size)
@@ -381,13 +394,15 @@ internal fun Checker.checkStructCall(st: StructDecl, name: String, c: CallExpr, 
         st.fields.drop(argTypes.size).any { it.default == null })
         d.error("E-FIELD-MISSING", c.pos, "构造 $name 缺尾部字段且无默认值")
     else st.fields.zip(argTypes).forEach { (fp, at) ->
-        if (!at.isSynthetic() && fp.type.isNominal() && !typeLooseEq(fp.type, at)) {
+        val ft = syms.expand(fp.type).substT(inferred)   // P2：字段比较用解出后的类型（与 checkCtorCall 一致）
+        val isTP = fp.type.name in tps && fp.type.args.isEmpty()   // 类型参数字段：跳过比较
+        if (!isTP && !at.isSynthetic() && ft.isNominal() && !typeLooseEq(ft, at)) {
             // 决策 59：Any 形参接受任意实参（受限顶类型）；其余仍须名义相等
             if (!(fp.type.name == "Any" && fp.type.args.isEmpty()))
-                d.error("E-TYPE-MISMATCH", c.pos, "构造 $name 实参 ${at.render()} 与字段 ${fp.type.render()} 不符")
+                d.error("E-TYPE-MISMATCH", c.pos, "构造 $name 实参 ${at.render()} 与字段 ${ft.render()} 不符")
         }
     }
-    return namedT(name, emptyList())
+    return namedT(name, tps.map { inferred[it] ?: syntheticT("类型参数$it") })
 }
 
 /** 函数调用公共检查尾段（决策 54/59/60/65，O2）：纯度/参数核对/显式供给/前后文；限定/普通共用。 */
