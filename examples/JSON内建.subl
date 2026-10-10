@@ -1,0 +1,49 @@
+// ============================================================
+// 特性：JSON 内建（jsonParse/jsonGet/jsonAt/jsonLen/jsonStr/jsonNum/jsonBool/
+//       jsonIsNull/jsonIsArr/jsonToStr/jsonToList——全部空安全）
+// 预期输出（每行一个）：
+//   alice / 3.14 / ? / true / true / 2 / 3 / BAD JSON -> None
+// ============================================================
+
+fun optStr(o: Optional[Json]): Str = when(o) {
+    Some(v) -> when(jsonStr(v)) { Some(s) -> s; None -> "?" }
+    None -> "?"
+}
+
+fun optNum(o: Optional[Json]): Rat = when(o) {
+    Some(v) -> when(jsonNum(v)) { Some(n) -> n; None -> 0.0 }
+    None -> 0.0
+}
+
+@unpure
+fun main() {
+    var js = "{\"name\":\"alice\",\"pi\":3.14,\"ok\":true,\"none\":null,\"tags\":[1,2,3]}"
+    when(jsonParse(js)) {
+        Some(j) -> {
+            unchecked print(optStr(jsonGet(j, "name")))      // alice
+            unchecked print(optNum(jsonGet(j, "pi")))        // 3.14
+            unchecked print(optStr(jsonGet(j, "ok")))        // ?（Json 非字符串 → None → "?"）
+            when(jsonGet(j, "none")) {
+                Some(nv) -> { unchecked print(jsonIsNull(nv)) }  // true
+                None -> { unchecked print(false) }
+            }
+            when(jsonGet(j, "tags")) {
+                Some(arr) -> {
+                    unchecked print(jsonIsArr(arr))          // true
+                    unchecked print(optNum(jsonAt(arr, 1)))  // 2
+                    when(jsonLen(arr)) {
+                        Some(ln) -> { unchecked print(ln) }  // 3
+                        None -> { unchecked print(0) }
+                    }
+                }
+                None -> { unchecked print("no tags") }
+            }
+        }
+        None -> { unchecked print("BAD JSON (unexpected)") }
+    }
+    // 坏 JSON 返回 None（不抛异常，decision 82）
+    when(jsonParse("{oops")) {
+        Some(_) -> { unchecked print("parsed??") }
+        None -> { unchecked print("BAD JSON -> None") }      // BAD JSON -> None
+    }
+}

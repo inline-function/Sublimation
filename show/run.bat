@@ -2,8 +2,7 @@
 setlocal
 rem ============================================================
 rem  Sublimation v2.0 app example builder (standalone jar)
-rem  Self-contained: run.bat + show.subl + jsonparser.subl +
-rem                  students.json + stdlib\ + sublimation.jar
+rem  Self-contained: run.bat + show.subl + students.json + stdlib\ + sublimation.jar
 rem  App: read students.json -> parse JSON -> score statistics
 rem  Usage:
 rem    run.bat         compile this show dir -> show.js, run it,

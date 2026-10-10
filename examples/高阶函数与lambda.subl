@@ -1,0 +1,29 @@
+// ============================================================
+// 特性：高阶函数与 lambda（函数类型 / 显式 lambda / 隐式单参 { _ } / 函数作值）
+// 注：单文件模式不挂 stdlib，List 内联声明；目录模式下这些在 stdlib/
+// 预期输出（每行一个）：5 / 4,6,8 / 1,2,3
+// ============================================================
+
+enum List[T] { Nil(), Cons(T, List[T]) }
+
+fun map[T, U](xs: List[T], f: (T) => U): List[U] = when(xs) {
+    Nil -> Nil()
+    Cons(h, t) -> Cons(f(h), map(t, f))
+}
+
+fun fold[T, U](xs: List[T], init: U, f: (T, U) => U): U = when(xs) {
+    Nil -> init
+    Cons(h, t) -> fold(t, f(h, init), f)
+}
+
+fun joinToStr[T](xs: List[T], sep: Str): Str =
+    fold(xs, "", { x, acc -> if (acc == "") { toStr(x) } else { concat(acc, concat(sep, toStr(x))) } })
+
+@unpure
+fun main() {
+    var inc: (Nat) => Nat = { x -> x + 1 }     // lambda 作值，显式参数
+    unchecked print(inc(4))                      // 5
+    var xs = Cons(2, Cons(3, Cons(4, Nil())))
+    unchecked print(joinToStr(map(xs, { _ * 2 }), ","))   // 4,6,8（隐式单参：体里 _ 引用参数）
+    unchecked print(joinToStr(map(xs, { _ - 1 }), ","))   // 1,2,3
+}

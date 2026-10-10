@@ -1,0 +1,41 @@
+// ============================================================
+// 特性：类型类（class ≈ trait / impl 实例 / 字典分发 / 隐式 self）
+// 预期输出（每行一个）：test / 良好 / 挂科
+// ============================================================
+
+enum Grade { Excellent(), Good(), Pass(), Fail() }
+
+// class 声明接口（Haskell 拼写、Rust 机制）；成员为无体签名
+class Show[T] { fun show(): Str }
+
+// impl 提供实例；方法调用按实参类型解析字典分发（dict_Show_Grade）
+impl Show for Grade {
+    fun show(): Str = when(self) {
+        Excellent() -> "优秀"
+        Good() -> "良好"
+        Pass() -> "及格"
+        Fail() -> "挂科"
+        _ -> "?"
+    }
+}
+
+// 隐式 self：impl 方法不写接收者；体内裸用字段名 name ≡ self.name
+struct A(name: Str = "unknown")
+class Boast {
+    @unpure
+    fun printMyself()
+}
+impl Boast for A {
+    @unpure
+    fun printMyself() {
+        print(name)
+    }
+}
+
+@unpure
+fun main() {
+    var o = A(name = "test")
+    o.printMyself()                  // test（点号式：隐式 self + 字典分发）
+    unchecked print(show(Good()))    // 良好（自由式双形态，等价）
+    unchecked print(show(Fail()))    // 挂科
+}

@@ -1,0 +1,39 @@
+// ============================================================
+// 特性：空安全（Optional / T? / 自动解构 / >: 安全转换 / ?T 类型测智能转换）
+// 预期输出（每行一个）：5 / 7 / sam / 5 / 0 / 1 / 0
+// ============================================================
+
+struct Point(x: Nat, y: Nat)
+
+// 泛型空替代（elvis）——T? ≡ Optional[T]
+fun elvis[T](o: Optional[T], d: T): T = when(o) {
+    Some(v) -> v
+    None -> d
+}
+
+// Any 只能作形参（调用点隐式提升，var 标注 Any 会 E-TYPE-MISMATCH）；
+// 类型测分支内智能转换 v : Point
+fun pointX(v: Any): Nat {
+    if (v ? Point) { return v.x }
+    return 0
+}
+
+@unpure
+fun main() {
+    var r: Nat? = Some(5)          // T? 是 Optional[T] 的语法糖
+    unchecked print(elvis(r, 7))   // 5
+
+    var n: Nat? = None
+    unchecked print(elvis(n, 7))   // 7
+
+    var s: Str? = Some("sam")
+    unchecked print(elvis(s, "?")) // sam
+
+    var c = 5 >: Nat               // 安全转换：成功 → Some(5)
+    unchecked print(elvis(c, 0))   // 5
+    var w = "x" >: Nat             // 失败 → None（不抛异常）
+    unchecked print(elvis(w, 0))   // 0
+
+    unchecked print(pointX(Point(1, 2)))  // 1（?T 类型测智能转换）
+    unchecked print(pointX(99))           // 0
+}

@@ -1,0 +1,35 @@
+// ============================================================
+// 特性：高阶类型 HKT（kind 形参 [F[_]] / 字典占位 impl for List[a] /
+//       kind 合一 F[A]~List[Nat] / 字典分发 dict_Functor_List）
+// 预期输出（每行一个）：2,4,6
+// ============================================================
+
+enum List[T] { Nil(), Cons(T, List[T]) }
+
+// [F[_]]：F 是 arity 1 的构造子形参（kind *→*）
+class Functor[F[_]] {
+    fun map[A, B](f: (A) => B, fa: F[A]): F[B]
+}
+
+// self 用占位应用 List[a]；字典名只取构造子名 dict_Functor_List
+impl Functor for List[a] {
+    fun map[A, B](f: (A) => B, fa: List[A]): List[B] = when(fa) {
+        Nil -> Nil()
+        Cons(h, t) -> Cons(f(h), map(f, t))
+    }
+}
+
+fun fold[T, U](xs: List[T], init: U, f: (T, U) => U): U = when(xs) {
+    Nil -> init
+    Cons(h, t) -> fold(t, f(h, init), f)
+}
+
+fun joinToStr[T](xs: List[T], sep: Str): Str =
+    fold(xs, "", { x, acc -> if (acc == "") { toStr(x) } else { concat(acc, concat(sep, toStr(x))) } })
+
+@unpure
+fun main() {
+    var xs = Cons(1, Cons(2, Cons(3, Nil())))
+    var ys = map({ n -> n * 2 }, xs)        // 自由式字典分发：F:=List 由 kind 合一解出
+    unchecked print(joinToStr(ys, ","))     // 2,4,6
+}

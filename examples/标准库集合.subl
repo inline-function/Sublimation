@@ -1,0 +1,50 @@
+// ============================================================
+// 特性：标准库集合（List 常用高阶：size/map/filter/fold/range/joinToString）
+// 注：单文件模式不挂 stdlib，List 与高阶函数内联声明；目录模式下 stdlib/
+//     会自动隐式挂载（见仓库 show/ 演示包与 模块系统/）
+// 预期输出（每行一个）：4 / 2,4,6,8 / 3,4 / 10 / 20
+// ============================================================
+
+enum List[T] { Nil(), Cons(T, List[T]) }
+
+fun size[T](xs: List[T]): Nat = when(xs) {
+    Nil -> 0
+    Cons(_, t) -> 1 + size(t)
+}
+
+fun map[T, U](xs: List[T], f: (T) => U): List[U] = when(xs) {
+    Nil -> Nil()
+    Cons(h, t) -> Cons(f(h), map(t, f))
+}
+
+fun filter[T](xs: List[T], f: (T) => Bool): List[T] = when(xs) {
+    Nil -> Nil()
+    Cons(h, t) -> if (f(h)) { Cons(h, filter(t, f)) } else { filter(t, f) }
+}
+
+fun fold[T, U](xs: List[T], init: U, f: (T, U) => U): U = when(xs) {
+    Nil -> init
+    Cons(h, t) -> fold(t, f(h, init), f)
+}
+
+// 数值递归（P9 判不出结构子项）——按标准写法用 unchecked 逃逸
+fun range(a: Nat, b: Nat): List[Nat] {
+    if (a < b) {
+        unchecked var rest = range(a + 1, b)
+        return Cons(a, rest)
+    }
+    return Nil()
+}
+
+fun joinToString[T](xs: List[T], sep: Str): Str =
+    fold(xs, "", { x, acc -> if (acc == "") { toStr(x) } else { concat(acc, concat(sep, toStr(x))) } })
+
+@unpure
+fun main() {
+    var xs = range(1, 5)                                          // [1,2,3,4]
+    unchecked print(size(xs))                                      // 4
+    unchecked print(joinToString(map(xs, { x -> x * 2 }), ","))   // 2,4,6,8
+    unchecked print(joinToString(filter(xs, { x -> x > 2 }), ",")) // 3,4
+    unchecked print(fold(xs, 0, { x, acc -> acc + x }))            // 10
+    unchecked print(fold(map(xs, { x -> x * 2 }), 0, { x, acc -> acc + x }))  // 20
+}

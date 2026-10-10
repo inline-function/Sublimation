@@ -1,0 +1,60 @@
+// ============================================================
+// 特性：when 真模式匹配（解构 / 嵌套 / 守卫 / 顺序否定 / 元组解构）
+// 预期输出（每行一个）：红 / 1 / zero / many / small / 3 / 1 / 2
+// ============================================================
+
+enum Color { Red, Green, Blue }
+
+// 覆盖律穷尽：Red∨Green∨Blue 可证，无需 else
+fun name(c: Color): Str = when(c) {
+    Red -> "红"
+    Green -> "绿"
+    Blue -> "蓝"
+}
+
+// 非穷尽只发警告 W-NON-EXHAUSTIVE（缺 Blue）；值退化为 Null，不报错
+fun partial(c: Color) {
+    when(c) {
+        Red -> 1
+        Green -> 2
+    }
+}
+
+// Bool 覆盖律 + 顺序否定：false 分支内持有 bool ≠ true
+fun pick(b: Bool): Nat = when(b) {
+    true -> 1
+    false -> 0
+}
+
+// 守卫是运行期值位：用 != 前缀调用与 &（→JS &&），不用命题算符
+fun range(n: Nat): Str = when(n) {
+    0 -> "zero"
+    m if !=(m, 0) & !=(m, 1) -> "many"
+    else -> "small"
+}
+
+// 嵌套解构 + 穷尽判定：Optional<Optional<Nat>> 覆盖律深展开
+fun flatten(oo: Optional[Optional[Nat]]): Nat = when(oo) {
+    Some(Some(y)) -> y
+    Some(None) -> 0
+    None -> 0
+}
+
+// 元组解构（T3）
+fun firstOf(p: (Nat, Nat)): Nat = when(p) {
+    (a, b) -> a
+    else -> 0
+}
+
+@unpure
+fun main() {
+    unchecked print(name(Red))               // 红
+    partial(Blue)                            // 只警告不报错
+    unchecked print(pick(true))              // 1
+    unchecked print(range(0))                // zero
+    unchecked print(range(7))                // many
+    unchecked print(range(1))                // small
+    unchecked print(flatten(Some(Some(3))))  // 3
+    unchecked print(flatten(Some(None)) + 1) // 1
+    unchecked print(firstOf((2, 3)))         // 2
+}

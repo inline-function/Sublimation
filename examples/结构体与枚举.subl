@@ -1,0 +1,38 @@
+// ============================================================
+// 特性：结构体与枚举（struct 默认值/命名字段构造 / enum ADT / if / var）
+// 预期输出（每行一个）：alice / 0 / zero / nonzero / 27 / 8
+// ============================================================
+
+// struct 圆括号体；字段可带默认值（决策 69）
+struct Point(x: Nat, y: Nat)
+struct User(name: Str = "unknown", age: Nat = 0)
+
+// 枚举即 ADT，构造子可带字段（决策 29/43）
+enum Shape { Circle(Nat), Rect(Nat, Nat) }
+
+// 单表达式体：`= 表达式`，不带花括号
+fun add(a: Nat, b: Nat): Nat = a + b
+
+// 块体：显式 return（决策 75）
+fun describe(n: Nat): Str {
+    if (n == 0) { return "zero" }
+    return "nonzero"
+}
+
+// when 穷尽时无需 else（覆盖律可证）
+fun area(s: Shape): Nat = when(s) {
+    Circle(r) -> 3 * r * r
+    Rect(w, h) -> w * h
+}
+
+// 入口：顶层只能写声明，执行代码全部进 main
+@unpure
+fun main() {
+    var u = User(name = "alice")      // 命名字段构造，age 取默认值 0
+    unchecked print(u.name)           // alice
+    unchecked print(u.age)            // 0
+    unchecked print(describe(0))      // zero
+    unchecked print(describe(5))      // nonzero
+    unchecked print(area(Circle(3)))  // 27 = 3×3²
+    unchecked print(area(Rect(2, 4))) // 8
+}

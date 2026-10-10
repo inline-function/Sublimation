@@ -1,0 +1,21 @@
+// ============================================================
+// 特性：异步与并发（Task 任务 / Channel 通道 / @async 自动 await 挂起点）
+// main 天然 async；Task 体天然 @async；join 挂起等待；
+// 本地未关闭通道的 receive 智能转换为 T（决策 93）
+// 预期输出（每行一个）：child task / task joined / channel receive = 7
+// ============================================================
+
+@unpure
+fun main() {
+    var t = Task { unchecked print("child task") }  // 创建任务（不启动）
+    t.start()                                       // 启动（不阻塞）
+    t.join()                                        // 挂起直到完成
+    unchecked print("task joined")
+
+    var ch: Channel[Nat] = Channel<Nat>(1)         // 通道需显式类型参数（Channel<T>(cap)）
+    if (!ch.isClosed()) {
+        ch.send(7)
+        var v: Nat = ch.receive()                   // 智能转换：无需 Optional 解包
+        unchecked print("channel receive = $v")
+    }
+}

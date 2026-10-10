@@ -1,0 +1,22 @@
+// ============================================================
+// 特性：可变性控制（@mut 显式可变 / 默认 const / immutable<T> / untouch<param>）
+// 编译器自动注入不可变命题：无 @mut 字段且字段类型 immutable 的 struct ⇔ immutable<T>；
+// 非 @mut 形参自动 untouch<param>。因此下文可直接证明，无需手动 axiom。
+// 预期输出（每行一个）：counter=1 / immutable ok
+// ============================================================
+
+struct Point(x: Nat, y: Nat)
+
+// 下文 <immutable<Point>>：Point 无 @mut 字段且字段 immutable → 自动注入可证
+fun pointGuard(p: Point): Null <immutable<Point>> {}
+
+// 下文 <untouch<x>>：x 非 @mut 形参 → 自动注入 untouch<x>
+fun sanitize(x: Nat): Null <untouch<x>> {}
+
+@unpure
+fun main() {
+    @mut var counter = 0
+    counter = counter + 1                  // @mut 才能赋值，否则 E-IMMUT-ASSIGN
+    unchecked print(concat("counter=", toStr(counter)))  // counter=1
+    unchecked print("immutable ok")
+}

@@ -111,7 +111,7 @@ impl Show for Grade {
 │   └── sugared/functor/ast/       AST 定义
 ├── src/test/kotlin/          350 项测试（8 个测试类）
 ├── stdlib/                   标准库（.subl 自举：List/Set/Map/Result）
-├── examples/                 示例集（json-parser 241 行、v1/v2-showcase 巡礼、when/value/goal/diffuse/optional、json-studio 多模块）
+├── examples/                 示例集（按特性拆分的单文件示例，中文文件名 + 头部注预期输出，见 examples/说明.md；含 模块系统/ 多模块）
 ├── show/                     v2.0 应用示例：读 students.json → 统计成绩（自包含，双击 run.bat）
 └── doc/                      设计文档（语言简介/语法/模块系统/空安全/异步/HKT 等）
 ```
@@ -123,8 +123,7 @@ impl Show for Grade {
 ```
 show/
 ├── run.bat          双击：编译 show 目录 → show.js，运行并写 show.log
-├── show.subl        主程序（readFile → parse → 统计 → 输出）
-├── jsonparser.subl  自包含 JSON parser（移植自 examples/json-parser.subl）
+├── show.subl        主程序（readFile → 内建 JSON 解析 → 统计 → 输出）
 ├── students.json    数据文件（班级/教师/学生语数英成绩）
 ├── stdlib/          隐式挂载的标准库
 └── sublimation.jar  编译器 fat jar

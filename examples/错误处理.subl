@@ -1,0 +1,38 @@
+// ============================================================
+// 特性：错误处理（Result[T, E]：解构 / unwrapOr / isOk / mapResult）
+// 注：单文件模式不挂 stdlib，Result 内联声明（目录模式下在 stdlib/result.subl）
+// 预期输出（每行一个）：42 / 0 / 43 / isOk=true / ERR: bad
+// ============================================================
+
+enum Result[T, E] { Ok(T), Err(E) }
+
+fun isOk[T, E](r: Result[T, E]): Bool = when(r) {
+    Ok(_) -> true
+    Err(_) -> false
+}
+
+fun unwrapOr[T, E](r: Result[T, E], d: T): T = when(r) {
+    Ok(v) -> v
+    Err(_) -> d
+}
+
+fun mapResult[T, E, U](r: Result[T, E], f: (T) => U): Result[U, E] = when(r) {
+    Ok(v) -> Ok(f(v))
+    Err(e) -> Err(e)
+}
+
+@unpure
+fun main() {
+    var r: Result[Nat, Str] = Ok(42)
+    var bad: Result[Nat, Str] = Err("bad")
+
+    unchecked print(unwrapOr(r, 0))                        // 42
+    unchecked print(unwrapOr(bad, 0))                      // 0
+    unchecked print(unwrapOr(mapResult(r, { x -> x + 1 }), 0))  // 43
+    unchecked print(concat("isOk=", toStr(isOk(r))))       // isOk=true
+
+    when(bad) {                                            // 解构分支
+        Ok(v) -> { unchecked print(v) }
+        Err(e) -> { unchecked print(concat("ERR: ", e)) } // ERR: bad
+    }
+}

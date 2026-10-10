@@ -192,7 +192,7 @@ class E2ETest {
     fun `巡礼示例端到端`() {
         assumeTrue(nodeAvailable())
         // showcase.subl 覆盖决策 68/69/70/71/75 全链路；锁首尾行与行数防退化
-        val src = java.io.File("examples/showcase.subl").readText()
+        val src = java.io.File("examples/特性巡礼.subl").readText()
         val out = run(src).lines()
         assertEquals("alice", out.first(), "巡礼示例首行应为 alice")
         assertEquals("done", out.last(), "巡礼示例末行应为 done")
@@ -317,7 +317,7 @@ class E2ETest {
     @Test
     fun `P11 约束泛型自递归透传字典槽`() {
         assumeTrue(nodeAvailable())
-        // P11 压测（examples/v1-showcase.subl）暴露：约束泛型函数自递归调用点 tsub 解不出
+        // P11 压测（已按特性拆分的示例，见 examples/）暴露：约束泛型函数自递归调用点 tsub 解不出
         // 具体类型 → 字典实参漏插 → 参数错位。回退透传当前函数约束槽（d_Show_T）。
         val src = "class Show[T] { fun show(): Str }\n" +
             "impl Show for Nat { fun show(): Str = toStr(self) }\n" +

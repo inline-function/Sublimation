@@ -1,0 +1,33 @@
+// ============================================================
+// 特性：字符串与插值（concat/length/charAt/substring/strCmp/parseNat/toStr
+//       + 字符串插值 + 命名参数 + 元组解构）
+// 预期输出（每行一个）：
+//   abcd / 4 / b / bc / -1 / 12 / 42 / sum=5 product=35 / hello, hi -> bob! / 27
+// ============================================================
+
+fun greet(name: Str, target: Str): Str = "hello, $name -> ${target}!"
+
+// 常规元组参数 + when 解构（@tuple 变长元组演示见 T4 测试；运行时行为待修，见说明）
+fun mulPair(t: (Nat, Nat)): Nat = when(t) {
+    (a, b) -> a * b
+    else -> 0
+}
+
+@unpure
+fun main() {
+    unchecked print(concat("ab", "cd"))            // abcd
+    unchecked print(length("abcd"))                // 4
+    unchecked print(charAt("abcd", 1))             // b
+    unchecked print(substring("abcd", 1, 3))       // bc
+    unchecked print(strCmp("a", "b"))              // -1
+    when(parseNat("12")) {
+        Some(n) -> { unchecked print(n) }          // 12
+        None -> { unchecked print("bad") }
+    }
+    unchecked print(toStr(42))                     // 42
+    var x = 5
+    var y = 7
+    unchecked print("sum=$x product=${x * y}")     // sum=5 product=35
+    unchecked print(greet(target = "bob", name = "hi"))  // 命名参数按形参顺序重排
+    unchecked print(mulPair((3, 9)))               // 27（元组解构）
+}

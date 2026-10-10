@@ -294,7 +294,7 @@ class ParserTest {
 
     @Test
     fun `整个示例文件可解析`() {
-        val src = File("examples/diffuse.subl").readText()
+        val src = File("examples/上下文弥散.subl").readText()
         parseSource(src, "diffuse.subl")
     }
 

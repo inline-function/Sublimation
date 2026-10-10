@@ -692,7 +692,7 @@ class CheckerTest {
 
     @Test
     fun `整个示例语义通过`() {
-        val src = java.io.File("examples/diffuse.subl").readText()
+        val src = java.io.File("examples/上下文弥散.subl").readText()
         val bag = checkFile(parseSource(src, "diffuse.subl"))
         val errors = bag.diags.filter { it.severity == Severity.ERROR }
         assertTrue(errors.isEmpty(), "示例应通过语义检查，实际: ${errors.map { it.render() }}")
@@ -700,7 +700,7 @@ class CheckerTest {
 
     @Test
     fun `巡礼示例语义通过`() {
-        val src = java.io.File("examples/showcase.subl").readText()
+        val src = java.io.File("examples/特性巡礼.subl").readText()
         val bag = checkFile(parseSource(src, "showcase.subl"))
         val errors = bag.diags.filter { it.severity == Severity.ERROR }
         assertTrue(errors.isEmpty(), "巡礼示例应通过语义检查，实际: ${errors.map { it.render() }}")
