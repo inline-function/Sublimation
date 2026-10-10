@@ -155,8 +155,24 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
             if (peek(Kind.AT)) { pos++; out += PropParam(nameToken()) }
             else {
                 val n = nameToken()
+                // 高阶类型（主人拍板，Scala 风）：`[F[_]]` → arity=1；`[F[_, _]]` → arity=2。
+                // `[]` 内只允许 `_`（占位）与 `,`；`F` 是类型构造子形参，`_` 是 kind `*` 实参占位。
+                var arity = 0
+                if (peek(Kind.LBRACKET)) {
+                    pos++
+                    arity = 0
+                    while (true) {
+                        if (peek(Kind.IDENT) && cur().text == "_") { pos++; arity++ }
+                        else throw ParseFailure(fileName, cur(), "期望构造子占位 _")
+                        if (peek(Kind.COMMA)) { pos++; continue }
+                        break
+                    }
+                    at(Kind.RBRACKET)
+                }
                 val c = if (peek(Kind.COLON)) { pos++; nameToken() } else null
-                out += TypeParam(n, c)
+                if (arity > 0 && c != null)
+                    throw ParseFailure(fileName, cur(), "高阶类型构造子暂不支持约束（主人拍板后补）")
+                out += TypeParam(n, c, arity)
             }
             if (peek(Kind.COMMA)) { pos++; continue }
             break
