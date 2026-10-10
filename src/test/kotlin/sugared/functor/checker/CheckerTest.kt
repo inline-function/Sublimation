@@ -489,6 +489,29 @@ class CheckerTest {
         assertEquals("dict_Functor_List", dictNameOf("Functor", namedT("List", listOf(namedT("a")))))
     }
 
+    // ============ HKT-2：多参构造子（《高阶类型.md》§7.2 Bifunctor[F[_,_]]） ============
+
+    @Test
+    fun `HKT2 struct 泛型构造推断实参`() {
+        // Pair(1, "a") → Pair[Nat, Str]；字段访问 first/second 类型正确
+        assertTrue(ok("struct Pair[A, B](first: A, second: B)\n" +
+            "fun fst(p: Pair[Nat, Str]): Nat = p.first\n" +
+            "fun main() { var p = Pair(1, \"a\")\nfst(p) }"))
+    }
+
+    @Test
+    fun `HKT2 Bifunctor 端到端字典分发`() {
+        assertTrue(ok("struct Pair[A, B](first: A, second: B)\n" +
+            "class Bifunctor[F[_, _]] { fun bimap[A, B, C, D](f: (A) => C, g: (B) => D, fab: F[A, B]): F[C, D] }\n" +
+            "impl Bifunctor for Pair[a, b] {\n" +
+            "  fun bimap[A, B, C, D](f: (A) => C, g: (B) => D, p: Pair[A, B]): Pair[C, D] = Pair(f(p.first), g(p.second))\n" +
+            "}\n" +
+            "fun main() {\n" +
+            "  var p = Pair(1, \"a\")\n" +
+            "  var q = bimap({ x -> x + 1 }, { s -> s + \"!\" }, p)\n" +
+            "}"))
+    }
+
     @Test
     fun `P7 id 泛型反推 n 类型 Nat`() {
         // §9.4 验收①：id(3) 的 T 从实参解出 Nat——needNat(id(3)) 通过即证明（id(3) 若解不出就是 synthetic/自由 T，实参核对报错）
