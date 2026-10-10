@@ -1,8 +1,10 @@
 @echo off
 setlocal
 rem ============================================================
-rem  Sublimation feature showcase builder (standalone jar)
-rem  Self-contained: run.bat + show.subl + stdlib\ + sublimation.jar
+rem  Sublimation v2.0 app example builder (standalone jar)
+rem  Self-contained: run.bat + show.subl + jsonparser.subl +
+rem                  students.json + stdlib\ + sublimation.jar
+rem  App: read students.json -> parse JSON -> score statistics
 rem  Usage:
 rem    run.bat         compile this show dir -> show.js, run it,
 rem                    compile+run output -> show.log (UTF-8)
