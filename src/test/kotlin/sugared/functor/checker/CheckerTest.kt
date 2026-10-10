@@ -499,6 +499,18 @@ class CheckerTest {
     }
 
     @Test
+    fun `HKT D2 构造子名通配命中约束解析`() {
+        // 约束解析 `[F[_]: Functor]` 解出裸构造子名 List（零实参）→ 匹配占位 self List[a]
+        // （kindWildcardMatch 构造子本体通配分支），字典名 dict_Functor_List
+        val chk = Checker(parseSource(
+            "enum List[T] { Nil(), Cons(T, List[T]) }\n" +
+            "class Functor[F[_]] { fun map[A, B](f: (A) => B, fa: F[A]): F[B] }\n" +
+            "impl Functor for List[a] { fun map[A, B](f: (A) => B, fa: List[A]): List[B] = fa }\n", "t"))
+        chk.collect()
+        assertEquals("dict_Functor_List", chk.resolveConstraint("Functor", namedT("List"), null))
+    }
+
+    @Test
     fun `HKT 字典名不含占位（HKT-D1）`() {
         // dictNameOf：kind 型类 self 是构造子应用占位 → 只取构造子名
         assertEquals("dict_Functor_List", dictNameOf("Functor", namedT("List", listOf(namedT("a")))))

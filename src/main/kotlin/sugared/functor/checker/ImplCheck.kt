@@ -102,11 +102,13 @@ internal fun Checker.resolveDict(name: String, argT: Type, visible: Set<String>?
 }
 
 /** P6（决策 82）：约束解析 `T: Trait` → 具体类型 t 的字典名（I-22：与命题参数同构、复用可见性过滤）。
- *  零匹配 → E-NO-INSTANCE；多匹配 → E-AMBIGUOUS-INSTANCE。返回 null 表示已报错。 */
+ *  零匹配 → E-NO-INSTANCE；多匹配 → E-AMBIGUOUS-INSTANCE。返回 null 表示已报错。
+ *  HKT（HKT-D2）：匹配走 doesSelfMatch——约束 t 若是构造子名（`[F[_]: Functor]` 解出 List），
+ *  `List[a]` 占位 self 通配命中（typeLooseEq 逐实参比较会让 a vs 空失败）。 */
 internal fun Checker.resolveConstraint(trait: String, t: Type, visible: Set<String>?): String? {
     val entries = if (visible == null) syms.implsByTrait[trait].orEmpty()
         else visible.mapNotNull { allSymbols[it]?.implsByTrait?.get(trait) }.flatten()
-    val cands = entries.filter { typeLooseEq(it.self, t) }
+    val cands = entries.filter { doesSelfMatch(it.self, t) }
     return when {
         cands.isEmpty() -> { d.error("E-NO-INSTANCE", "", "约束 $trait 对类型 ${t.render()} 无 impl 实例"); null }
         cands.size > 1 -> { d.error("E-AMBIGUOUS-INSTANCE", "", "约束 $trait 对类型 ${t.render()} 有 ${cands.size} 个实例"); null }
@@ -160,6 +162,10 @@ private fun Checker.doesSelfMatch(self: Type, argT: Type): Boolean {
 }
 
 private fun kindWildcardMatch(self: Type, argT: Type): Boolean = when {
+    // 构造子本体通配（HKT-D2）：约束/合一解出的裸构造子名 `List`（零实参）匹配任何同型类占位
+    // 应用 self `List[a]`（占位数任意）——字典 self 是构造子，不是具体类型。size 不等则归此分支。
+    self is NamedType && argT is NamedType && self.args.isNotEmpty() && argT.args.isEmpty() &&
+        self.name == argT.name && self.args.all { it is NamedType && isKindPlaceholder(it) } -> true
     self is NamedType && argT is NamedType && self.name == argT.name && self.args.size == argT.args.size ->
         self.args.zip(argT.args).all { (s, a) -> kindWildcardMatch(s, a) || (s is NamedType && isKindPlaceholder(s)) }
     else -> false
