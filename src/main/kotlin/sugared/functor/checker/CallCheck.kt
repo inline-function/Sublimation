@@ -44,6 +44,8 @@ internal fun Checker.checkStructCtor(e: StructCtorExpr, f: Frame, pure: Boolean)
         if (fp.name !in seen && fp.default == null)
             d.error("E-FIELD-MISSING", e.pos, "构造 ${e.struct} 缺字段 ${fp.name} 且无默认值")
     }
+    // v3.0 特性 1：命名式构造同样做伴生命题证明
+    checkStructProps(st, f, e.pos, e.assigns.toMap())
     return namedT(e.struct, tps.map { inferred[it] ?: syntheticT("类型参数$it") })
 }
 
@@ -116,7 +118,7 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
     if (selfT == null) {
         // O2：方法路径（self 已知）不参与构造子/结构体判定，避免同名截胡
     syms.ctors[name]?.let { ci -> return checkCtorCall(ci, name, c, argTypes, modulePath) }
-    syms.structs[name]?.let { st -> return checkStructCall(st, name, c, argTypes, modulePath) }
+    syms.structs[name]?.let { st -> return checkStructCall(st, name, c, argTypes, modulePath, f) }
     }
 
     // v2.0 异步（决策 93，异步 §3.1/§5.4）：Channel 创建 `Channel[T]()` / `Channel[T](cap)`。
@@ -451,7 +453,7 @@ internal fun Checker.checkCtorCall(ci: CtorInfo, name: String, c: CallExpr, argT
 }
 
 /** 结构体构造调用公共段（决策 59/69，O3）：Any 准入、位置式缺省尾部规则不变；限定/普通共用。 */
-internal fun Checker.checkStructCall(st: StructDecl, name: String, c: CallExpr, argTypes: List<Type>, modPath: String): Type {
+internal fun Checker.checkStructCall(st: StructDecl, name: String, c: CallExpr, argTypes: List<Type>, modPath: String, f: Frame): Type {
     moduleHits[c.callee] = moduleJsName(modPath, name)
     // 决策 59：含 Any 成员的结构体禁止直接创建（unchecked 逃逸）
     if (st.fields.any { it.type.containsAny() } && uncheckedDepth == 0)
@@ -480,6 +482,8 @@ internal fun Checker.checkStructCall(st: StructDecl, name: String, c: CallExpr, 
                 d.error("E-TYPE-MISMATCH", c.pos, "构造 $name 实参 ${at.render()} 与字段 ${ft.render()} 不符")
         }
     }
+    // v3.0 特性 1：结构体伴生命题——构造前证明（E-STRUCT-PROP-UNPROVEN / E-STRUCT-MUT-PROP）
+    checkStructProps(st, f, c.pos, st.fields.zip(c.args).associate { it.first.name to it.second })
     return namedT(name, tps.map { inferred[it] ?: syntheticT("类型参数$it") })
 }
 
@@ -809,7 +813,7 @@ private fun Checker.checkQualifiedCall(q: QChain, c: CallExpr, f: Frame, pure: B
             checkFnCall(fn, sym.name, c, f, pure, c.args, argTypes, isMethodPath = false)
         }
         QSymKind.CTOR -> checkCtorCall(sym.syms.ctors.getValue(sym.name), sym.name, c, argTypes, node.absPath)
-        QSymKind.STRUCT -> checkStructCall(sym.syms.structs.getValue(sym.name), sym.name, c, argTypes, node.absPath)
+        QSymKind.STRUCT -> checkStructCall(sym.syms.structs.getValue(sym.name), sym.name, c, argTypes, node.absPath, f)
         QSymKind.METHOD -> {
             // 限定方法 `core.show(p)`：首实参即接收者（自由形态语义）
             if (argTypes.isEmpty()) {
@@ -867,3 +871,68 @@ internal fun Checker.mapTerms(p: Prop, fn: (Expr) -> Expr): Prop = when (p) {
     is PExists1 -> PExists1(p.names, mapTerms(p.body, fn))
     else -> p
 }
+
+/** ---- v3.0 特性 1：结构体伴生命题 ---- */
+
+/** 在 Prop 的原子项里，把 NameRef(name) 替换为 sub[name]，递归整棵 Prop 树。 */
+internal fun substPropTerms(p: Prop, sub: Map<String, Expr>): Prop = when (p) {
+    is PAtom -> p.copy(terms = p.terms.map { subExprTerm(it, sub) })
+    is PNot -> PNot(substPropTerms(p.p, sub))
+    is PAnd -> PAnd(substPropTerms(p.a, sub), substPropTerms(p.b, sub))
+    is POr -> POr(substPropTerms(p.a, sub), substPropTerms(p.b, sub))
+    is PImp -> PImp(substPropTerms(p.a, sub), substPropTerms(p.b, sub))
+    is PIff -> PIff(substPropTerms(p.a, sub), substPropTerms(p.b, sub))
+    is PForall -> PForall(p.names, substPropTerms(p.body, sub))
+    is PExists -> PExists(p.names, substPropTerms(p.body, sub))
+    is PExists1 -> PExists1(p.names, substPropTerms(p.body, sub))
+    else -> p
+}
+
+/** 原子项里的 NameRef 浅替换（NameRef 直接换；其他表达式原样）。 */
+private fun subExprTerm(t: Expr, sub: Map<String, Expr>): Expr =
+    if (t is NameRef && sub.containsKey(t.name)) sub[t.name]!! else t
+
+/** 命题树是否引用字段名 name（原子项里出现同名 NameRef，含复合表达式递归）。 */
+internal fun propHasName(p: Prop, name: String): Boolean = when (p) {
+    is PAtom -> p.terms.any { exprHasName(it, name) }
+    is PNot -> propHasName(p.p, name)
+    is PAnd -> propHasName(p.a, name) || propHasName(p.b, name)
+    is POr -> propHasName(p.a, name) || propHasName(p.b, name)
+    is PImp -> propHasName(p.a, name) || propHasName(p.b, name)
+    is PIff -> propHasName(p.a, name) || propHasName(p.b, name)
+    is PForall -> propHasName(p.body, name)
+    is PExists -> propHasName(p.body, name)
+    is PExists1 -> propHasName(p.body, name)
+    else -> false
+}
+
+private fun exprHasName(t: Expr, name: String): Boolean = when (t) {
+    is NameRef -> t.name == name
+    is FieldExpr -> t.name == name || exprHasName(t.target, name)
+    is BinExpr -> exprHasName(t.left, name) || exprHasName(t.right, name)
+    is UniExpr -> exprHasName(t.operand, name)
+    is CallExpr -> exprHasName(t.callee, name) || t.args.any { exprHasName(it, name) }
+    else -> false
+}
+
+/** checkStructCall 尾段调用：@mut 检查 + 构造前证明 + 成功注入。 */
+private fun Checker.checkStructProps(st: StructDecl, f: Frame, pos: String, args: Map<String, Expr>) {
+    if (st.props.isEmpty()) return
+    // 硬约束：伴生命题禁止引用 @mut 字段——声明位检查已在 collectDecl（此处防御保留）
+    st.fields.forEach { fp ->
+        if ("mut" in fp.annotations && st.props.any { propHasName(PropLogic.fromExpr(it), fp.name) }) {
+            d.error("E-STRUCT-MUT-PROP", pos, "结构体 " + st.name + " 伴生命题引用了 @mut 字段 " + fp.name + "（可变字段无法保证恒成立）")
+            return
+        }
+    }
+    // 构造位证明：字段名 → 对应实参表达式（位置式取 c.args 映射；命名式取 e.assigns）
+    st.props.forEach { prop ->
+        val g = substPropTerms(PropLogic.fromExpr(prop), args)
+        if (proveOrDeep(f.allFacts(), g)) {
+            f.inject(g)
+        } else {
+            d.error("E-STRUCT-PROP-UNPROVEN", pos, "构造 " + st.name + " 须证明 " + PropLogic.render(g) + "（当前 Γ 无法蕴含）")
+        }
+    }
+}
+

@@ -97,7 +97,8 @@ class Lexer(private val src: String, private val fileName: String) {
         val c = src[i]
         if (c in '0'..'9') return readInt()
         if (c == '"') return readString()
-        if (isAsciiLetter(c) || c == '_') return readIdent()
+        // v3.0：标识符支持 Unicode（字母开头：英文/中文/希腊字母等均可；下划线亦为首字符）
+        if (c == '_' || c.isLetter()) return readIdent()
         if (isSymbolStart(c)) return readSymbol()
 
         // 多字符优先
@@ -129,7 +130,7 @@ class Lexer(private val src: String, private val fileName: String) {
             '&' -> Kind.AMP; '|' -> Kind.PIPE; '!' -> Kind.BANG
             '∀' -> Kind.FORALL; '∃' -> Kind.EXISTS
             '∧' -> Kind.LAND; '∨' -> Kind.LOR; '¬' -> Kind.LNOT
-            '→' -> Kind.IMPLIES; '↔' -> Kind.EQUIV
+            '→' -> Kind.IMPLIES; '↔' -> Kind.EQUIV; '≠' -> Kind.NEQ
             '⊤' -> Kind.TOP; '⊥' -> Kind.BOT
             else -> throw LexFailure(fileName, line, col, "非法字符 '$c'")
         }
@@ -182,7 +183,8 @@ class Lexer(private val src: String, private val fileName: String) {
 
     private fun readIdent(): Pair<Kind, String> {
         val sb = StringBuilder()
-        while (i < src.length && (isAsciiLetter(src[i]) || src[i] in '0'..'9' || src[i] == '_')) {
+        // v3.0：Unicode 标识符——字母/数字/下划线续（isLetterOrDigit 覆盖中文、希腊字母等）
+        while (i < src.length && (src[i].isLetterOrDigit() || src[i] == '_')) {
             sb.append(src[i]); adv()
         }
         val text = sb.toString()

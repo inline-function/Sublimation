@@ -285,6 +285,19 @@ class Checker(
                 f.inject(PAtom(":", listOf(NameRef(p.name), typeToExpr(pt))))
             }
         }
+        // v3.0 特性 1：结构体形参伴生命题自动注入——`fun f(test: Test)` 体内等价于前件
+        // `<test.n ≠ 0>`：字段引用（n）替换为 `test.n` 形态注入当前帧
+        fn.params.forEach { p ->
+            val st = syms.structs[p.type.name]
+            if (st != null && st.props.isNotEmpty() && p.destruct == null) {
+                val rcv: Expr = NameRef(p.name)
+                val sub = LinkedHashMap<String, Expr>()
+                st.fields.forEach { sub[it.name] = FieldExpr(rcv, it.name) }
+                st.props.forEach { prop ->
+                    f.inject(substPropTerms(PropLogic.fromExpr(prop), sub))
+                }
+            }
+        }
         // 决策 65（T6）：上/下文里的 $n 替换为参数名，并发提示级诊断；越界报错。
         val preRewritten = fn.preps.map { rewriteDollarN(it, fn.params, "前件") }
         val postRewritten = fn.posts.map { rewriteDollarN(it, fn.params, "后件") }
@@ -410,6 +423,24 @@ class Checker(
                     else t = want
                 }
                 f.declareVar(s.name, t, s.pos)
+                // v3.0 特性 1：结构体构造成功注入——`var t = Test(m)` 注入 t.n = 实参 与伴生命题（t.n 形态）；
+                // 命名参数构造（StructCtorExpr）在 checkStructCtor 内同做证明
+                if (s.destruct == null) {
+                    val ce = s.value as? CallExpr
+                    val cname = (ce?.callee as? NameRef)?.name
+                    val st0 = cname?.let { syms.structs[it] }
+                    if (st0 != null && st0.props.isNotEmpty()) {
+                        val rcv: Expr = NameRef(s.name)
+                        st0.fields.zip(ce!!.args).forEach { (fp, a) ->
+                            f.inject(PAtom("=", listOf(FieldExpr(rcv, fp.name), a)))
+                        }
+                        val sub = LinkedHashMap<String, Expr>()
+                        st0.fields.forEach { sub[it.name] = FieldExpr(rcv, it.name) }
+                        st0.props.forEach { prop ->
+                            f.inject(substPropTerms(PropLogic.fromExpr(prop), sub))
+                        }
+                    }
+                }
                 // v2.0 异步（CH-5）：`var ch = Channel<…>()` 登记为本地通道——receive 智能转换据此
                 // 返回 T（编译器确定通道未关闭）；参数位/未知一律 T?。
                 if (t is NamedType && t.name == "Channel") localChannels += s.name

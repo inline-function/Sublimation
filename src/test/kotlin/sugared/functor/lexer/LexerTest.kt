@@ -57,7 +57,8 @@ class LexerTest {
 
     @Test
     fun `非法字符报错带行列`() {
-        val e = assertFailsWith<LexFailure> { toks("中") }
+        // Unicode 标识符特性后 "中" 合法（isLetter），改用控制字符 \u0003 保留非法字符行列校验
+        val e = assertFailsWith<LexFailure> { toks("\u0003") }
         assertEquals(1, e.line)
     }
 

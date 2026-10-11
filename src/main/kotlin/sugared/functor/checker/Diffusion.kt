@@ -51,7 +51,51 @@ internal fun Checker.dollarOf(body: Expr): Expr = when (body) {
     else -> body
 }
 
+/** v3.0 特性 1：常量原子命题真值判定（terms 全为数值字面量时直接求值；不动推理规则）。 */
+internal fun constAtomValue(p: Prop): Boolean? {
+    if (p !is PAtom || p.terms.size != 2) return null
+    val a = (p.terms[0] as? IntLit)?.value?.toLongOrNull() ?: return null
+    val b = (p.terms[1] as? IntLit)?.value?.toLongOrNull() ?: return null
+    return when (p.head) {
+        "=", "==" -> a == b
+        "!=", "≠" -> a != b
+        "<" -> a < b
+        ">" -> a > b
+        "<=", "≤" -> a <= b
+        ">=", "≥" -> a >= b
+        else -> null
+    }
+}
+
+/** v3.0 特性 1：把目标里可归约的名字替换为字面量（var m = 5 ⇒ 事实 m = 5），全常量则返回常量版；否则 null。 */
+private fun reduceGoalToConstants(gamma: List<Prop>, goal: Prop): Prop? {
+    if (goal !is PAtom) return null
+    val constMap = LinkedHashMap<String, Long>()
+    for (f in gamma) {
+        if (f is PAtom && (f.head == "=" || f.head == "==") && f.terms.size == 2) {
+            val n1 = (f.terms[0] as? NameRef)?.name
+            val v1 = (f.terms[1] as? IntLit)?.value?.toLongOrNull()
+            if (n1 != null && v1 != null) constMap[n1] = v1
+            val n2 = (f.terms[1] as? NameRef)?.name
+            val v2 = (f.terms[0] as? IntLit)?.value?.toLongOrNull()
+            if (n2 != null && v2 != null) constMap[n2] = v2
+        }
+    }
+    if (constMap.isEmpty()) return null
+    val newTerms = goal.terms.map { t ->
+        val n = (t as? NameRef)?.name
+        if (n != null && constMap.containsKey(n)) IntLit(constMap[n].toString()) else t
+    }
+    if (newTerms == goal.terms) return null
+    if (newTerms.any { it !is IntLit }) return null
+    return PAtom(goal.head, newTerms)
+}
+
 internal fun Checker.proveOrDeep(gamma: List<Prop>, goal: Prop): Boolean {
+    // v3.0 特性 1：常量原子真值直接判定（不动推理规则；构造位伴生命题字面量场景）
+    constAtomValue(goal)?.let { return it }
+    // v3.0 特性 1：目标含变量但等式事实可归约到常量（var m = 5 事实 → 目标 ≠<m,0> 归约为 ≠<5,0>）
+    reduceGoalToConstants(gamma, goal)?.let { rg -> constAtomValue(rg)?.let { return it } }
     val res = prover.proves(globalFacts + gamma, goal)
     if (prover.deepAborted) d.error("E-DEEP-SATURATION", "", "命题 ${PropLogic.render(goal)} 超出饱和深度 $maxSatDepth")
     return res

@@ -51,6 +51,8 @@ data class StructDecl(
     val name: String,
     val theory: List<TheoryParam>,
     val fields: List<Param>,
+    /** v3.0 特性 1：结构体伴生命题 `struct Test(n: Nat) <n ≠ 0>`（构造时证明，参数位自动注入） */
+    val props: List<Expr> = emptyList(),
     override val pos: String = "",
 ) : Decl
 

@@ -1123,4 +1123,40 @@ class CheckerTest {
         val src = "@impure\nfun test(o: Str | Nat) =\n    when(o) {\n        is Bool -> print(o)\n        else -> print(0)\n    }"
         assertTrue(errs(src).contains("E-TYPE-MISMATCH"), "is 非联合成员应报 E-TYPE-MISMATCH")
     }
+    @Test
+    fun `结构体伴生命题 - 字面量构造通过`() {
+        val src = "struct Natural(n: Nat) <n ≠ 0>\n@impure fun main() { var t = Natural(3)\nprint(t.n) }"
+        assertTrue(ok(src), "3 ≠ 0 应常量可证")
+    }
+
+    @Test
+    fun `结构体伴生命题 - 变量等式事实构造通过`() {
+        val src = "struct Natural(n: Nat) <n ≠ 0>\n@impure fun main() { var m = 5\nvar t = Natural(m)\nprint(t.n) }"
+        assertTrue(ok(src), "m = 5 事实应能推进 ≠<m, 0>")
+    }
+
+    @Test
+    fun `结构体伴生命题 - 常量证不出报 E-STRUCT-PROP-UNPROVEN`() {
+        val src = "struct Natural(n: Nat) <n ≠ 0>\n@impure fun main() { var t = Natural(0)\nprint(t.n) }"
+        assertTrue(errs(src).contains("E-STRUCT-PROP-UNPROVEN"))
+    }
+
+    @Test
+    fun `结构体伴生命题 - 命名构造通过`() {
+        val src = "struct Natural(n: Nat) <n ≠ 0>\n@impure fun main() { var x = 7\nvar t = Natural(n = x)\nprint(t.n) }"
+        assertTrue(ok(src), "命名构造同样做伴生命题证明")
+    }
+
+    @Test
+    fun `结构体伴生命题 - @mut 引用报 E-STRUCT-MUT-PROP`() {
+        val src = "struct Bad(@mut n: Nat) <n ≠ 0>\n@impure fun main() { print(1) }"
+        assertTrue(errs(src).contains("E-STRUCT-MUT-PROP"))
+    }
+
+    @Test
+    fun `结构体伴生命题 - 形参自动注入`() {
+        val src = "struct Natural(n: Nat) <n ≠ 0>\nfun rewrap(t: Natural): Natural { return Natural(t.n) }\n@impure fun main() { var t = Natural(5)\nvar u = rewrap(t)\nprint(u.n) }"
+        assertTrue(ok(src), "函数体内 t.n ≠ 0 应自动注入")
+    }
+
 }

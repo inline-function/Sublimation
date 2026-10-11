@@ -128,6 +128,11 @@ internal fun Checker.collectDecl(decl: Decl) {
             if (decl.fields.isEmpty())
                 d.hint("H-EMPTY-DECL", decl.pos, "结构体 ${decl.name} 无字段，可省略参数括号写成 `struct ${decl.name}`")
             syms.typeParamNames[decl.name] = tpNamesOf(decl)
+            // v3.0 特性 1：伴生命题禁止引用 @mut 字段（声明位检查）
+            decl.fields.forEach { fp ->
+                if ("mut" in fp.annotations && decl.props.any { propHasName(PropLogic.fromExpr(it), fp.name) })
+                    d.error("E-STRUCT-MUT-PROP", decl.pos, "结构体 ${decl.name} 伴生命题引用了 @mut 字段 ${fp.name}（可变字段无法保证恒成立）")
+            }
         }
         is ClassDecl -> {
             if (syms.classes.putIfAbsent(decl.name, decl) != null)

@@ -629,9 +629,14 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         if (peek(Kind.LBRACE))
             throw ParseFailure(fileName, cur(), "struct 体是参数列表，请改写为 $name(字段: 类型 = 默认值)")
         // P3（v2.1）：无字段 struct 可省略参数括号 `struct P`，等价 `struct P()`
-        if (!peek(Kind.LPAREN)) return StructDecl(name, theory, emptyList())
+        if (!peek(Kind.LPAREN)) {
+            // v3.0 特性 1：伴生命题 `struct P <p>`（无字段也可有命题）
+            return StructDecl(name, theory, emptyList(), if (peek(Kind.LT)) parseAngleList() else emptyList())
+        }
         val fields = parseParams()
-        return StructDecl(name, theory, fields)
+        // v3.0 特性 1：结构体伴生命题 `struct Test(n: Nat) <n ≠ 0>`——声明位 `<...>`（同 fun 下文位识别）
+        val props = if (peek(Kind.LT)) parseAngleList() else emptyList()
+        return StructDecl(name, theory, fields, props)
     }
 
     private fun parseEnum(): EnumDecl {

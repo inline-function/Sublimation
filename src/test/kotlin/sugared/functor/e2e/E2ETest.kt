@@ -42,6 +42,15 @@ class E2ETest {
     }
 
     @Test
+    fun `结构体伴生命命题端到端`() {
+        assumeTrue(nodeAvailable())
+        val src = "struct Natural(n: Nat) <n ≠ 0>\n" +
+            "fun isPositive(t: Natural): Bool = t.n > 0\n" +
+            "fun main() { var m = 5\nvar t = Natural(m)\nunchecked print(isPositive(t)) }"
+        assertEquals("true", run(src))
+    }
+
+    @Test
     fun `when 字面量分支`() {
         assumeTrue(nodeAvailable())
         val src = "fun f(n: Nat): Str = when(n) { 0 -> \"z\" else -> \"nz\" }\n" +
