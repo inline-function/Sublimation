@@ -579,4 +579,35 @@ class E2ETest {
             "}"
         assertEquals("7\n5", run(src))
     }
+
+    @Test
+    fun `v30 完美函数类型 - 综合验收全能力组合`() {
+        assumeTrue(nodeAvailable())
+        // 稳定基线：多态类型位收 lambda / 一等函数值 / 显式与反推实例化 / rank-2 组合 / 递归 lambda /
+        // 函数值 purity / 实例化表达式作值，一个程序全组合
+        val src = "fun id[T](x: T): T = x\n" +
+            "fun inc(x: Nat): Nat = x + 1\n" +
+            "fun compose[A, B, C](f: (B) => C, g: (A) => B): (A) => C =\n" +
+            "    fun(x: A): C = f(g(x))\n" +
+            "@impure fun log(x: Nat): Nat = x\n" +
+            "@impure fun main() {\n" +
+            "    var f1: [T](T) => T = {x -> x}\n" +
+            "    print(f1(3))\n" +
+            "    print(f1(\"a\"))\n" +
+            "    var f2 = id\n" +
+            "    print(f2(7))\n" +
+            "    print(f2<Str>(\"b\"))\n" +
+            "    var f3 = compose(inc, inc)\n" +
+            "    print(f3(5))\n" +
+            "    var fl = compose({x -> x + 3}, {x -> x * 2})\n" +
+            "    print(fl(5))\n" +
+            "    var fact = {n -> if (n <= 1) {1} else {n * fact(n - 1)}}\n" +
+            "    print(fact(5))\n" +
+            "    var lg = {x -> log(x)}\n" +
+            "    print(lg(9))\n" +
+            "    var gl = id<Nat>\n" +
+            "    print(gl(11))\n" +
+            "}"
+        assertEquals("3\na\n7\nb\n7\n13\n120\n9\n11", run(src))
+    }
 }
