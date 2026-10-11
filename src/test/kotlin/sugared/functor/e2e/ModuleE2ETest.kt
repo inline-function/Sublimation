@@ -927,4 +927,23 @@ class ModuleE2ETest {
             "stdlib/list.subl" to list,
             "stdlib/collection.subl" to coll)))
     }
+
+    @Test
+    fun `v30 完美函数类型 - map filter fold 链零魔法 + 多态函数作实参`() {
+        assumeTrue(nodeAvailable())
+        // memo 验收目标：map/filter/fold 零魔法成立；多态匿名函数作实参进 List.map 的 (T)=>U 槽
+        val src = "@impure fun main() {\n" +
+            "  var xs = stdlib.Cons(1, stdlib.Cons(2, stdlib.Cons(3, stdlib.Cons(4, stdlib.Nil()))))\n" +
+            "  var ys = xs.filter { x -> x > 2 }.map { x -> x * 2 }\n" +
+            "  print(ys)\n" +
+            "  var s = xs.fold(0) { x, acc -> acc + x }\n" +
+            "  print(s)\n" +
+            "  var zs = xs.map(fun[T](x: T): T = x)\n" +
+            "  print(zs)\n" +
+            "}"
+        val list = File("stdlib/list.subl").readText()
+        assertEquals("[ 6, 8 ]\n10\n[ 1, 2, 3, 4 ]", runTree(mapOf(
+            "main.subl" to src,
+            "stdlib/list.subl" to list)))
+    }
 }

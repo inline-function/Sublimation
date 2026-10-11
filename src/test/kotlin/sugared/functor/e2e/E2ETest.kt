@@ -479,4 +479,21 @@ class E2ETest {
             "}"
         assertEquals("3\na\n7\n5", run(src))
     }
+
+    @Test
+    fun `v30 完美函数类型 - rank2 泛型 compose 返回函数值`() {
+        assumeTrue(nodeAvailable())
+        // 多态返回链：compose 返回 `(A)=>C` 函数类型；匿名函数体引用外层泛型形参（curFunTps）；
+        // 函数值二次组合 h(h(1)) 与直接调用 compose(inc, inc)(9)
+        val src = "fun inc(x: Nat): Nat = x + 1\n" +
+            "fun compose[A, B, C](f: (B) => C, g: (A) => B): (A) => C =\n" +
+            "    fun(x: A): C = f(g(x))\n" +
+            "@impure fun main() {\n" +
+            "    var h = compose(inc, inc)\n" +
+            "    print(h(5))\n" +
+            "    print(h(h(1)))\n" +
+            "    print(compose(inc, inc)(9))\n" +
+            "}"
+        assertEquals("7\n5\n11", run(src))
+    }
 }

@@ -56,6 +56,8 @@ class Checker(
     /** P9（决策 44，用户授权 Max 倾向）：递归停机上下文——当前函数名/形参名/解构血缘 */
     internal var curFunName: String? = null
     internal var curFunParams: List<String> = emptyList()
+    /** v3.0（完美函数类型）：当前函数的类型形参名集——供匿名函数体重用（`fun(x: A)` 里 A 是外层 compose 的形参） */
+    internal var curFunTps: Set<String> = emptySet()
     /** v2.0 异步（决策 93）：当前函数是否 @async 上下文——checkFun 设置；@async 函数体内可自由调用挂起函数 */
     internal var curFunAsync = false
     /** v2.0 异步：@async 函数体内对 @async 函数的**挂起点**调用留痕（调用点 → true），codegen 处生成 await */
@@ -228,13 +230,14 @@ class Checker(
         val f = Frame(null)
         val tps = tpNamesOf(fn)
         // P9（决策 44）：设置递归停机上下文（函数名/形参/解构血缘按函数隔离）
-        val savedFunName = curFunName; val savedFunParams = curFunParams; val savedStructSub = structSub
+        val savedFunName = curFunName; val savedFunParams = curFunParams; val savedFunTps = curFunTps; val savedStructSub = structSub
         val savedFunAsync = curFunAsync
         val savedStarted = startedTasks
         val savedLocals = localChannels
         val savedClosed = closedChannels
         curFunName = fn.name
         curFunParams = fn.params.map { it.name }
+        curFunTps = tps.toSet()
         structSub = LinkedHashMap()
         startedTasks = LinkedHashSet()
         localChannels = LinkedHashSet()
@@ -320,6 +323,7 @@ class Checker(
         paramTypes = savedParamTypes
         funConsSlots = savedConsSlots
         curFunName = savedFunName; curFunParams = savedFunParams; structSub = savedStructSub
+        curFunTps = savedFunTps
         curFunAsync = savedFunAsync
         startedTasks = savedStarted
         localChannels = savedLocals
@@ -779,7 +783,8 @@ class Checker(
             // v3.0（完美函数类型）：返回**真函数类型**——带理论参数（theory）的多态函数类型 `[T](T)=>T`，
             // 不再是 synthetic；值可存入局部变量、参与类型检查与实例化调用。
             val nf = Frame(f)
-            val tps = e.theory.filterIsInstance<TypeParam>().map { it.name }
+            // v3.0（完美函数类型）：类型形参可解析集 = 自身 theory + 外层函数（compose 等）的类型形参
+            val tps = e.theory.filterIsInstance<TypeParam>().map { it.name } + curFunTps.toList()
             e.params.forEach { p ->
                 checkTypeResolvable(p.type, tps)
                 nf.declareVar(p.name, p.type)
