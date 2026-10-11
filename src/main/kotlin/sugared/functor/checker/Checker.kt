@@ -240,7 +240,7 @@ class Checker(
         // P6（决策 82）：设置约束字典槽——`fun f[T: Show]` 体内 `x.show()`（x: T）指向槽 d_Show_T
         val savedConsSlots = funConsSlots
         funConsSlots = fn.theory.filterIsInstance<TypeParam>()
-            .filter { it.constraint != null }
+            .filter { it.constraint != null && it.constraint != "Any" }   // v2.1：Any 恒满足零字典，不设槽
             .associate { tp -> tp.name to listOf(tp.constraint!! to "d_${tp.constraint}_${tp.name}") }
         // O2（决策 68，用户拍板隐式 self）：方法体内先注入 self 与结构体字段，
         // 再声明形参（参数名与字段同名时后者覆盖 = 参数遮蔽字段，发提示 H-FIELD-SHADOW）。

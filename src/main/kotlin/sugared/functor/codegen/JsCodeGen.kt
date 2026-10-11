@@ -428,7 +428,8 @@ class JsCodeGen {
     private fun genFun(fn: FunDecl) {
         val body = fn.body ?: return   // 纯签名不生成
         // P6（决策 82）：带约束泛型函数的隐藏字典槽参数——`fun f[T: Show]` → f(d_Show_T, ...)
-        val slots = fn.theory.filterIsInstance<TypeParam>().filter { it.constraint != null }
+        // v2.1：Any 是默认类型类（恒满足、零方法无字典）——不生成槽
+        val slots = fn.theory.filterIsInstance<TypeParam>().filter { it.constraint != null && it.constraint != "Any" }   // v2.1：Any 零字典不设槽
             .map { "d_${it.constraint}_${it.name}" }
         val ps = (slots + fn.params.map { mangle(it.name) }).joinToString(", ")
         // v2.0 重载：本模块内同名 >1 的函数按首参标签唯一化（`stdlib__map$List`），与 Checker 侧 moduleHits 同名规则一致

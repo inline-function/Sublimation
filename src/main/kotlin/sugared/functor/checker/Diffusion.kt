@@ -59,6 +59,8 @@ internal fun Checker.proveOrDeep(gamma: List<Prop>, goal: Prop): Boolean {
 
 internal fun Checker.typeLooseEq(a0: Type, b0: Type): Boolean {
     val a = syms.expand(a0); val b = syms.expand(b0)   // 别名展开（决策 30）
+    // v2.1（对齐 Rust 无限类型语义）：Nothing 是底类型——可被当成任何结构体/枚举/类型类
+    if (a.isNothing() || b.isNothing()) return true
     if (a.isSynthetic() || b.isSynthetic()) return true
     if (a.isUnsealed() || b.isUnsealed()) {
         val other = if (a.isUnsealed()) b else a
@@ -70,3 +72,6 @@ internal fun Checker.typeLooseEq(a0: Type, b0: Type): Boolean {
 }
 
 internal fun Type.isNumeric(): Boolean = name in setOf("Nat", "Int", "Rat") && args.isEmpty()
+
+/** v2.1：Nothing 底类型（发散/不可达值；与任何类型相容） */
+internal fun Type.isNothing(): Boolean = name == "Nothing" && args.isEmpty()

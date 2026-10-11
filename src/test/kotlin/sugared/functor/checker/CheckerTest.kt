@@ -154,6 +154,22 @@ class CheckerTest {
         assertTrue(ok(src), "父类字典应可解析")
     }
 
+    // ============ v2.1 默认类型类 Any / Nothing 底类型 ============
+
+    @Test
+    fun `Any 默认类型类 结构体与数值均满足`() {
+        val src = "struct Point(x: Nat, y: Nat)\n" +
+            "fun id[T: Any](x: T): T = x\n" +
+            "fun main() { var p: Point = id(Point(1, 2))\nvar q: Nat = id(5) }"
+        assertTrue(ok(src), "Any 约束应恒满足且 codegen 不插字典")
+    }
+
+    @Test
+    fun `Nothing 底类型可作形参类型`() {
+        val src = "fun bottom(x: Nothing): Str = \"b\"\nfun main() { var s: Str = bottom }"
+        assertTrue(ok(src), "Nothing 类型应与任何类型相容")
+    }
+
     @Test
     fun `var 注入等式事实可作供给`() {
         val src = "fun need0()<n = 0>: Null {}\nfun main() { var n = 0\nneed0() }"

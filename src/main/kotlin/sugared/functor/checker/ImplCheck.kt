@@ -106,6 +106,10 @@ internal fun Checker.resolveDict(name: String, argT: Type, visible: Set<String>?
  *  HKT（HKT-D2）：匹配走 doesSelfMatch——约束 t 若是构造子名（`[F[_]: Functor]` 解出 List），
  *  `List[a]` 占位 self 通配命中（typeLooseEq 逐实参比较会让 a vs 空失败）。 */
 internal fun Checker.resolveConstraint(trait: String, t: Type, visible: Set<String>?): String? {
+    // v2.1（对齐 Rust）：Any 是所有结构体/枚举/基本类型的**默认类型类**——恒满足、零方法无字典；
+    // Nothing 是底类型——任何约束对它都跳过字典（发散值不会真正执行调用）。
+    if (trait == "Any") return null
+    if (t.isNothing()) return null
     val entries = if (visible == null) syms.implsByTrait[trait].orEmpty()
         else visible.mapNotNull { allSymbols[it]?.implsByTrait?.get(trait) }.flatten()
     val cands = entries.filter { doesSelfMatch(it.self, t) }

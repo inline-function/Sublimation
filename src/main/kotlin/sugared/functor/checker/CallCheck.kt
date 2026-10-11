@@ -600,7 +600,8 @@ internal fun Checker.checkFnCall(
     // P6（决策 82）：带约束泛型函数的调用点——逐个约束解出具体类型并解析字典，codegen 前插字典实参。
     // I-22：与命题参数同走供给机制；可见性过滤同 resolveDict（目录模式按当前模块可见路径）。
     val vis = if (moduleTree == null) null else visiblePaths
-    val constraintTps = fn.theory.filterIsInstance<TypeParam>().filter { it.constraint != null }
+    val constraintTps = fn.theory.filterIsInstance<TypeParam>()
+        .filter { it.constraint != null && it.constraint != "Any" }   // v2.1：Any 恒满足零字典（constraint 是类型类名字符串）
     val dictArgs = constraintTps.mapNotNull { tp -> (tsub[tp.name] ?: return@mapNotNull null)
         .let { resolveConstraint(tp.constraint!!, it, vis) } }
     if (dictArgs.isNotEmpty() && dictArgs.size == constraintTps.size) {
@@ -609,6 +610,7 @@ internal fun Checker.checkFnCall(
         // P11 压测（决策 87 补充）：约束泛型自递归调用点——递归调用的类型实参仍是当前函数的元类型
         // （T 未具体化，tsub 解不出具体字典），直接把递归栈内当前函数的约束槽透传给递归调用。
         dictSubHits[c] = constraintTps.map { "d_${it.constraint}_${it.name}" }
+        // ^ constraintTps 已过滤 Any；此处沿用同一来源，Any 不会进入透传槽
     }
     return (fn.retType ?: syms.inferredRets[fn.name] ?: namedT("Null", emptyList())).substT(tsub)
 }
