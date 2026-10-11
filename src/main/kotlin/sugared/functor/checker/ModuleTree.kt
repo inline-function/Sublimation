@@ -183,9 +183,13 @@ class ModuleTreeDriver(val tree: ModuleNode, val bag: DiagBag) {
     private fun injectStdlibMounts() {
         if ("stdlib" !in nodesByPath) return
         for (m in tree.allModules()) {
-            if (m.absPath.isEmpty() || m.absPath == "stdlib") continue
-            val occupied = m.children.containsKey("stdlib") ||
-                (m.settings?.mounts?.any { (it.alias ?: "") == "stdlib" || it.targetAbsPath == "stdlib" } ?: false)
+            // v3.0 修复：根模块（absPath=""）也注入 `mount stdlib`——`compile .` 入口在根时,
+            // 根模块裸名应能用同级 stdlib 的标准库符号（setOf/map/forEach 等），否则 E-UNBOUND-NAME。
+            // 根模块的 children 恒含 stdlib（父→子），故 occupied 对根不做 children 判定，强制注入。
+            if (m.absPath == "stdlib") continue
+            val occupied = !m.absPath.isEmpty() &&
+                (m.children.containsKey("stdlib") ||
+                    (m.settings?.mounts?.any { (it.alias ?: "") == "stdlib" || it.targetAbsPath == "stdlib" } ?: false))
             if (!occupied) {
                 val st = m.settings ?: ModuleSettings(emptyList())
                 m.settings = ModuleSettings(st.mounts + MountDecl("stdlib", null))

@@ -1,3 +1,33 @@
-@unpure
+struct Student(
+    name : Str,
+    score : Nat,
+) <
+    score ≤ 100
+>
+
+enum Grade { A,B,C,D }
+
+class Gradable {
+    fun grade() : Grade
+}
+
+impl Gradable for Student {
+    fun grade() : Grade =
+        when {
+            score in (90..100) -> Grade::A
+            score in (80..89 ) -> Grade::B
+            score in (60..79 ) -> Grade::C
+            else -> Grade::D
+        }
+}
+
+@impure
 fun main() =
-    print("Hello, World!")
+    setOf(
+        Student("Sun XiaoChuan",54),
+        Student("Fluvoxamine",75),
+        Student("Thirty-Seven",100),
+        Student("Sugared Functor",91),
+    )
+        .map { (_.name,_.score,_.grade()) }
+        .forEach { (name,score,grade) => print("$name:$score:$grade") }

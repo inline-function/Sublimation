@@ -141,3 +141,39 @@ fun distinct[A](xs: List[A]): List[A] = when(xs) {
     Nil -> Nil()
     Cons(h, t) -> if (contains(t, h)) { distinct(t) } else { Cons(h, distinct(t)) }
 }
+
+// ---- v2.0 基本库补全（2026-10-10）：any / all / indexOf / slice / sortBy ----
+// 声明自举（结构递归，停机判定通过）；codegen 特判成 JS 原生数组方法（any→.some、all→.every…）。
+
+fun any[T](xs: List[T], f: (T) => Bool): Bool = when(xs) {
+    Nil -> false
+    Cons(h, t) -> if (f(h)) { true } else { any(t, f) }
+}
+
+fun all[T](xs: List[T], f: (T) => Bool): Bool = when(xs) {
+    Nil -> true
+    Cons(h, t) -> if (f(h)) { all(t, f) } else { false }
+}
+
+fun indexOf[T](xs: List[T], x: T): Optional[Nat] = when(xs) {
+    Nil -> None()
+    Cons(h, t) -> if (h == x) { Some(0) } else { when(indexOf(t, x)) { Some(n) -> Some(n + 1); None -> None() } }
+}
+
+fun slice[T](xs: List[T], a: Nat, b: Nat): List[T] = when(xs) {
+    Nil -> Nil()
+    Cons(h, t) -> if (a > 0) { unchecked var r = slice(t, a - 1, b - 1); r }
+        else if (b == 0) { Nil() }
+        else { unchecked var r2 = slice(t, 0, b - 1); Cons(h, r2) }
+}
+
+// 稳定排序：f(a, b) 为 true ⇒ a 排在 b 前。稳定排序用插入排序自举。
+fun sortBy[T](xs: List[T], f: (T, T) => Bool): List[T] = when(xs) {
+    Nil -> Nil()
+    Cons(h, t) -> insertSort(h, sortBy(t, f), f)
+}
+
+fun insertSort[T](x: T, xs: List[T], f: (T, T) => Bool): List[T] = when(xs) {
+    Nil -> Cons(x, Nil())
+    Cons(h, t) -> if (f(x, h)) { Cons(x, Cons(h, t)) } else { Cons(h, insertSort(x, t, f)) }
+}
