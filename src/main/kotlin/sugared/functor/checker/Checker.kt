@@ -573,7 +573,25 @@ class Checker(
                     val ret = if (bi != null && bi.params.isNotEmpty() && typeLooseEq(bi.params[0].type, t))
                         (bi.retType ?: namedT("Null", emptyList()))
                     else null
-                    ret ?: syntheticT("字段${e.name}")
+                    if (ret != null) ret
+                    else {
+                        // v3.0（完美函数类型）：方法路径作值（方法糖自由函数 / 匹配类方法）——
+                        // `xs.map` / `x.m`（无括号）→ 绑定 self 的函数值 FunType（与 o::f 同构）；
+                        // codegen 生成 `(...a) => f(o, ...a)` 闭包。
+                        val m = findCollectionMethod(e.name, t)
+                            ?: (syms.methods[e.name]?.firstOrNull { doesSelfMatch(it.self, t) }?.let { it.fn to it.modulePath })
+                        if (m != null) {
+                            val (fn, mmod) = m
+                            funRefTargets[e] = moduleJsName(mmod, fn.name)
+                            // 绑定 self：函数值形参 = 声明的**非首参**（首参即接收者，已在 target 上）；
+                            // 多态方法糖函数保留理论参数（如 map[T,U] → [T,U](...)）
+                            FunType(
+                                fn.params.drop(1).map { it.type },
+                                fn.retType ?: namedT("Null", emptyList()),
+                                theory = fn.theory.filterIsInstance<TypeParam>(),
+                            )
+                        } else syntheticT("字段${e.name}")
+                    }
                 }
             }
         }

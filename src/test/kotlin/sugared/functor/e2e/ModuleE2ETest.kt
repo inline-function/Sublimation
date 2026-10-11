@@ -946,4 +946,19 @@ class ModuleE2ETest {
             "main.subl" to src,
             "stdlib/list.subl" to list)))
     }
+
+    @Test
+    fun `v30 完美函数类型 - 方法路径作值绑定 self`() {
+        assumeTrue(nodeAvailable())
+        // `xs.map` 无括号作值 → 绑定 self 的 ( (T)=>U ) => List[U]；调用 m({x -> x*2}) 实例化反推 U
+        val src = "@impure fun main() {\n" +
+            "  var xs = stdlib.Cons(1, stdlib.Cons(2, stdlib.Nil()))\n" +
+            "  var m = xs.map\n" +
+            "  print(m({x -> x * 2}))\n" +
+            "}"
+        val list = File("stdlib/list.subl").readText()
+        assertEquals("[ 2, 4 ]", runTree(mapOf(
+            "main.subl" to src,
+            "stdlib/list.subl" to list)))
+    }
 }

@@ -536,4 +536,18 @@ class E2ETest {
             "}"
         assertEquals("1\n3", run(src))
     }
+
+    @Test
+    fun `v30 完美函数类型 - 方法路径作值单文件`() {
+        assumeTrue(nodeAvailable())
+        // 方法糖自由函数无括号作值：5.shout → 绑定 self 的 () => Str；函数名引用 g(7)
+        val src = "fun shout(x: Nat): Str = \"hi\" + toStr(x)\n" +
+            "@impure fun main() {\n" +
+            "    var f = 5.shout\n" +
+            "    print(f())\n" +
+            "    var g = shout\n" +
+            "    print(g(7))\n" +
+            "}"
+        assertEquals("hi5\nhi7", run(src))
+    }
 }

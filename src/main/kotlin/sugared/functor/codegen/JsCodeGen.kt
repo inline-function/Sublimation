@@ -600,7 +600,13 @@ private var funRefFree: Set<Expr> = emptySet()
         // join() 返回 Promise（await 在调用点）；isAlive() 简化为「是否已 start」。
         is TaskExpr -> taskJs(e)
         is SymbolCallExpr -> symbolCall(e)
-        is FieldExpr -> moduleHits[e] ?: "${expr(e.target)}.${mangle(e.name)}"   // P0：跨模块限定引用走留痕名
+        is FieldExpr -> {
+            // v3.0（完美函数类型）：方法路径作值（xs.map / x.m 无括号）→ 绑定 self 的闭包；
+            // 其余走 P0 跨模块限定引用留痕名 / 字段读取
+            val ref = funRefTargets[e]
+            if (ref != null) "(...a) => $ref(${expr(e.target)}, ...a)"
+            else moduleHits[e] ?: "${expr(e.target)}.${mangle(e.name)}"
+        }
         // P6（决策 95）：`o::f` 方法引用 → 绑定 self 的闭包 `(…a) => f(o, …a)`
         is FunRefExpr -> {
             val jsName = funRefTargets[e] ?: "${expr(e.target)}.${mangle(e.name)}"
