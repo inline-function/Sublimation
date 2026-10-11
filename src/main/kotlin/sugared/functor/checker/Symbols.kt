@@ -100,13 +100,24 @@ internal fun Checker.registerEnum(decl: EnumDecl) {
     syms.typeParamNames[decl.name] = tpNamesOf(decl)
     for (c in decl.ctors) {
         val builtinCtor = c.name in setOf("true", "false", "null", "None", "Some")
-        if (syms.ctors.containsKey(c.name) && !builtinCtor)
-            d.error("E-DUP-DECL", decl.pos, "构造子 ${c.name} 重复")
-        else if (!syms.ctors.containsKey(c.name)) syms.ctors[c.name] = CtorInfo(decl, c.fields)
+        val prev = syms.ctors[c.name]
+        when {
+            // 首注册（含 Optional 的 None/Some 等自声明枚举）
+            prev == null -> syms.ctors[c.name] = CtorInfo(decl, c.fields)
+            // v2.1（限制解开）：跨枚举同名构造子允许共存，裸名留首个，后者提示用 E::T 消歧
+            prev.enum.name != decl.name && !builtinCtor ->
+                d.hint("H-AMBIGUOUS-CTOR", decl.pos, "构造子 ${c.name} 已在枚举 ${prev.enum.name} 声明，裸名引用有歧义，请用 ${decl.name}::${c.name} 或 ${prev.enum.name}::${c.name}")
+            // 同枚举内重复声明仍是错误；内建保留名（true/false/null/None/Some）重复静默（codegen 特判承接）
+            prev.enum.name == decl.name && !builtinCtor ->
+                d.error("E-DUP-DECL", decl.pos, "构造子 ${c.name} 重复")
+            else -> {}
+        }
         // v2.1（对齐 Rust 关联项）：同时注册复合键 `枚举::构造子`（E::A 成员访问用）——不覆盖裸名
         syms.ctors.putIfAbsent("${decl.name}::${c.name}", CtorInfo(decl, c.fields))
     }
 }
+
+
 
 internal fun Checker.collectDecl(decl: Decl) {
     when (decl) {

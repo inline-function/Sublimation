@@ -232,6 +232,56 @@ class CheckerTest {
         assertTrue(errs(src).contains("E-DESTRUCT"), "Nat 不可解构应报 E-DESTRUCT")
     }
     @Test
+    fun `限制解开 同名构造子跨枚举共存 E 双冒号 T 消歧`() {
+        val src = """
+            enum A {
+                T
+            }
+            enum B {
+                T
+            }
+            fun fa(): A = A::T
+            fun fb(): B = B::T
+        """.trimIndent()
+        assertTrue(ok(src), "同名构造子应共存且 E::T 消歧")
+    }
+
+    @Test
+    fun `限制解开 子类型类覆盖 子类实例优先`() {
+        val src = """
+            class Show[T] {
+                fun show(x: T): Str
+            }
+            class Pretty[T] : Show[T] {
+                fun show(x: T): Str
+            }
+            struct Point(x: Nat, y: Nat)
+            impl Show for Point {
+                fun show(x: Point): Str = "show"
+            }
+            impl Pretty for Point {
+                fun show(x: Point): Str = "pretty"
+            }
+            fun main() {
+                var p = Point(3, 5)
+                var _ = p.show(p)
+            }
+        """.trimIndent()
+        assertTrue(ok(src), "子类型类覆盖应无歧义错误")
+    }
+
+    @Test
+    fun `限制解开 lambda 解构结构体按字段键`() {
+        val src = """
+            struct Point(x: Nat, y: Nat)
+            fun apply(f: (Point) => Nat, p: Point): Nat = f(p)
+            fun main() {
+                var _ = apply({ (x, y) => x + y }, Point(3, 5))
+            }
+        """.trimIndent()
+        assertTrue(ok(src), "结构体 lambda 解构应通过")
+    }
+    @Test
     fun `P6 函数引用 o冒号冒号f 简单方法可传`() {
         val src = "fun id(x: Nat): Nat = x\n" +
             "@unpure fun apply(f: (Nat) => Nat, v: Nat): Nat = f(v)\n" +

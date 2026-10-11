@@ -85,6 +85,8 @@ class Checker(
     internal val moduleHits = java.util.IdentityHashMap<Expr, String>()
     /** P6（决策 95）：函数引用 `o::f` → 方法 JS 名（codegen 生成闭包引用） */
     internal val funRefTargets = java.util.IdentityHashMap<Expr, String>()
+    /** P4（v2.1）：lambda 解构参数的字段名键（按参数下标；null=元组走索引）——codegen 解绑用 */
+    internal val lambdaDestructKeys = java.util.IdentityHashMap<Expr, MutableList<List<String>?>>()
     /** I-20：当前模块的完整可见路径集合（目录模式计算；单文件模式空集不用过滤） */
     internal val visiblePaths: Set<String>
         get() = if (moduleTree == null) emptySet() else moduleTree.visiblePathsOf(modulePath)
@@ -591,19 +593,28 @@ class Checker(
             val ft = expect as? FunType
             if (ft != null && ft.params.size != e.params.size)
                 d.error("E-TYPE-MISMATCH", e.pos, "lambda 有 ${e.params.size} 个参数，期望类型要求 ${ft.params.size} 个")
+            val dtKeys = ArrayList<List<String>?>()
             e.params.forEachIndexed { i, pname ->
                 // P4（v2.1）：lambda 解构参数 `(a, b)`——分量按期望类型（元组 items/结构体字段）绑定，无期望则占位
                 if (pname.startsWith("(") && pname.endsWith(")")) {
                     val parts = pname.substring(1, pname.length - 1).split(",")
                     val pt = ft?.params?.getOrNull(i)?.let { syms.expand(it) }
+                    // 留痕解绑键：结构体 → 字段名序列；元组/未知 → null（codegen 走下标）
+                    val keys: List<String>? = when (pt) {
+                        is TupleType -> null
+                        is NamedType -> syms.structs[pt.name]?.fields?.map { it.name }
+                        else -> null
+                    }
+                    dtKeys += keys
                     val comps: List<Type> = when (pt) {
                         is TupleType -> pt.items
                         is NamedType -> syms.structs[pt.name]?.fields?.map { syms.expand(it.type) } ?: emptyList()
                         else -> emptyList()
                     }
                     parts.forEachIndexed { j, nm -> nf.declareVar(nm, comps.getOrNull(j) ?: syntheticT("参数分量")) }
-                } else nf.declareVar(pname, ft?.params?.getOrNull(i) ?: syntheticT("参数"))
+                } else { dtKeys += null; nf.declareVar(pname, ft?.params?.getOrNull(i) ?: syntheticT("参数")) }
             }
+            if (dtKeys.any { it != null }) lambdaDestructKeys[e] = dtKeys
             val bt = run {
                 lambdaRetTypes.add(ft?.ret ?: syntheticT("lambda返回"))
                 val r = checkExpr(e.body, nf, if (uncheckedDepth > 0) false else pure)

@@ -136,8 +136,11 @@ class DiagCoverageTest {
 
     // ---------- 对象与方法（决策 68/69/70） ----------
 
+    @Test fun `H-AMBIGUOUS-CTOR 跨枚举同名构造子提示`() =
+        assertTrue(has("enum A { T }\n" + "enum B { T }", "H-AMBIGUOUS-CTOR"))
+
     @Test fun `H-EMPTY-DECL 无成员类型省括号提示`() =
-    assertTrue(has("struct P()\n" + "fun main() {}", "H-EMPTY-DECL"))
+        assertTrue(has("struct P()\n" + "fun main() {}", "H-EMPTY-DECL"))
 
     @Test fun `H-FIELD-SHADOW`() =
         assertTrue(has(

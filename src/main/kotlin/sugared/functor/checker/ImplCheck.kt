@@ -92,7 +92,15 @@ internal fun Checker.resolveDict(name: String, argT: Type, visible: Set<String>?
     val cands = raw.filter { doesSelfMatch(it.self, argT) }
     return when {
         cands.isEmpty() -> { d.error("E-NO-INSTANCE", "", "方法 $name 对类型 ${argT.render()} 无 impl 实例"); null }
-        cands.size > 1 -> { d.error("E-AMBIGUOUS-INSTANCE", "", "方法 $name 对类型 ${argT.render()} 有 ${cands.size} 个实例"); null }
+        // v2.1（限制解开）：多实例时仅当存在父子类型类关系才覆盖——最具体（不被更具体者覆盖）者胜出；
+        // 无关实例（无子类型类关系）仍报 E-AMBIGUOUS-INSTANCE。
+        cands.size > 1 -> {
+            val related = cands.any { a -> cands.any { b -> a !== b && (isSubTrait(a.trait, b.trait) || isSubTrait(b.trait, a.trait)) } }
+            val winner = if (related) cands.firstOrNull { a -> cands.none { b -> a !== b && isSubTrait(b.trait, a.trait) } } else null
+            if (winner != null)
+                DictResolution(winner, dictNameOf(winner.trait, winner.self, winner.modulePath))
+            else { d.error("E-AMBIGUOUS-INSTANCE", "", "方法 $name 对类型 ${argT.render()} 有 ${cands.size} 个实例"); null }
+        }
         else -> {
             // 字典名以 **impl 声明的自类型** 为准（codegen 按它生成 const），
             // 实参类型可能因数值提升而不同（如 Nat→Int），不能拿它拼名字。
@@ -115,9 +123,33 @@ internal fun Checker.resolveConstraint(trait: String, t: Type, visible: Set<Stri
     val cands = entries.filter { doesSelfMatch(it.self, t) }
     return when {
         cands.isEmpty() -> { d.error("E-NO-INSTANCE", "", "约束 $trait 对类型 ${t.render()} 无 impl 实例"); null }
-        cands.size > 1 -> { d.error("E-AMBIGUOUS-INSTANCE", "", "约束 $trait 对类型 ${t.render()} 有 ${cands.size} 个实例"); null }
+        // v2.1（限制解开）：仅父子类型类关系时子类实例优先；无关多实例仍报歧义
+        cands.size > 1 -> {
+            val related = cands.any { a -> cands.any { b -> a !== b && (isSubTrait(a.traitName, b.traitName) || isSubTrait(b.traitName, a.traitName)) } }
+            val winner = if (related) cands.firstOrNull { a -> cands.none { b -> a !== b && isSubTrait(b.traitName, a.traitName) } } else null
+            if (winner != null) dictNameOf(winner.traitName, winner.self, winner.modulePath)
+            else { d.error("E-AMBIGUOUS-INSTANCE", "", "约束 $trait 对类型 ${t.render()} 有 ${cands.size} 个实例"); null }
+        }
         else -> dictNameOf(cands.first().traitName, cands.first().self, cands.first().modulePath)
     }
+}
+
+/** v2.1（限制解开）：子类型类覆盖判定——sub 是否是 sup 的（传递）子类型类（sup ∈ sub 的父链）。
+ *  父子类型类对同一类型均实现时，子类实例优先（Rust 子特质语义）。 */
+internal fun Checker.isSubTrait(sub: String, sup: String): Boolean {
+    if (sub == sup) return false
+    val seen = HashSet<String>()
+    var frontier = syms.clsParents[sub].orEmpty()
+    while (frontier.isNotEmpty()) {
+        val next = ArrayList<Type>()
+        for (p in frontier) {
+            val pn = (p as? NamedType)?.name ?: continue
+            if (pn == sup) return true
+            if (seen.add(pn)) next += syms.clsParents[pn].orEmpty()
+        }
+        frontier = next
+    }
+    return false
 }
 
 internal fun Checker.signatureMatch(sig: FunDecl, impl: FunDecl, sub: Map<String, Type>): Boolean {

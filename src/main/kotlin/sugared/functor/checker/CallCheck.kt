@@ -91,6 +91,8 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
         else -> c.args
     }
     val effTypes: List<Type> = when {
+        // v2.1（限制解开）：free 形态首实参即接收者（self 隐式填 __self），自 fn.params 配对中剔除；
+        // field 形态接收者单独成 __self，显式实参按 fn.params（不含 self）配对。
         isFreeFormMethod -> if (hktKindPos >= 0) argTypes else argTypes.drop(1)
         fieldCallee != null && hktKindPos >= 0 && selfT != null -> argTypes.toMutableList().apply { add(hktKindPos, selfT) }
         else -> argTypes
@@ -238,6 +240,8 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
     val sugar = methodSugarArgs[c]
     if (sugar != null)
         return checkFnCall(fn, name, c, f, pure, sugar, listOfNotNull(selfT) + argTypes, isMethodPath)
+    // v2.1（限制解开）：非糖方法路径（类型类方法）——free 形态首实参即接收者，已在 effTypes 剔除；
+    // field 形态接收者由 codegen 填 __self，显式实参（effArgs/effTypes）按 fn.params（不含 self）直接配对。
     return checkFnCall(fn, name, c, f, pure, effArgs, effTypes, isMethodPath)
 }
 

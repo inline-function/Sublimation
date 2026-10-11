@@ -28,6 +28,8 @@ class JsCodeGen {
     private var indent = 0
     /** 已知构造子名（含 prelude），用于区分模式里的裸名是构造子还是绑定变量 */
     private val ctorNames = LinkedHashSet<String>()
+    /** v2.1：裸构造子名 → 所在枚举数量（>1 时裸名工厂不生成，强制 E::T 消歧） */
+    private val ctorOwnerCounts = HashMap<String, Int>()
     /** when 主题临时名计数，避免嵌套 when 的 __s 变量冲突 */
     private var subjCounter = 0
     /** 零参构造子名：值引用时生成工厂调用 Name() */
@@ -52,6 +54,7 @@ class JsCodeGen {
     /** P0（M8）：全局引用的 JS 名留痕（键 = 引用表达式节点；限定方法调用 = MODULE_METHOD_MARKER） */
     private var moduleHits: Map<Expr, String> = emptyMap()
     private var funRefTargets: Map<Expr, String> = emptyMap()
+    private var lambdaDestructKeys: Map<Expr, List<List<String>?>> = emptyMap()
     /** P0（M8）：当前生成单元的模块 absPath（根 = ""） */
     private var currentPrefix = ""
     /** O2（决策 68）：当前正在生成的字典方法所属结构体的字段名（裸用→ __self.字段） */
@@ -100,7 +103,8 @@ class JsCodeGen {
         receiveSmartHits: Map<CallExpr, Boolean> = emptyMap(),
         hktKindPosHits: Map<CallExpr, Int> = emptyMap(),
         funRefTargets: Map<Expr, String> = emptyMap(),
-    ): String = generateUnits(listOf("" to file), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, receiveSmartHits, hktKindPosHits, funRefTargets)
+        lambdaDestructKeys: Map<Expr, List<List<String>?>> = emptyMap(),
+    ): String = generateUnits(listOf("" to file), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, receiveSmartHits, hktKindPosHits, funRefTargets, lambdaDestructKeys)
 
     /** M8：全部模块合成一个 JS（顶层名字带模块前缀，根无前缀） */
     fun generateUnits(
@@ -116,6 +120,7 @@ class JsCodeGen {
         receiveSmartHits: Map<CallExpr, Boolean> = emptyMap(),
         hktKindPosHits: Map<CallExpr, Int> = emptyMap(),
         funRefTargets: Map<Expr, String> = emptyMap(),
+        lambdaDestructKeys: Map<Expr, List<List<String>?>> = emptyMap(),
     ): String {
         dicts = dictHits
         this.moduleHits = moduleHits
@@ -128,6 +133,7 @@ class JsCodeGen {
         this.receiveSmartHits = receiveSmartHits
         this.hktKindPosHits = hktKindPosHits
         this.funRefTargets = funRefTargets
+        this.lambdaDestructKeys = lambdaDestructKeys
         currentPrefix = ""
         structFields.clear()
         overloadsByUnit.clear()
@@ -145,6 +151,7 @@ class JsCodeGen {
         for ((p, fa) in units) overloadsByUnit[p] = collectOverloads(fa)
         // 收集构造子名：prelude + 全部模块 enum；tuple 形参位置键带模块前缀
         ctorNames.clear()
+        ctorOwnerCounts.clear()
         ctorNames += listOf("true", "false", "null", "None", "Some")
         nullaryCtors.clear()
         nullaryCtors += listOf("None")   // prelude 零参构造子（Some 有参不含；true/false/null 走字面量）
@@ -159,7 +166,8 @@ class JsCodeGen {
                         if ((c.name == "Nil" && c.fields.isEmpty()) || (c.name == "Cons" && c.fields.size == 2))
                             listCtorSet += c.name
                     }
-                    ed.ctors.forEach { ctorNames += it.name; if (it.fields.isEmpty()) nullaryCtors += it.name }
+                    ed.ctors.forEach { ctorNames += it.name; if (it.fields.isEmpty()) nullaryCtors += it.name
+                        ctorOwnerCounts.merge(it.name, 1, Int::plus) }
                 }
                 is FunDecl -> ed.params.forEachIndexed { i, pp ->
                     if ("tuple" in pp.annotations) tupleParamPos[moduleJsName(p, ed.name)] = i
@@ -325,11 +333,16 @@ class JsCodeGen {
                 // v2.0 基本库（内建 JS 实现）：数组化 List 的构造子不生成 tag 对象工厂——
                 // List 在 JS 层是数组（Nil→[]、Cons(h,t)→[h,...t]），工厂由调用点/模式特判承接
                 if (c.name in listCtorSet) continue
-                if (c.fields.isEmpty()) line("const ${moduleJsName(currentPrefix, c.name)} = () => ({ tag: ${q(c.name)} });")
-                else {
+                // v2.1（限制解开）：工厂名带枚举前缀 `E__T`（E::T 消歧），裸名唯一时才生成裸名别名
+                val enc = moduleJsName(currentPrefix, decl.name + "__" + c.name)
+                if (c.fields.isEmpty()) {
+                    line("function $enc() { return { tag: ${q(c.name)} }; }")
+                    if (ctorOwnerCounts.getOrDefault(c.name, 0) <= 1) line("const ${moduleJsName(currentPrefix, c.name)} = $enc;")
+                } else {
                     val ps = c.fields.indices.joinToString(", ") { "a$it" }
                     val obj = c.fields.indices.joinToString(", ") { "$it: a$it" }
-                    line("const ${moduleJsName(currentPrefix, c.name)} = ($ps) => ({ tag: ${q(c.name)}, $obj });")
+                    line("function $enc($ps) { return { tag: ${q(c.name)}, $obj }; }")
+                    if (ctorOwnerCounts.getOrDefault(c.name, 0) <= 1) line("const ${moduleJsName(currentPrefix, c.name)} = $enc;")
                 }
             }
             is ClassDecl -> decl.members.forEach { if (it.body != null) genFun(it) }
@@ -545,13 +558,14 @@ class JsCodeGen {
         is StrLit -> q(e.value)
         is NameRef -> when {
             e.name == "true" || e.name == "false" || e.name == "null" -> e.name   // JS 字面量
-            // v2.1：E::A 复合构造子名 → 裸名（工厂/tag 均裸名）
+            // v2.1：E::A 复合构造子名 → 枚举前缀工厂名 E__T（裸名唯一时才用裸名别名）
             e.name.contains("::") -> {
+                val full = e.name.replace("::", "__")
                 val bn = e.name.substringAfterLast("::")
                 when {
                     bn in nullaryCtors && bn in listCtorSet -> "[]"
-                    bn in nullaryCtors -> "${mangle(bn)}()"
-                    else -> mangle(bn)
+                    bn in nullaryCtors -> "${mangle(full)}()"
+                    else -> mangle(full)
                 }
             }
             // v2.0 基本库：数组化 List 的零参构造子值引用 → 空数组（工厂已跳过生成，不能调 stdlib__Nil()）
@@ -593,7 +607,14 @@ class JsCodeGen {
             // P4（v2.1）：`(a, b)` 解构参数——合成形参 + 块体开头 const 拆解（分量按下标取）
             val jsParams = e.params.mapIndexed { i, x -> if (x.startsWith("(")) "__dt$i" else mangle(x) }.joinToString(", ")
             val dtBind = e.params.withIndex().filter { (_, x) -> x.startsWith("(") }.joinToString("") { (i, x) ->
-                x.substring(1, x.length - 1).split(",").mapIndexed { j, nm -> "const ${mangle(nm)} = __dt$i[$j]; " }.joinToString("")
+                val keys = lambdaDestructKeys[e]?.getOrNull(i)
+                x.substring(1, x.length - 1).split(",").mapIndexed { j, nm ->
+                    val acc = if (keys != null && j < keys.size) "__dt$i.${keys[j]}" else null
+                    // v2.1（限制解开）：结构体值是命名键对象、元组是数组——静态已知键用字段键（.x），
+                    // 键未知（无注解 lambda）双兜底：对象有字段键走 .x，否则回落下标 [j]。
+                    if (acc == null) "const ${mangle(nm)} = __dt$i[$j]; "
+                    else "const ${mangle(nm)} = $acc !== undefined ? $acc : __dt$i[$j]; "
+                }.joinToString("")
             }
             if (dtBind.isEmpty()) {
                 if (e.body is BlockExpr) "($jsParams) => ${lambdaBodyStr(e.body)}"
@@ -913,8 +934,8 @@ class JsCodeGen {
                 else "[" + dropped.joinToString(", ") { expr(it) } + "]"   // 防御：多实参时打包成变长元组
             val argsJs = listOf(fixed, packed).filter { it.isNotEmpty() }.joinToString(", ")
             val calleeJs = when (callee) {
-                is NameRef -> if (callee.name.contains("::")) mangle(callee.name.substringAfterLast("::"))
-                    else moduleHits[callee] ?: mangle(callee.name)   // v2.1：E::A 复合名绕过留痕直取裸名
+                is NameRef -> if (callee.name.contains("::")) mangle(callee.name.replace("::", "__"))
+                    else moduleHits[callee] ?: mangle(callee.name)   // v2.1：E::A 复合名绕过留痕按枚举前缀
                 is FieldExpr -> moduleHits[callee] ?: "${expr(callee.target)}.${mangle(callee.name)}"
                 is InstExpr -> expr(callee.target)
                 else -> expr(callee)
