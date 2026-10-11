@@ -136,6 +136,9 @@ class DiagCoverageTest {
 
     // ---------- 对象与方法（决策 68/69/70） ----------
 
+    @Test fun `H-EMPTY-DECL 无成员类型省括号提示`() =
+    assertTrue(has("struct P()\n" + "fun main() {}", "H-EMPTY-DECL"))
+
     @Test fun `H-FIELD-SHADOW`() =
         assertTrue(has(
             "struct P(x: Nat)\nclass M { fun f(x: Nat): Nat }\nimpl M for P { fun f(x: Nat): Nat { return x } }",

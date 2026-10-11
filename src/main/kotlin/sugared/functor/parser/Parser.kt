@@ -505,6 +505,8 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                 break
             }
         }
+        // P3（v2.1）：无成员类型类可省略花括号 `class C`，等价 `class C {}`
+        if (!peek(Kind.LBRACE)) return ClassDecl(name, theory, emptyList(), parents)
         at(Kind.LBRACE)
         val members = ArrayList<FunDecl>()
         while (!peek(Kind.RBRACE)) {
@@ -524,6 +526,8 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         // O3（决策 69）：struct 体是圆括号参数列表；大括号明确拒绝并给出改写指引
         if (peek(Kind.LBRACE))
             throw ParseFailure(fileName, cur(), "struct 体是参数列表，请改写为 $name(字段: 类型 = 默认值)")
+        // P3（v2.1）：无字段 struct 可省略参数括号 `struct P`，等价 `struct P()`
+        if (!peek(Kind.LPAREN)) return StructDecl(name, theory, emptyList())
         val fields = parseParams()
         return StructDecl(name, theory, fields)
     }
@@ -532,6 +536,8 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         at(Kind.ENUM)
         val name = nameToken()
         val theory = if (peek(Kind.LBRACKET)) parseTheory() else emptyList()
+        // P3（v2.1）：无构造子枚举可省略花括号 `enum E`，等价 `enum E {}`
+        if (!peek(Kind.LBRACE)) return EnumDecl(name, theory, emptyList())
         at(Kind.LBRACE)
         val ctors = ArrayList<Ctor>()
         while (!peek(Kind.RBRACE)) {

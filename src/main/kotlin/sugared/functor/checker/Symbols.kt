@@ -94,6 +94,9 @@ internal fun Checker.registerUntouchFacts() {
 internal fun Checker.registerEnum(decl: EnumDecl) {
     if (syms.enums.putIfAbsent(decl.name, decl) != null && decl.name !in setOf("Bool", "Null", "Optional"))
         d.error("E-DUP-DECL", decl.pos, "枚举 ${decl.name} 重复声明")
+    // P3（v2.1）：无构造子枚举可省略花括号（`enum E`），发提示
+    if (decl.ctors.isEmpty())
+        d.hint("H-EMPTY-DECL", decl.pos, "枚举 ${decl.name} 无构造子，可省略花括号写成 `enum ${decl.name}`")
     syms.typeParamNames[decl.name] = tpNamesOf(decl)
     for (c in decl.ctors) {
         val builtinCtor = c.name in setOf("true", "false", "null", "None", "Some")
@@ -110,19 +113,25 @@ internal fun Checker.collectDecl(decl: Decl) {
         is StructDecl -> {
             if (syms.structs.putIfAbsent(decl.name, decl) != null)
                 d.error("E-DUP-DECL", decl.pos, "结构体 ${decl.name} 重复声明")
+            // P3（v2.1）：无字段结构体可省略参数括号（`struct P`），发提示
+            if (decl.fields.isEmpty())
+                d.hint("H-EMPTY-DECL", decl.pos, "结构体 ${decl.name} 无字段，可省略参数括号写成 `struct ${decl.name}`")
             syms.typeParamNames[decl.name] = tpNamesOf(decl)
-        }
-        is EnumDecl -> {
-            if (decl.name !in setOf("Bool", "Null", "Optional")) registerEnum(decl)
         }
         is ClassDecl -> {
             if (syms.classes.putIfAbsent(decl.name, decl) != null)
                 d.error("E-DUP-DECL", decl.pos, "类型类 ${decl.name} 重复声明")
+            // P3（v2.1）：无成员类型类可省略花括号（`class C`），发提示
+            if (decl.members.isEmpty())
+                d.hint("H-EMPTY-DECL", decl.pos, "类型类 ${decl.name} 无成员，可省略花括号写成 `class ${decl.name}`")
             syms.typeParamNames[decl.name] = tpNamesOf(decl)
             // 决策 60（T5）：登记候选方法名，使"只有 class、没有 impl"的调用报 E-NO-INSTANCE
             decl.members.forEach { syms.traitMethods.add(it.name) }
             // v2.1 子类型类：登记父链（impl 强制/约束蕴含/覆盖优先级用）
             if (decl.parents.isNotEmpty()) syms.clsParents[decl.name] = decl.parents
+        }
+        is EnumDecl -> {
+            if (decl.name !in setOf("Bool", "Null", "Optional")) registerEnum(decl)
         }
         is FunDecl -> {
             // `_` 是匿名占位名，不入符号表（指导§54：标注为 _ 的标识符无法被后续引用）
