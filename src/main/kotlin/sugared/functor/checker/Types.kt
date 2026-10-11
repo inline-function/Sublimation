@@ -1,4 +1,4 @@
-package sugared.functor.checker
+﻿package sugared.functor.checker
 
 import sugared.functor.ast.*
 
@@ -25,41 +25,41 @@ fun Type.isNominal(): Boolean =
 fun unsealedT(): Type = namedT("(未密封)")
 fun Type.isUnsealed(): Boolean = this is NamedType && name == "(未密封)" && args.isEmpty()
 
-/** 内建非纯函数集（@unpure 语义的唯一来源，见《草案思路》27） */
-fun builtinUnpure(name: String): FunDecl? = when (name) {
+/** 内建非纯函数集（@impure 语义的唯一来源，见《草案思路》27） */
+fun builtinimpure(name: String): FunDecl? = when (name) {
     "print" -> FunDecl(
-        name = "print", annotations = listOf("unpure"), theory = emptyList(),
+        name = "print", annotations = listOf("impure"), theory = emptyList(),
         params = listOf(Param("v", syntheticT("任意"))),
         preps = emptyList(), retType = namedT("Null"), posts = emptyList(), body = null,
     )
-    // ---- P3 IO（v1.0 计划 §5）：全部 @unpure；v2.0 异步（异步 §6 阶段 6）：readFile/readLine/writeFile 也标 @async——挂起操作须在 async 上下文调用（main 天然 async，Task 体天然 async）----
+    // ---- P3 IO（v1.0 计划 §5）：全部 @impure；v2.0 异步（异步 §6 阶段 6）：readFile/readLine/writeFile 也标 @async——挂起操作须在 async 上下文调用（main 天然 async，Task 体天然 async）----
     // P5（决策 81）：IO 失败可携带错误信息——readFile/writeFile/readLine 返回 Result（Ok/Err，stdlib/result.subl）
-    "readLine" -> FunDecl("readLine", listOf("unpure", "async"), emptyList(), emptyList(),
+    "readLine" -> FunDecl("readLine", listOf("impure", "async"), emptyList(), emptyList(),
         emptyList(), namedT("Result", listOf(namedT("Str"), namedT("Str"))), emptyList(), null)
-    "readFile" -> FunDecl("readFile", listOf("unpure", "async"), emptyList(),
+    "readFile" -> FunDecl("readFile", listOf("impure", "async"), emptyList(),
         listOf(Param("p", namedT("Str"))), emptyList(),
         namedT("Result", listOf(namedT("Str"), namedT("Str"))), emptyList(), null)
-    "writeFile" -> FunDecl("writeFile", listOf("unpure", "async"), emptyList(),
+    "writeFile" -> FunDecl("writeFile", listOf("impure", "async"), emptyList(),
         listOf(Param("p", namedT("Str")), Param("s", namedT("Str"))), emptyList(),
         namedT("Result", listOf(namedT("Null"), namedT("Str"))), emptyList(), null)
-    "getArgs" -> FunDecl("getArgs", listOf("unpure"), emptyList(), emptyList(),
+    "getArgs" -> FunDecl("getArgs", listOf("impure"), emptyList(), emptyList(),
         emptyList(), namedT("List", listOf(namedT("Str"))), emptyList(), null)
-    // v2.0 异步（异步 §6 阶段 6）：sleep(ms) 显式延时——@async @unpure，codegen 用 JS Promise+setTimeout
-    "sleep" -> FunDecl("sleep", listOf("unpure", "async"), emptyList(),
+    // v2.0 异步（异步 §6 阶段 6）：sleep(ms) 显式延时——@async @impure，codegen 用 JS Promise+setTimeout
+    "sleep" -> FunDecl("sleep", listOf("impure", "async"), emptyList(),
         listOf(Param("ms", namedT("Nat"))), emptyList(),
         namedT("Null"), emptyList(), null)
     // ---- v2.0 标准库补全（本会话加）：IO 扩展 / Time / Random——JS 原生映射，codegen 特判 ----
-    "appendFile" -> FunDecl("appendFile", listOf("unpure", "async"), emptyList(),
+    "appendFile" -> FunDecl("appendFile", listOf("impure", "async"), emptyList(),
         listOf(Param("p", namedT("Str")), Param("s", namedT("Str"))), emptyList(),
         namedT("Result", listOf(namedT("Null"), namedT("Str"))), emptyList(), null)
-    "fileExists" -> FunDecl("fileExists", listOf("unpure"), emptyList(),
+    "fileExists" -> FunDecl("fileExists", listOf("impure"), emptyList(),
         listOf(Param("p", namedT("Str"))), emptyList(), namedT("Bool"), emptyList(), null)
-    "readDir" -> FunDecl("readDir", listOf("unpure", "async"), emptyList(),
+    "readDir" -> FunDecl("readDir", listOf("impure", "async"), emptyList(),
         listOf(Param("p", namedT("Str"))), emptyList(),
         namedT("Result", listOf(namedT("List", listOf(namedT("Str"))), namedT("Str"))), emptyList(), null)
-    "timeNow" -> FunDecl("timeNow", listOf("unpure"), emptyList(), emptyList(),
+    "timeNow" -> FunDecl("timeNow", listOf("impure"), emptyList(), emptyList(),
         emptyList(), namedT("Nat"), emptyList(), null)
-    "rand" -> FunDecl("rand", listOf("unpure"), emptyList(), emptyList(),
+    "rand" -> FunDecl("rand", listOf("impure"), emptyList(), emptyList(),
         emptyList(), namedT("Rat"), emptyList(), null)
     else -> null
 }
@@ -203,10 +203,10 @@ fun builtinPure(name: String): FunDecl? = when (name) {
  * @root 白名单（v2.0 基本库机制）：允许用户以 `@root fun 名字(...)` 声明且**不写函数体**的内建函数名集合。
  * 语义：@root 声明 = 告知编译器「该签名对应编译期内建 JS 实现」，codegen 按名字特判翻译（Types.kt 内建表 + JsCodeGen.call()）。
  * 守卫：仅白名单内名字允许 @root（否则 E-ROOT-NOT-ALLOWED）；有 @root 才允许无体（否则 E-FUN-NO-BODY）。
- * 名字全集 = builtinUnpure + builtinPure 的键（与 codegen 特判一一对应）。
+ * 名字全集 = builtinimpure + builtinPure 的键（与 codegen 特判一一对应）。
  */
 val ROOT_WHITELIST: Set<String> = setOf(
-    // builtinUnpure（IO/副作用入口）
+    // builtinimpure（IO/副作用入口）
     "print", "readLine", "readFile", "writeFile", "getArgs", "sleep",
     "appendFile", "fileExists", "readDir", "timeNow", "rand",
     // builtinPure：元组 / 字符串（P1 + v2.0 补全）/ 浮点（P10）/ Math（v2.0 补全）/ 数组（P2）/ JSON（v2.0）
@@ -286,7 +286,7 @@ class Symbols {
     /** v2.1 子类型类：类型类名 → 父类型类引用列表（`class Sub : Base` 的 parents；约束蕴含/子类覆盖用） */
     val clsParents = HashMap<String, List<Type>>()
 
-    fun findFun(name: String): FunDecl? = builtinUnpure(name) ?: builtinPure(name) ?: funs[name]
+    fun findFun(name: String): FunDecl? = builtinimpure(name) ?: builtinPure(name) ?: funs[name]
 
     /** 别名展开（有限深度防环；v1 无递归别名；函数/元组类型不参与，T1）。
      *  P0：跨模块限定类型折叠为同简单名的 NamedType（校验由 checkTypeResolvable 负责）。 */

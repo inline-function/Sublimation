@@ -137,7 +137,7 @@ class ModuleE2ETest {
         val std = File("stdlib/list.subl").readText()
         assertEquals("3", runTree(mapOf(
             "stdlib/list.subl" to std,
-            "main.subl" to "@unpure fun main() {\nprint(stdlib.listLength(stdlib.range(0, 3)))\n}",
+            "main.subl" to "@impure fun main() {\nprint(stdlib.listLength(stdlib.range(0, 3)))\n}",
         )))
     }
 
@@ -145,7 +145,7 @@ class ModuleE2ETest {
     fun `P2 map 加一后长度 2 求和 5`() {
         assumeTrue(nodeAvailable())
         val std = File("stdlib/list.subl").readText()
-        val main = "@unpure fun main() {\n" +
+        val main = "@impure fun main() {\n" +
             "var xs = stdlib.Cons(1, stdlib.Cons(2, stdlib.Nil()))\n" +
             "print(xs.map({ x -> x + 1 }).listLength())\n" +
             "print(xs.map({ x -> x + 1 }).fold(0) { x, acc -> acc + x })\n" +
@@ -157,7 +157,7 @@ class ModuleE2ETest {
     fun `P2 打印 1 到 10 的平方 - 平方和为 385`() {
         assumeTrue(nodeAvailable())
         val std = File("stdlib/list.subl").readText()
-        val main = "@unpure fun main() {\n" +
+        val main = "@impure fun main() {\n" +
             "var xs = stdlib.range(1, 11)\n" +
             "print(xs.map({ x -> x * x }).fold(0) { x, acc -> acc + x })\n" +
             "}"
@@ -170,7 +170,7 @@ class ModuleE2ETest {
         val std = File("stdlib/list.subl").readText()
         assertEquals("3", runTree(mapOf(
             "stdlib/list.subl" to std,
-            "a/b/c/main.subl" to "@unpure fun main() {\nprint(stdlib.listLength(stdlib.range(0, 3)))\n}",
+            "a/b/c/main.subl" to "@impure fun main() {\nprint(stdlib.listLength(stdlib.range(0, 3)))\n}",
         )))
     }
 
@@ -180,7 +180,7 @@ class ModuleE2ETest {
     fun `v2 标准库 - strSplit 返回数组化 List`() {
         assumeTrue(nodeAvailable())
         val std = File("stdlib/list.subl").readText()
-        val main = "@unpure fun main() {\n" +
+        val main = "@impure fun main() {\n" +
             "var parts = strSplit(\"a,b,c\", \",\")\n" +
             "print(parts.size())\n" +
             "print(parts.joinToString(\"-\"))\n" +
@@ -192,7 +192,7 @@ class ModuleE2ETest {
     fun `v2 标准库 - List 补全 any 找不到返回 false`() {
         assumeTrue(nodeAvailable())
         val std = File("stdlib/list.subl").readText()
-        val main = "@unpure fun main() {\n" +
+        val main = "@impure fun main() {\n" +
             "var xs = stdlib.range(1, 4)\n" +
             "print(xs.any({ x -> x > 5 }))\n" +
             "print(xs.all({ x -> x > 0 }))\n" +
@@ -204,7 +204,7 @@ class ModuleE2ETest {
     fun `v2 标准库 - List indexOf slice sortBy`() {
         assumeTrue(nodeAvailable())
         val std = File("stdlib/list.subl").readText()
-        val main = "@unpure fun main() {\n" +
+        val main = "@impure fun main() {\n" +
             "var xs = stdlib.range(1, 5)\n" +
             "when(xs.indexOf(2)) { Some(i) -> print(i); None -> print(\"x\") }\n" +
             "print(xs.slice(1, 3).joinToString(\",\"))\n" +
@@ -223,7 +223,7 @@ class ModuleE2ETest {
         try {
             val p1 = File(dir, "a.txt").absolutePath.replace("\\", "\\\\")
             val d = dir.absolutePath.replace("\\", "\\\\")
-            val main = "@unpure fun main() {\n" +
+            val main = "@impure fun main() {\n" +
                 "writeFile(\"$p1\", \"x\")\n" +
                 "appendFile(\"$p1\", \"y\")\n" +
                 "var r = readFile(\"$p1\")\n" +
@@ -245,7 +245,7 @@ class ModuleE2ETest {
         val std = File("stdlib/list.subl").readText()
         assertEquals("0", runTree(mapOf(
             "stdlib/list.subl" to std,
-            "main.subl" to "@unpure fun main() {\nprint(stdlib.listLength(getArgs()))\n}",
+            "main.subl" to "@impure fun main() {\nprint(stdlib.listLength(getArgs()))\n}",
         )))
     }
 
@@ -257,7 +257,7 @@ class ModuleE2ETest {
         val f = File.createTempFile("subl-p3-wf", ".txt")
         val p = f.absolutePath.replace("\\", "\\\\")
         // P5：readFile 返回 Result<Str,Str>，解构 Ok/Err 取内容
-        val main = "@unpure fun main() {\nwriteFile(\"$p\", \"hi\")\nvar r = readFile(\"$p\")\n" +
+        val main = "@impure fun main() {\nwriteFile(\"$p\", \"hi\")\nvar r = readFile(\"$p\")\n" +
             "when(r) {\n    Ok(s) -> print(s)\n    Err(e) -> print(e)\n}\n}"
         try {
             assertEquals("hi", runTree(mapOf(
@@ -271,7 +271,7 @@ class ModuleE2ETest {
         val std = File("stdlib/list.subl").readText()
         val res = File("stdlib/result.subl").readText()
         // P5：readLine 返回 Result<Str,Str>，解构 Ok/Err 取该行
-        val main = "@unpure fun main() {\nvar r = readLine()\n" +
+        val main = "@impure fun main() {\nvar r = readLine()\n" +
             "when(r) {\n    Ok(s) -> print(s)\n    Err(e) -> print(e)\n}\n}"
         assertEquals("hello", runTreeIn(mapOf(
             "stdlib/list.subl" to std, "stdlib/result.subl" to res, "main.subl" to main), "hello\n"))
@@ -285,7 +285,7 @@ class ModuleE2ETest {
         val std = File("stdlib/list.subl").readText()
         val res = File("stdlib/result.subl").readText()
         // 读不存在的文件 → Err 分支（平台无关，只断言命中 Err 分支）
-        val main = "@unpure fun main() {\nvar r = readFile(\"C:/no/such/subl-file.txt\")\n" +
+        val main = "@impure fun main() {\nvar r = readFile(\"C:/no/such/subl-file.txt\")\n" +
             "when(r) {\n    Ok(_) -> print(\"ok\")\n    Err(e) -> print(\"err\")\n}\n}"
         assertEquals("err", runTree(mapOf(
             "stdlib/list.subl" to std, "stdlib/result.subl" to res, "main.subl" to main)))
@@ -298,7 +298,7 @@ class ModuleE2ETest {
         val res = File("stdlib/result.subl").readText()
         val f = File.createTempFile("subl-p5-rf", ".txt")
         val p = f.absolutePath.replace("\\", "\\\\")
-        val main = "@unpure fun main() {\nwriteFile(\"$p\", \"ok content\")\nvar r = readFile(\"$p\")\n" +
+        val main = "@impure fun main() {\nwriteFile(\"$p\", \"ok content\")\nvar r = readFile(\"$p\")\n" +
             "when(r) {\n    Ok(s) -> print(s)\n    Err(e) -> print(\"err \" + e)\n}\n}"
         try {
             assertEquals("ok content", runTree(mapOf(
@@ -312,7 +312,7 @@ class ModuleE2ETest {
         val std = File("stdlib/list.subl").readText()
         val res = File("stdlib/result.subl").readText()
         // mapResult 的 U 由 lambda 反推（点号方法 x.length），unwrapOr 消费——嵌套泛型调用即 §7.3 用法
-        val main = "@unpure fun main() {\nwriteFile(\"p5-mr.txt\", \"hello!\")\n" +
+        val main = "@impure fun main() {\nwriteFile(\"p5-mr.txt\", \"hello!\")\n" +
             "var r = stdlib.mapResult(readFile(\"p5-mr.txt\"), { x -> x.length })\n" +
             "print(stdlib.unwrapOr(r, 0))\n}"
         try {
@@ -331,7 +331,7 @@ class ModuleE2ETest {
         val main = "class Show[T] { fun show(): Str }\n" +
             "impl Show for Nat { fun show(): Str = toStr(self) }\n" +
             "fun showAll[T: Show](xs: List[T]): Str = xs.fold(\"\") { x, acc -> acc + x.show() }\n" +
-            "@unpure fun main() {\n" +
+            "@impure fun main() {\n" +
             "print(showAll(stdlib.Cons(1, stdlib.Cons(2, stdlib.Nil()))))\n}"
         assertEquals("12", runTree(mapOf("stdlib/list.subl" to std, "main.subl" to main)))
     }
@@ -343,7 +343,7 @@ class ModuleE2ETest {
         val main = "class Show[T] { fun show(): Str }\n" +
             "impl Show for Str { fun show(): Str = self }\n" +
             "fun printAll[T: Show](xs: List[T]): Str = xs.fold(\"\") { x, acc -> acc + x.show() }\n" +
-            "@unpure fun main() {\n" +
+            "@impure fun main() {\n" +
             "print(printAll(stdlib.Cons(\"x\", stdlib.Nil())))\n}"
         assertEquals("x", runTree(mapOf("stdlib/list.subl" to std, "main.subl" to main)))
     }
@@ -356,7 +356,7 @@ class ModuleE2ETest {
         val list = File("stdlib/list.subl").readText()
         val res = File("stdlib/result.subl").readText()
         val col = File("stdlib/collection.subl").readText()
-        val main = "@unpure fun main() {\n" +
+        val main = "@impure fun main() {\n" +
             "var xs = stdlib.Cons(1, stdlib.Cons(2, stdlib.Nil()))\n" +
             "@mut var s: Set[Nat] = stdlib.setEmpty()\n" +
             "s = s.add(3)\n" +
@@ -391,7 +391,7 @@ class ModuleE2ETest {
         val list = File("stdlib/list.subl").readText()
         val res = File("stdlib/result.subl").readText()
         val col = File("stdlib/collection.subl").readText()
-        val main = "@unpure fun main() {\n" +
+        val main = "@impure fun main() {\n" +
             "var xs = stdlib.range(1, 6)\n" +
             "var evens = stdlib.filter(xs, { x -> x % 2 == 0 })\n" +    // filter 跨 List/Optional/Result 重载——限定调用须路由到 List 版
             "var doubled = stdlib.map(evens, { x -> x * 10 })\n" +      // map 同重载
@@ -416,7 +416,7 @@ class ModuleE2ETest {
         assumeTrue(nodeAvailable())
         val std = File("stdlib/list.subl").readText()
         val col = File("stdlib/collection.subl").readText()
-        val main = "@unpure fun main() {\n" +
+        val main = "@impure fun main() {\n" +
             "var xs = stdlib.Cons(4, stdlib.Cons(1, stdlib.Cons(3, stdlib.Nil())))\n" +
             "@mut var s: Set[Nat] = stdlib.setEmpty()\n" +
             "s = s.add(1)\n" +
@@ -452,7 +452,7 @@ class ModuleE2ETest {
     fun `v2 空安全 - elvis 空替代`() {
         assumeTrue(nodeAvailable())
         val res = File("stdlib/result.subl").readText()
-        val main = "@unpure fun main() {\n" +
+        val main = "@impure fun main() {\n" +
             "var a: Optional[Nat] = Some(5)\n" +
             "var b: Optional[Nat] = None()\n" +
             "var e1 = a ?: 0\n" +
@@ -470,7 +470,7 @@ class ModuleE2ETest {
     fun `v2 空安全 - safecall 安全调用`() {
         assumeTrue(nodeAvailable())
         val res = File("stdlib/result.subl").readText()
-        val main = "@unpure fun main() {\n" +
+        val main = "@impure fun main() {\n" +
             "var s: Optional[Str] = Some(\"ab\")\n" +
             "var n: Optional[Str] = None()\n" +
             "var sl = s?.length()\n" +
@@ -488,7 +488,7 @@ class ModuleE2ETest {
     fun `v2 空安全 - cast 安全转换`() {
         assumeTrue(nodeAvailable())
         val res = File("stdlib/result.subl").readText()
-        val main = "@unpure fun main() {\n" +
+        val main = "@impure fun main() {\n" +
             "var r = 5 >: Rat\n" +
             "var w = \"x\" >: Rat\n" +
             "print(\"r=\${r.isSome()}\")\n" +
@@ -504,7 +504,7 @@ class ModuleE2ETest {
     fun `v2 空安全 - 类型测问号 T`() {
         assumeTrue(nodeAvailable())
         val main = "fun describe(x: Any): Bool = x is Rat\n" +
-            "@unpure fun main() {\n" +
+            "@impure fun main() {\n" +
             "var b1 = describe(5)\n" +
             "var b2 = describe(\"a\")\n" +
             "print(\"r=\${b1}\")\n" +
@@ -521,7 +521,7 @@ class ModuleE2ETest {
         assumeTrue(nodeAvailable())
         val res = File("stdlib/result.subl").readText()
         val main = "fun takeRat(n: Rat): Nat = 1\n" +
-            "@unpure fun main() {\n" +
+            "@impure fun main() {\n" +
             "var x = takeRat(Some(5))\n" +
             "print(\"x=\$x\")\n" +
             "}"
@@ -541,7 +541,7 @@ class ModuleE2ETest {
             "  var x = tick()\n" +
             "  return x + 1\n" +
             "}\n" +
-            "@async @unpure fun main() {\n" +
+            "@async @impure fun main() {\n" +
             "  print(\"f=\${fetch()}\")\n" +
             "}"
         assertEquals(
@@ -559,7 +559,7 @@ class ModuleE2ETest {
             "  var x = tick()\n" +
             "  return x\n" +
             "}\n" +
-            "@unpure fun main() {\n" +
+            "@impure fun main() {\n" +
             "  var y = helper()\n" +
             "  print(\"y=\$y\")\n" +
             "}"
@@ -579,7 +579,7 @@ class ModuleE2ETest {
     @Test
     fun `v2 异步 - Task 创建 start join isAlive`() {
         assumeTrue(nodeAvailable())
-        val main = "@unpure fun main() {\n" +
+        val main = "@impure fun main() {\n" +
             "var t = Task {\n" +
             "  print(\"A\")\n" +
             "  42\n" +
@@ -599,7 +599,7 @@ class ModuleE2ETest {
     @Test
     fun `v2 异步 - Task 未 start 即 join 报 E-NOT-STARTED`() {
         assumeTrue(nodeAvailable())
-        val main = "@unpure fun main() {\n" +
+        val main = "@impure fun main() {\n" +
             "  var t = Task { 42 }\n" +
             "  var j = t.join()\n" +
             "  print(\"j=\$j\")\n" +
@@ -623,7 +623,7 @@ class ModuleE2ETest {
             "  var j = t.join()\n" +
             "  return j\n" +
             "}\n" +
-            "@unpure fun main() {\n" +
+            "@impure fun main() {\n" +
             "  var y = caller()\n" +
             "  print(\"y=\$y\")\n" +
             "}"
@@ -642,7 +642,7 @@ class ModuleE2ETest {
     @Test
     fun `v2 异步 - Channel 有缓冲 send receive 智能转换解包`() {
         assumeTrue(nodeAvailable())
-        val main = "@unpure fun main() {\n" +
+        val main = "@impure fun main() {\n" +
             "  var ch = Channel<Nat>(1)\n" +
             "  ch.send(42)\n" +
             "  var x = ch.receive()\n" +   // 本地未关闭通道 → CH-5 智能转换返回 Nat 并解包
@@ -654,14 +654,14 @@ class ModuleE2ETest {
     @Test
     fun `v2 异步 - Channel 参数位 receive 返回 Optional 用 when 解包`() {
         assumeTrue(nodeAvailable())
-        val main = "@unpure @async fun consume(ch: Channel[Nat]): Null {\n" +
+        val main = "@impure @async fun consume(ch: Channel[Nat]): Null {\n" +
             "  var x = ch.receive()\n" +   // 参数位 → T?（保守，CH-5 表）
             "  when (x) {\n" +
             "    Some(v) -> print(\"val=\$v\")\n" +
             "    None -> print(\"closed\")\n" +
             "  }\n" +
             "}\n" +
-            "@unpure fun main() {\n" +
+            "@impure fun main() {\n" +
             "  var ch = Channel<Nat>(1)\n" +
             "  ch.send(7)\n" +
             "  var t = Task { consume(ch) }\n" +
@@ -674,7 +674,7 @@ class ModuleE2ETest {
     @Test
     fun `v2 异步 - Channel close 后 send 报 E-CHANNEL-CLOSED`() {
         assumeTrue(nodeAvailable())
-        val main = "@unpure fun main() {\n" +
+        val main = "@impure fun main() {\n" +
             "  var ch = Channel<Nat>(1)\n" +
             "  ch.close()\n" +
             "  ch.send(42)\n" +
@@ -697,7 +697,7 @@ class ModuleE2ETest {
             "  var ok = ch.send(1)\n" +
             "  return ok\n" +
             "}\n" +
-            "@unpure fun main() {\n" +
+            "@impure fun main() {\n" +
             "  var y = helper()\n" +
             "  print(\"y=\$y\")\n" +
             "}"
@@ -719,7 +719,7 @@ class ModuleE2ETest {
         // Point 无 @mut 字段 → 编译器自动注入 immutable<Point>，后置条件可证明
         val main = "struct Point(x: Nat, y: Nat)\n" +
             "fun f() : Null <immutable<Point>> {}\n" +
-            "@unpure fun main() { print(\"ok\") }\n"
+            "@impure fun main() { print(\"ok\") }\n"
         assertEquals("ok", runTree(mapOf("main.subl" to main)))
     }
 
@@ -728,7 +728,7 @@ class ModuleE2ETest {
         assumeTrue(nodeAvailable())
         val main = "struct Test(a: Nat, @mut b: Nat)\n" +
             "fun f() : Null <immutable<Test>> {}\n" +
-            "@unpure fun main() { print(\"ok\") }\n"
+            "@impure fun main() { print(\"ok\") }\n"
         val dir = Files.createTempDirectory("subl-immutable-neg").toFile()
         try {
             File(dir, "main.subl").writeText(main)
@@ -744,7 +744,7 @@ class ModuleE2ETest {
         assumeTrue(nodeAvailable())
         // x 非 @mut 形参 → 编译器自动注入 untouch<x>，后置条件可证明
         val main = "fun g(x: Nat) : Null <untouch<x>> {}\n" +
-            "@unpure fun main() { print(\"ok\") }\n"
+            "@impure fun main() { print(\"ok\") }\n"
         assertEquals("ok", runTree(mapOf("main.subl" to main)))
     }
 
@@ -753,13 +753,13 @@ class ModuleE2ETest {
         assumeTrue(nodeAvailable())
         // o: Any 参数，`if (o ? Point)` 分支内 o 从 Any 收窄为 Point（Kotlin 智能转换扩展）
         val main = "struct Point(x: Nat, y: Nat)\n" +
-            "@unpure fun describe(o: Any): Null {\n" +
+            "@impure fun describe(o: Any): Null {\n" +
             "  if (o is Point) {\n" +
             "    var pt: Point = o\n" +
             "    print(\"pt.x=\${pt.x}\")\n" +
             "  }\n" +
             "}\n" +
-            "@unpure fun main() {\n" +
+            "@impure fun main() {\n" +
             "  var p: Point = Point(3, 4)\n" +
             "  describe(p)\n" +
             "}\n"
@@ -772,7 +772,7 @@ class ModuleE2ETest {
     fun `v2 异步 - sleep 内建生成 await 挂起点并运行`() {
         assumeTrue(nodeAvailable())
         // main 天然 @async（决策 93）→ sleep 是挂起点，产物含 await Promise + setTimeout
-        val main = "@unpure fun main() {\n" +
+        val main = "@impure fun main() {\n" +
             "  sleep(10)\n" +
             "  print(\"done\")\n" +
             "}\n"
@@ -786,7 +786,7 @@ class ModuleE2ETest {
             "  var r = readFile(\"x.txt\")\n" +
             "  Null\n" +
             "}\n" +
-            "@unpure fun main() { sync() }\n"
+            "@impure fun main() { sync() }\n"
         val dir = Files.createTempDirectory("subl-io-async").toFile()
         try {
             File(dir, "main.subl").writeText(main)
@@ -804,13 +804,13 @@ class ModuleE2ETest {
         assumeTrue(nodeAvailable())
         // ch 是**参数**（非本地创建）→ CH-5 不适用；但 `if (!ch.isClosed())` 分支内（阶段5 openChannels）
         // receive 仍智能转换为 T（生成解包）。send 一个值让运行可验证。
-        val main = "@unpure @async fun consume(ch: Channel[Nat]): Null {\n" +
+        val main = "@impure @async fun consume(ch: Channel[Nat]): Null {\n" +
             "  if (!ch.isClosed()) {\n" +
             "    var v: Nat = ch.receive()\n" +
             "    print(\"v=\$v\")\n" +
             "  }\n" +
             "}\n" +
-            "@unpure fun main() {\n" +
+            "@impure fun main() {\n" +
             "  var ch: Channel[Nat] = Channel<Nat>(1)\n" +
             "  ch.send(42)\n" +
             "  consume(ch)\n" +
@@ -825,7 +825,7 @@ class ModuleE2ETest {
         assumeTrue(nodeAvailable())
         // Cons 构造子枚举类型参数名 T 与 zip 自用 T 撞名 → extracted 绑定 `T := (T,U)` 触发 occurs
         // check 自指误判。zip 类型参数改名 A/B（用户避开重名，编译器哲学）后 stdlib 可编译运行。
-        val src = "@unpure fun main() {\n" +
+        val src = "@impure fun main() {\n" +
             "  var xs: List[Nat] = stdlib.range(1, 4)\n" +
             "  var z = stdlib.zip(xs, xs)\n" +
             "  print(\"zip ok\")\n" +
@@ -838,7 +838,7 @@ class ModuleE2ETest {
     @Test
     fun `v2 基本库 - distinct toSet toMap 常用集合函数`() {
         assumeTrue(nodeAvailable())
-        val src = "@unpure fun main() {\n" +
+        val src = "@impure fun main() {\n" +
             "  var xs: List[Nat] = stdlib.range(1, 4)\n" +
             "  var s = stdlib.toSet(xs)\n" +
             "  var z = stdlib.zip(xs, xs)\n" +
@@ -850,6 +850,79 @@ class ModuleE2ETest {
         val list = File("stdlib/list.subl").readText()
         val coll = File("stdlib/collection.subl").readText()
         assertEquals("s=3 m=3 d=3", runTree(mapOf(
+            "main.subl" to src,
+            "stdlib/list.subl" to list,
+            "stdlib/collection.subl" to coll)))
+    }
+
+    @Test
+    fun `v30 - setOf 可变元组时 Set map forEach 用户示例链路`() {
+        assumeTrue(nodeAvailable())
+        val src = "fun grade(score: Nat): Str =\n" +
+            "    when {\n" +
+            "        score in (90..100) -> \"A\"\n" +
+            "        score in (60..79) -> \"C\"\n" +
+            "        else -> \"D\"\n" +
+            "    }\n" +
+            "@impure fun main() {\n" +
+            "  var s = stdlib.setOf(54, 75, 100)\n" +
+            "  stdlib.forEach(stdlib.map(s) { grade(_) }) { x => print(x) }\n" +
+            "}\n"
+        val list = File("stdlib/list.subl").readText()
+        val coll = File("stdlib/collection.subl").readText()
+        assertEquals("D\nC\nA", runTree(mapOf(
+            "main.subl" to src,
+            "stdlib/list.subl" to list,
+            "stdlib/collection.subl" to coll)))
+    }
+
+    @Test
+    fun `v30b - 裸名 setOf map forEach 方法糖链路`() {
+        assumeTrue(nodeAvailable())
+        val list = File("stdlib/list.subl").readText()
+        val coll = File("stdlib/collection.subl").readText()
+        val src = "@impure fun main() {\n" +
+            "  var s = setOf(1, 2, 3)\n" +
+            "  s.forEach { x => print(x) }\n" +
+            "}\n"
+        assertEquals("1\n2\n3", runTree(mapOf(
+            "main.subl" to src,
+            "stdlib/list.subl" to list,
+            "stdlib/collection.subl" to coll)))
+    }
+
+    @Test
+    fun `v30c - 用户完整示例 Student Grade 约束 grade setOf map forEach 全链路`() {
+        assumeTrue(nodeAvailable())
+        val src = "struct Student(name: Str, score: Nat,)\n" +
+            "enum Grade { A, B, C, D, }\n" +
+            "class Gradable {\n" +
+            "    fun grade() : Grade\n" +
+            "}\n" +
+            "impl Gradable for Student {\n" +
+            "    fun grade<score <= 100> : Grade =\n" +
+            "        when {\n" +
+            "            score in (90..100) -> Grade::A\n" +
+            "            score in (80..89) -> Grade::B\n" +
+            "            score in (60..79) -> Grade::C\n" +
+            "            else -> Grade::D\n" +
+            "        }\n" +
+            "}\n" +
+            "@impure\n" +
+            "fun main() {\n" +
+            "    var set = setOf(\n" +
+            "        Student(\"孙笑川\", 54),\n" +
+            "        Student(\"丰川祥子\", 75),\n" +
+            "        Student(\"37\", 100),\n" +
+            "        Student(\"函子酱\", 13 + 78),\n" +
+            "    )\n" +
+            "    set\n" +
+            "        .map { (_.name, _.score, _.grade()) }\n" +
+            "        .forEach { (name, score, grade) => print(\"\$name:\$score:\$grade\") }\n" +
+            "}\n"
+        val list = File("stdlib/list.subl").readText()
+        val coll = File("stdlib/collection.subl").readText()
+        assertEquals("孙笑川:54:D\n丰川祥子:75:C\n37:100:A\n函子酱:91:A", runTree(mapOf(
             "main.subl" to src,
             "stdlib/list.subl" to list,
             "stdlib/collection.subl" to coll)))

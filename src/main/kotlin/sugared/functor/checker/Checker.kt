@@ -24,7 +24,7 @@ class Checker(
     internal val d = DiagBag()
     internal val syms = Symbols()
     internal val prover = Prover(maxRounds = 3, maxDepth = maxSatDepth)
-    /** 全局事实（跨帧可见）：当前为 pure<name>（决策 34：未标 @unpure 的函数自动纯） */
+    /** 全局事实（跨帧可见）：当前为 pure<name>（决策 34：未标 @impure 的函数自动纯） */
     internal val globalFacts = ArrayList<Prop>()
     /** 覆盖律展开的临时变量计数（每次 enumCoverageDisj 调用前重置） */
     internal var covCounter = 0
@@ -224,7 +224,7 @@ class Checker(
     }
 
     internal fun checkFun(fn: FunDecl, selfT: Type? = null) {
-        val pure = "unpure" !in fn.annotations
+        val pure = "impure" !in fn.annotations
         val f = Frame(null)
         val tps = tpNamesOf(fn)
         // P9（决策 44）：设置递归停机上下文（函数名/形参/解构血缘按函数隔离）
@@ -463,16 +463,16 @@ class Checker(
 
     internal fun isPureValue(e: Expr): Boolean = when (e) {
         is IntLit, is StrLit, is NameRef -> true
-        is BinExpr -> e.op in setOf("+", "-", "*", "/", "=", "==", "!=", "<", ">", "<=", ">=", "&", "|", "∧", "∨") &&
+        is BinExpr -> e.op in setOf("+", "-", "*", "/", "=", "==", "!=", "<", ">", "<=", "in", "..", ">=", "&", "|", "∧", "∨") &&
             isPureValue(e.left) && isPureValue(e.right)
         is UniExpr -> isPureValue(e.operand)
         // P4（决策 80）：纯函数调用也视为纯值——`var x = f(5)` 需注入 `x = f(5)` 供等式推理
-        // （§6.2 目标程序第一例；@unpure 函数结果不确定，仍不注入）。构造子/方法有独立注入通道，不进此分支。
+        // （§6.2 目标程序第一例；@impure 函数结果不确定，仍不注入）。构造子/方法有独立注入通道，不进此分支。
         is CallExpr -> {
             val n = (e.callee as? NameRef)?.name ?: return false
             val fn = syms.findFun(n)
-            if (fn != null) "unpure" !in fn.annotations
-            else builtinPure(n) != null && builtinUnpure(n) == null
+            if (fn != null) "impure" !in fn.annotations
+            else builtinPure(n) != null && builtinimpure(n) == null
         }
         else -> false
     }
@@ -551,7 +551,7 @@ class Checker(
                     // P5（决策 81）：内建类型的点号方法路径——`x.length` 按 `length(x)`（首实参即接收者）
                     // 定返回类型。此前一律回 synthetic「字段name」，使点号方法在泛型 lambda 里类型为占位
                     // （mapResult 的 U 反推失效、嵌套泛型调用泄漏类型变量）。首参类型不兼容则维持旧行为。
-                    val bi = builtinPure(e.name) ?: builtinUnpure(e.name)
+                    val bi = builtinPure(e.name) ?: builtinimpure(e.name)
                     val ret = if (bi != null && bi.params.isNotEmpty() && typeLooseEq(bi.params[0].type, t))
                         (bi.retType ?: namedT("Null", emptyList()))
                     else null
@@ -567,7 +567,7 @@ class Checker(
             // P5（决策 81）：内建点号方法（strUpper/length…）不在 syms.methods，走 builtin 表按首参匹配
             var fn = method?.fn
             if (fn == null) {
-                val bi = builtinPure(e.name) ?: builtinUnpure(e.name)
+                val bi = builtinPure(e.name) ?: builtinimpure(e.name)
                 if (bi != null && bi.params.isNotEmpty() && typeLooseEq(bi.params[0].type, tt)) fn = bi
                 else fn = syms.funs[e.name]
             }
@@ -808,6 +808,12 @@ class Checker(
         }
         val l = checkExpr(e.left, f, pure)
         val r = checkExpr(e.right, f, pure)
+        // v3.0（区间 in）：`x in lo..hi` → Bool；右侧须是 `..` 区间（V1 只做数值区间）
+        if (e.op == "in") {
+            if (e.right is BinExpr && (e.right as BinExpr).op == "..") return namedT("Bool", emptyList())
+            d.error("E-TYPE-MISMATCH", e.pos, "in 右侧须是区间 lo..hi（v3.0 V1；集合成员待 v3.1）")
+            return namedT("Bool", emptyList())
+        }
         return when (e.op) {
             "!" -> namedT("Bool", emptyList())
             else -> {

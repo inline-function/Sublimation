@@ -25,6 +25,7 @@ data class FunDecl(
     val retType: Type?,
     val posts: List<Expr>,
     val body: Expr?,
+    val constraints: List<Expr> = emptyList(),   // v3.0：`fun f<score <= 100>` 约束表（依赖类型方向；V1 仅解析登记）
     override val pos: String = "",
 ) : Decl
 
@@ -361,7 +362,7 @@ data class IfExpr(
  * 分支顺序敏感：后分支的 Γ 含前面所有分支命题的否定（指导§66）。
  */
 data class WhenExpr(
-    val subject: Expr,
+    val subject: Expr?,   // v3.0（无主题 when）：null = `when { cond -> .. }` 布尔条件分支
     val subjectBinding: String?,
     val arms: List<WhenArm>,
     override val pos: String = "",
@@ -372,6 +373,7 @@ data class WhenArm(
     val guard: Expr?,
     val body: Expr,
     override val pos: String = "",
+    val cond: Expr? = null,   // v3.0（无主题 when）：`when { cond -> .. }` 的条件表达式（pattern 用 PatCond 哨兵）
 ) : Node
 
 sealed interface Pattern { val pos: String get() = "" }
@@ -393,6 +395,9 @@ data class PatBind(val name: String, override val pos: String = "") : Pattern
 
 /** `else` 兜底分支：恒真 */
 data class PatElse(override val pos: String = "") : Pattern
+
+/** v3.0（无主题 when）：条件分支的占位模式——pattern 不参与匹配，见 WhenArm.cond */
+data object PatCond : Pattern
 
 /** q ∈ {∀,∃,∃!}（ascii 别名已在解析时归一为 Unicode） */
 data class QuantExpr(val q: String, val names: List<String>, val body: Expr, override val pos: String = "") : Expr

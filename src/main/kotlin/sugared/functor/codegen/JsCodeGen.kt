@@ -183,6 +183,8 @@ class JsCodeGen {
         // prelude 枚举工厂（Optional/Null 不在用户源码里声明，需内置生成）
         line("const None = () => ({ tag: \"None\" });")
         line("const Some = (a0) => ({ tag: \"Some\", 0: a0 });")
+        // v3.0：toStr——枚举纯 tag 对象（{tag: 'D'}，单键）取 tag 名成串；list/struct 其余保持 String()
+        line("const __dshtoStr = (v) => (v && typeof v === \"object\" && Object.keys(v).length === 1 && \"tag\" in v) ? String(v.tag) : String(v);")
         // v2.0 空安全结构判定（决策 88-92，§7）：基本类型用 typeof，枚举/具名用 tag，函数 typeof===
         // JS 不记录类型信息 → 结构判定（与 == 结构相等同源）；v1 纯结构、零 tag 名义区分。
         line("const __isa = (v, t) => {")
@@ -285,7 +287,7 @@ class JsCodeGen {
             is LambdaExpr -> walkExprEq(e.body)
             is BlockExpr -> e.stmts.forEach { walkStmtEq(it) }
             is IfExpr -> { walkExprEq(e.cond); walkExprEq(e.thenBlock); e.elseBlock?.let { walkExprEq(it) } }
-            is WhenExpr -> { walkExprEq(e.subject); e.arms.forEach { walkExprEq(it.body); walkExprEq(it.guard) } }
+            is WhenExpr -> { e.subject?.let { walkExprEq(it) }; e.arms.forEach { walkExprEq(it.body); walkExprEq(it.guard); it.cond?.let { c -> walkExprEq(c) } } }
             is TupleExpr -> e.items.forEach { walkExprEq(it) }
             is QuantExpr -> walkExprEq(e.body)
             is VarExpr -> walkExprEq(e.value)
@@ -427,7 +429,7 @@ class JsCodeGen {
             is IfExpr -> { binderExpr(x.cond, out); x.thenBlock.stmts.forEach { binderStmt(it, out) }; x.elseBlock?.stmts?.forEach { binderStmt(it, out) } }
             is WhenExpr -> {
                 x.subjectBinding?.let { out.add(it) }
-                binderExpr(x.subject, out)
+                x.subject?.let { binderExpr(it, out) }
                 x.arms.forEach { a -> binderPat(a.pattern, out); a.guard?.let { binderExpr(it, out) }; binderExpr(a.body, out) }
             }
             is LambdaExpr -> { out.addAll(x.params); binderExpr(x.body, out) }
@@ -643,6 +645,14 @@ class JsCodeGen {
 
     private fun bin(e: BinExpr): String {
         // 命题层中缀（= : u系 逻辑）在值上下文擦除为 true（它们只在命题位出现，不进 JS 值）
+        // v3.0：区间成员 `x in lo..hi` → 闭区间比较
+        if (e.op == "in") {
+            val rr = e.right
+            if (rr is BinExpr && rr.op == "..")
+                return "(${expr(rr.left)} <= ${expr(e.left)} && ${expr(e.left)} <= ${expr(rr.right)})"
+            return "true"   // 语义层已拦；兜底
+        }
+        if (e.op == "..") return "[${expr(e.left)}, ${expr(e.right)}]"   // 区间字面量（in 外）兜底
         val op = when (e.op) {
             "+", "-", "*", "/", "%", "<", ">", "<=", ">=" -> e.op
             // `==` 是结构相等（决策 32/53）：struct 全字段相等即相等，禁重写
@@ -785,7 +795,8 @@ class JsCodeGen {
             return "($x < $y ? -1 : ($x > $y ? 1 : 0))"
         }
         if (name == "toStr" && e.args.size == 1)
-            return "String(${expr(e.args[0])})"
+            // v3.0：枚举值 = 纯 tag 对象（{tag: 'D'}，单键）→ 取 tag 名成串（__dshtoStr 顶层 helper，await 表达式安全）
+            return "__dshtoStr(${expr(e.args[0])})"
         if (name == "parseNat" && e.args.size == 1)
             return "(() => { const m = String(${expr(e.args[0])}).match(/^(0|[1-9][0-9]*)$/); return m ? Some(Number(m[0])) : None(); })()"
         // v2.0 标准库补全：字符串扩展——JS 原生映射（strSplit 返回 JS 数组 = 数组化 List[Str]）
@@ -915,6 +926,15 @@ class JsCodeGen {
                 "sum" -> if (e.args.size == 1) return "($xs).reduce((a, b) => a + b, 0)"
                 "forEach" -> if (e.args.size == 2) { val f = expr(e.args[1]); return "($xs).forEach(x => ($f)(x))" }
             }
+        }
+        // v3.0：setOf（@vararg @tuple 可变元组）→ SetCons 链（stdlib Set 是结构枚举：SetCons(h, t)）
+        if (name == "setOf" && moduleHits[callee] != null) {
+            val modP = moduleHits.getValue(callee).substringBeforeLast("__setOf")
+            val nil = if (modP.isEmpty()) "SetNil" else "${modP}__SetNil"
+            val cons = if (modP.isEmpty()) "SetCons" else "${modP}__SetCons"
+            var acc = "$nil()"
+            for (i in e.args.indices.reversed()) acc = "$cons(${expr(e.args[i])}, $acc)"
+            return acc
         }
         if (name == "arraySet" && e.args.size == 3) {
             val arr = expr(e.args[0]); val idx = expr(e.args[1]); val v = expr(e.args[2])
@@ -1085,16 +1105,21 @@ class JsCodeGen {
     }
 
     private fun whenExpr(e: WhenExpr): String {
+        // v3.0（无主题 when）：subject 为空时按条件链生成（cond 进入条件）；否则先绑定主题
         val sname = "__s${subjCounter++}"
-        val subjJs = if (e.subjectBinding != null) mangle(e.subjectBinding) else sname
+        val subjJs = if (e.subject == null) "true"
+            else if (e.subjectBinding != null) mangle(e.subjectBinding) else sname
         val lines = ArrayList<String>()
-        lines += if (e.subjectBinding != null) "const ${mangle(e.subjectBinding)} = ${expr(e.subject)};"
-                 else "const $sname = ${expr(e.subject)};"
+        if (e.subject != null)
+            lines += if (e.subjectBinding != null) "const ${mangle(e.subjectBinding)} = ${expr(e.subject)};"
+                     else "const $sname = ${expr(e.subject)};"
         var closed = false
         for (arm in e.arms) {
             val conds = ArrayList<String>()
             val binds = ArrayList<Pair<String, String>>()
-            matchJs(arm.pattern, subjJs, conds, binds)
+            if (e.subject == null) {
+                if (arm.cond != null) conds += expr(arm.cond)   // 无主题：布尔条件进条件位
+            } else matchJs(arm.pattern, subjJs, conds, binds)
             val bodyJs = if (arm.body is BlockExpr) blockStr(arm.body) else expr(arm.body)
             val bindJs = binds.joinToString("") { "const ${mangle(it.first)} = ${it.second}; " }
             val condStr = if (conds.isEmpty()) null else conds.joinToString(" && ") { "($it)" }
@@ -1126,6 +1151,7 @@ class JsCodeGen {
     private fun matchJs(p: Pattern, path: String, conds: MutableList<String>, binds: MutableList<Pair<String, String>>) {
         when (p) {
             is PatElse -> {}
+            is PatCond -> {}   // v3.0：无主题条件分支不参与模式匹配
             is PatBind -> if (p.name != "_") binds += p.name to path
             is PatLit -> conds += "$path === ${expr(p.value)}"
             is PatIs -> {

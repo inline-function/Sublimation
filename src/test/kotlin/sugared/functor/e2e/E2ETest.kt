@@ -1,4 +1,4 @@
-package sugared.functor.e2e
+﻿package sugared.functor.e2e
 
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
@@ -173,7 +173,7 @@ class E2ETest {
     fun `O4 main入口自动调用`() {
         assumeTrue(nodeAvailable())
         // 决策 70：具名零参 fun main() 自动作为入口调用（Kotlin 风格），无需顶层语句
-        val src = "@unpure fun main() {\n  unchecked print(\"from main\")\n}"
+        val src = "@impure fun main() {\n  unchecked print(\"from main\")\n}"
         assertEquals("from main", run(src))
     }
 
@@ -182,9 +182,9 @@ class E2ETest {
         assumeTrue(nodeAvailable())
         // 用户提供的目标形态：隐式 self + 点号调用 + 字段默认值 + 命名字段构造 + main 入口
         val src = "struct A(name: Str = \"unknown\")\n" +
-            "class B { @unpure fun printMyself() }\n" +
-            "impl B for A { @unpure fun printMyself() {\n  print(name)\n} }\n" +
-            "@unpure fun main() {\n  var o = A(name = \"test\")\n  o.printMyself()\n}"
+            "class B { @impure fun printMyself() }\n" +
+            "impl B for A { @impure fun printMyself() {\n  print(name)\n} }\n" +
+            "@impure fun main() {\n  var o = A(name = \"test\")\n  o.printMyself()\n}"
         assertEquals("test", run(src))
     }
 
@@ -207,7 +207,7 @@ class E2ETest {
         val src = "fun sum(@tuple t: (Nat, Nat)): Nat = when(t) { (a, b) -> a + b else -> 0 }\n" +
             "fun mul2(x: Nat, @tuple t: (Nat, Nat)): Nat = when(t) { (a, b) -> x * a * b else -> 0 }\n" +
             "fun keep(@tuple t: (Nat, Nat)): (Nat, Nat) = t\n" +
-            "@unpure fun main() {\n" +
+            "@impure fun main() {\n" +
             "print(sum((12, 30)))\n" +
             "print(mul2(2, (3, 5)))\n" +
             "when(keep((4, 6))) { (a, b) -> print(a + b) }\n" +
@@ -218,7 +218,7 @@ class E2ETest {
     @Test
     fun `v2 标准库 - 字符串扩展`() {
         assumeTrue(nodeAvailable())
-        val src = "@unpure fun main() {\n" +
+        val src = "@impure fun main() {\n" +
             "print(strUpper(\"abC\"))\n" +
             "print(strLower(\"AbC\"))\n" +
             "print(strTrim(\"  x  \"))\n" +
@@ -233,7 +233,7 @@ class E2ETest {
     @Test
     fun `v2 标准库 - Math 扩展`() {
         assumeTrue(nodeAvailable())
-        val src = "@unpure fun main() {\n" +
+        val src = "@impure fun main() {\n" +
             "print(mathMin(3.0, 1.5))\n" +
             "print(mathMax(3.0, 1.5))\n" +
             "print(mathClamp(9.0, 0.0, 5.0))\n" +
@@ -247,7 +247,7 @@ class E2ETest {
     fun `v2 标准库 - timeNow 与 rand`() {
         assumeTrue(nodeAvailable())
         // rand() ∈ [0,1) 恒真，无需 &&（语言逻辑与是 ∧；此处单条件即可）
-        val src = "@unpure fun main() {\n" +
+        val src = "@impure fun main() {\n" +
             "print(timeNow() > 0)\n" +
             "var r = rand()\n" +
             "if (r < 1.0) { print(\"r\") }\n" +
@@ -266,15 +266,15 @@ class E2ETest {
     @Test
     fun `P1 parseNat 解构分支`() {
         assumeTrue(nodeAvailable())
-        // when 分支体是表达式位，print 需 @unpure main（决策 74/77）；主语直接是调用
-        val src = "@unpure fun main() { when(parseNat(\"12\")) { Some(n) -> print(n)  None -> print(\"bad\") } }"
+        // when 分支体是表达式位，print 需 @impure main（决策 74/77）；主语直接是调用
+        val src = "@impure fun main() { when(parseNat(\"12\")) { Some(n) -> print(n)  None -> print(\"bad\") } }"
         assertEquals("12", run(src))
     }
 
     @Test
     fun `P1 parseNat 非法输入落 None`() {
         assumeTrue(nodeAvailable())
-        val src = "@unpure fun main() { when(parseNat(\"x\")) { Some(n) -> print(n)  None -> print(\"bad\") } }"
+        val src = "@impure fun main() { when(parseNat(\"x\")) { Some(n) -> print(n)  None -> print(\"bad\") } }"
         assertEquals("bad", run(src))
     }
 
@@ -297,7 +297,7 @@ class E2ETest {
     @Test
     fun `P2 arrayLength 与 arrayGet 解构`() {
         assumeTrue(nodeAvailable())
-        val src = "@unpure fun main() {\n" +
+        val src = "@impure fun main() {\n" +
             "print(arrayLength(arrayOf(1, 2, 3)))\n" +
             "when(arrayGet(arrayOf(7, 8), 0)) { Some(x) -> print(x)  None -> print(\"none\") }\n" +
             "when(arrayGet(arrayOf(7, 8), 5)) { Some(x) -> print(x)  None -> print(\"none\") }\n" +
@@ -308,7 +308,7 @@ class E2ETest {
     @Test
     fun `P2 arraySet 复制设值`() {
         assumeTrue(nodeAvailable())
-        val src = "@unpure fun main() {\n" +
+        val src = "@impure fun main() {\n" +
             "var a = arraySet(arrayOf(1, 2), 0, 9)\n" +
             "print(arrayLength(a))\n" +
             "when(arrayGet(a, 0)) { Some(x) -> print(x)  None -> print(\"none\") }\n" +
@@ -322,7 +322,7 @@ class E2ETest {
     fun `P8 字符串插值简单与表达式`() {
         assumeTrue(nodeAvailable())
         // §10.3：`"hello, $name"` → hello, alice；`"${1 + 2} is three"` → 3 is three
-        val src = "@unpure fun main() {\n" +
+        val src = "@impure fun main() {\n" +
             "var name = \"alice\"\n" +
             "print(\"hello, \$name\")\n" +
             "print(\"\${1 + 2} is three\")\n" +
@@ -335,7 +335,7 @@ class E2ETest {
         assumeTrue(nodeAvailable())
         // §10.3：`greet(age = 30, name = "alice")` 顺序打乱仍正确（desugar→按形参声明顺序重排）
         val src = "fun greet(name: Str, age: Nat): Str = \"hi \$name\"\n" +
-            "@unpure fun main() {\n" +
+            "@impure fun main() {\n" +
             "print(greet(age = 30, name = \"alice\"))\n" +
             "print(greet(\"bob\", 20))\n" +
             "}"
@@ -348,7 +348,7 @@ class E2ETest {
     fun `P10 浮点除法与平方根近似`() {
         assumeTrue(nodeAvailable())
         // §12.4 验收①②：`print(1.0 / 3.0)` 近似、`print(sqrt(2.0))` 平方根
-        val src = "@unpure fun main() {\n" +
+        val src = "@impure fun main() {\n" +
             "print(1.0 / 3.0)\n" +
             "print(sqrt(2.0))\n" +
             "print(floor(2.7))\n" +
@@ -361,7 +361,7 @@ class E2ETest {
     @Test
     fun `P10 parseRat 与向量混合`() {
         assumeTrue(nodeAvailable())
-        val src = "@unpure fun main() {\n" +
+        val src = "@impure fun main() {\n" +
             "when(parseRat(\"2.5\")) { Some(x) -> print(x)  None -> print(\"none\") }\n" +
             "when(parseRat(\"abc\")) { Some(x) -> print(x)  None -> print(\"none\") }\n" +
             "}"
@@ -383,7 +383,7 @@ class E2ETest {
             "    LCons(h, t) -> concat(h.show(), joinAll(t))\n" +
             "    _ -> \"\"\n" +
             "}\n" +
-            "@unpure fun main() {\n" +
+            "@impure fun main() {\n" +
             "print(joinAll(LCons(1, LCons(2, LNil()))))\n" +
             "}"
         assertEquals("12", run(src))
@@ -395,7 +395,7 @@ class E2ETest {
     fun `JSON 内建 parse get str num len`() {
         assumeTrue(nodeAvailable())
         // 语言风格验证：jsonParse 失败返回 None 而非异常（空安全）；纯函数无需 unchecked；Optional 解构
-        val src = "@unpure fun main() {\n" +
+        val src = "@impure fun main() {\n" +
             "when(jsonParse(\"{\\\"name\\\":\\\"alice\\\",\\\"age\\\":30,\\\"tags\\\":[1,2,3]}\")) {\n" +
             "    Some(j) -> {\n" +
             "        when(jsonGet(j, \"name\")) { Some(v) -> print(\"name=\" + jsonToStr(v))  None -> print(\"no-name\") }\n" +
@@ -415,7 +415,7 @@ class E2ETest {
     @Test
     fun `JSON 内建 布尔 null 数组 序列化`() {
         assumeTrue(nodeAvailable())
-        val src = "@unpure fun main() {\n" +
+        val src = "@impure fun main() {\n" +
             "when(jsonParse(\"[true, false, null, 1.5, \\\"x\\\"]\")) {\n" +
             "    Some(j) -> {\n" +
             "        print(\"isArr=\" + toStr(jsonIsArr(j)))\n" +
@@ -437,7 +437,7 @@ class E2ETest {
         val src = "@root fun jsonParse(s: Str): Optional[Json]\n" +
             "@root fun jsonGet(j: Json, k: Str): Optional[Json]\n" +
             "@root fun jsonNum(j: Json): Optional[Rat]\n" +
-            "@unpure fun main() {\n" +
+            "@impure fun main() {\n" +
             "when(jsonParse(\"{\\\"age\\\":30}\")) {\n" +
             "    Some(j) -> when(jsonGet(j, \"age\")) { Some(v) -> when(jsonNum(v)) { Some(n) -> print(toStr(n))  None -> print(\"not-num\") }  None -> print(\"no-field\") }\n" +
             "    None -> print(\"parse-fail\")\n" +

@@ -260,6 +260,25 @@ class ModuleTreeDriver(val tree: ModuleNode, val bag: DiagBag) {
     /** I-20 的 single-check 形式：from 能否看到 to。 */
     fun canSee(from: String, to: String): Boolean = to in visiblePathsOf(from)
 
+    /** v3.0：裸自由函数跨模块可见集合 = 本模块 + 自身及祖先**挂载**的传递可达（不含 addDesc 后代子树）。
+     *  语义：Kotlin 默认导入只在 stdlib/挂载间透传——root 裸调字模块函数仍不可见（M3 兄弟/子不可见约束保持）。 */
+    fun bareVisibleOf(from: String): Set<String> {
+        val start = nodesByPath[from] ?: return emptySet()
+        val out = LinkedHashSet<String>()
+        out += start.absPath
+        // v3.0 默认导入：根级保留名目录 stdlib（非挂载形态）= 全局库，任何模块裸名可见（Kotlin 默认导入语义）
+        nodesByPath["stdlib"]?.let { out += mountReach(it, LinkedHashSet()) }
+        var cur: ModuleNode? = start
+        while (cur != null) {
+            for (md in cur.settings?.mounts ?: emptyList()) {
+                val q = nodesByPath[md.targetAbsPath] ?: continue
+                out += mountReach(q, LinkedHashSet())
+            }
+            cur = if (cur.absPath.isEmpty()) null else nodesByPath[ancestorPathOf(cur.absPath)]
+        }
+        return out
+    }
+
     /**
      * 从 from 模块视角，名字 → 直接可达的子模块。解析顺序（P0 引用路径规则：相对当前模块视角）：
      * 1. 当前模块的**自身子目录**（一层）；

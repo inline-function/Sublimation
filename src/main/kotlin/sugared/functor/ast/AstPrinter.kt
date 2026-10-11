@@ -105,7 +105,7 @@ private fun Expr.toTree(): Tree = when (this) {
         (elseBlock?.let { listOf(Tree("else", it.stmts.map { s -> s.toTree() })) } ?: emptyList()))
     is ByExpr -> Tree("by ${target.toTag()}[${props.joinToString(", ") { it.toTag() }}]")
     is WhenExpr -> Tree(
-        "when ${subjectBinding?.let { "(var $it = ${subject.toTag()})" } ?: subject.toTag()}",
+        "when ${subjectBinding?.let { "(var $it = ${subject?.toTag() ?: "?"})" } ?: subject?.toTag() ?: "…"}",
         arms.map { Tree("arm ${it.pattern.toTag()}${it.guard?.let { g -> " if ${g.toTag()}" } ?: ""} -> ${it.body.toTag()}") },
     )
     is TupleExpr -> Tree("tuple", items.map { it.toTree() })
@@ -145,7 +145,7 @@ private fun Expr.toTag(): String = when (this) {
     is IfExpr -> "if ${cond.toTag()} {${thenBlock.stmts.joinToString("; ") { it.toPlain() }}}" +
         (elseBlock?.let { " else {${it.stmts.joinToString("; ") { s -> s.toPlain() }}}" } ?: "")
     is ByExpr -> "(${target.toTag()} by [${props.joinToString(", ") { it.toTag() }}])"
-    is WhenExpr -> "when " + (subjectBinding?.let { "(var $it = ${subject.toTag()})" } ?: subject.toTag()) + " {" +
+    is WhenExpr -> "when " + (subjectBinding?.let { "(var $it = ${subject?.toTag() ?: "?"})" } ?: subject?.toTag() ?: "") + " {" +
         arms.joinToString("; ") { "${it.pattern.toTag()}${it.guard?.let { g -> " if ${g.toTag()}" } ?: ""} -> ${it.body.toTag()}" } + "}"
     is TupleExpr -> "(" + items.joinToString(", ") { it.toTag() } + ")"
     is StructCtorExpr -> "$struct(" + assigns.joinToString(", ") { (n, v) -> "$n = ${v.toTag()}" } + ")"
@@ -172,4 +172,5 @@ private fun Pattern.toTag(): String = when (this) {
     is PatIs -> "is ${type.toTag()}" + (bind?.let { " as $it" } ?: "")
     is PatCtor -> if (args.isEmpty()) name else "$name(${args.joinToString(", ") { it.toTag() }})"
     is PatTuple -> "(" + items.joinToString(", ") { it.toTag() } + ")"
+    is PatCond -> "…"
 }

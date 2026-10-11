@@ -122,10 +122,16 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         val name = nameToken()
         val theory = if (peek(Kind.LBRACKET)) parseTheory() else emptyList()
         val params = if (peek(Kind.LPAREN)) parseParams() else emptyList()
+        // v3.0：`fun f<score <= 100>`——约束形参表（IDENT 比较运算）与命题上下文 `<p>` 分派；
+        // 约束表仅解析登记（V1 不校验），语义由主人拍板（依赖类型方向）。
+        var constraints: List<Expr> = emptyList()
+        val preps = if (peek(Kind.LT)) {
+            if (constraintListAhead()) { constraints = parseConstraintList(); emptyList() }
+            else parseAngleList()
+        } else emptyList()
         // 用户拍板（v1.1）：`:` 是上下（前后置）上下文的分界——
         // 冒号**前**的 `<...>` = 上文（前置，调用需已证明）；返回类型**后**的 `<...>` = 下文（后置，调用产出）。
         // 返回类型可省略：冒号后直接 `<...>` / 无返回类型（此前后置须写 `: Null <p>`，现可写 `: <p>`）。
-        val preps = if (peek(Kind.LT)) parseAngleList() else emptyList()
         var ret: Type? = null
         var posts: List<Expr> = emptyList()
         if (peek(Kind.COLON)) {
@@ -146,7 +152,33 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
             peek(Kind.LBRACE) -> parseBlock()
             else -> null
         }
-        return FunDecl(name, anns, theory, params, preps, ret, posts, body, "$sl:$sc")
+        return FunDecl(name, anns, theory, params, preps, ret, posts, body, constraints = constraints, pos = "$sl:$sc")
+    }
+
+    /** v3.0：`<score <= 100>` 约束表开头判定——角括内第一项为 IDENT 且其后是（带空格的）比较/种类运算符。
+     *  紧贴 `<`（如 `valid<7>` 实例化）不属约束表。 */
+    private fun constraintListAhead(): Boolean {
+        val nm = toks.getOrNull(pos + 1)
+        val op = toks.getOrNull(pos + 2)
+        return nm?.kind == Kind.IDENT && op != null && op.precededBySpace &&
+            op.kind in setOf(Kind.LE, Kind.GE, Kind.EQ, Kind.NEQ, Kind.IN)   // v3.0：LT/GT 排除——`<a < b>` 上文命题（ParserTest）与约束表歧义；`<=`/`>=`/`==` 等约束走新义
+    }
+
+    /** v3.0：解析 `score <= 100, n > 0` 约束表（`<...>` 内，逗号分隔）——只登记不校验 */
+    private fun parseConstraintList(): List<Expr> {
+        at(Kind.LT)
+        val out = ArrayList<Expr>()
+        while (true) {
+            val cname = nameToken()   // 约束携带的（隐式）参数名
+            val opTok = cur()
+            pos++
+            val rhs = parseExpr(angle = true)
+            out += BinExpr(opTok.text, NameRef(cname), rhs, "$cname$opTok")
+            if (peek(Kind.COMMA)) { pos++; if (peek(Kind.GT)) break; continue }
+            break
+        }
+        at(Kind.GT)
+        return out
     }
 
     private fun parseTheory(): List<TheoryParam> {
@@ -165,7 +197,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                     while (true) {
                         if (peek(Kind.IDENT) && cur().text == "_") { pos++; arity++ }
                         else throw ParseFailure(fileName, cur(), "期望构造子占位 _")
-                        if (peek(Kind.COMMA)) { pos++; continue }
+                        if (peek(Kind.COMMA)) {
+                    pos++
+                    if (peek(Kind.RPAREN) || peek(Kind.RBRACKET) || peek(Kind.RBRACE)) break   // v3.0：尾随逗号
+                    continue
+                }
                         break
                     }
                     at(Kind.RBRACKET)
@@ -175,7 +211,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                     throw ParseFailure(fileName, cur(), "高阶类型构造子暂不支持约束（主人拍板后补）")
                 out += TypeParam(n, c, arity)
             }
-            if (peek(Kind.COMMA)) { pos++; continue }
+            if (peek(Kind.COMMA)) {
+                    pos++
+                    if (peek(Kind.RPAREN) || peek(Kind.RBRACKET) || peek(Kind.RBRACE)) break   // v3.0：尾随逗号
+                    continue
+                }
             break
         }
         at(Kind.RBRACKET)
@@ -199,7 +239,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                 //（仅 struct 字段允许；函数形参带默认值报 E-DEFAULT-PARAM）
                 val dft = if (peek(Kind.ASSIGN)) { pos++; parseExpr(angle = false) } else null
                 out += Param(n, ty, anns, dft, destruct)
-                if (peek(Kind.COMMA)) { pos++; continue }
+                if (peek(Kind.COMMA)) {
+                    pos++
+                    if (peek(Kind.RPAREN) || peek(Kind.RBRACKET) || peek(Kind.RBRACE)) break   // v3.0：尾随逗号
+                    continue
+                }
                 break
             }
         }
@@ -214,7 +258,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         if (!peek(Kind.RPAREN)) {
             while (true) {
                 out += nameToken()
-                if (peek(Kind.COMMA)) { pos++; continue }
+                if (peek(Kind.COMMA)) {
+                    pos++
+                    if (peek(Kind.RPAREN) || peek(Kind.RBRACKET) || peek(Kind.RBRACE)) break   // v3.0：尾随逗号
+                    continue
+                }
                 break
             }
         }
@@ -229,7 +277,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         if (!peek(Kind.RPAREN)) {
             while (true) {
                 parts += nameToken()
-                if (peek(Kind.COMMA)) { pos++; continue }
+                if (peek(Kind.COMMA)) {
+                    pos++
+                    if (peek(Kind.RPAREN) || peek(Kind.RBRACKET) || peek(Kind.RBRACE)) break   // v3.0：尾随逗号
+                    continue
+                }
                 break
             }
         }
@@ -256,7 +308,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                 val fname = nameToken()
                 at(Kind.ASSIGN)
                 out += fname to parseExpr(angle = false)
-                if (peek(Kind.COMMA)) { pos++; continue }
+                if (peek(Kind.COMMA)) {
+                    pos++
+                    if (peek(Kind.RPAREN) || peek(Kind.RBRACKET) || peek(Kind.RBRACE)) break   // v3.0：尾随逗号
+                    continue
+                }
                 break
             }
         }
@@ -327,7 +383,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         if (!peek(Kind.RPAREN)) {
             while (true) {
                 ps += parseType()
-                if (peek(Kind.COMMA)) { pos++; continue }
+                if (peek(Kind.COMMA)) {
+                    pos++
+                    if (peek(Kind.RPAREN) || peek(Kind.RBRACKET) || peek(Kind.RBRACE)) break   // v3.0：尾随逗号
+                    continue
+                }
                 break
             }
         }
@@ -340,7 +400,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         val out = ArrayList<Type>()
         while (true) {
             out += parseType()
-            if (peek(Kind.COMMA)) { pos++; continue }
+            if (peek(Kind.COMMA)) {
+                    pos++
+                    if (peek(Kind.RPAREN) || peek(Kind.RBRACKET) || peek(Kind.RBRACE)) break   // v3.0：尾随逗号
+                    continue
+                }
             break
         }
         at(Kind.RBRACKET)
@@ -353,7 +417,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         val out = ArrayList<Expr>()
         while (true) {
             out += parseExpr(angle = true)
-            if (peek(Kind.COMMA)) { pos++; continue }
+            if (peek(Kind.COMMA)) {
+                    pos++
+                    if (peek(Kind.RPAREN) || peek(Kind.RBRACKET) || peek(Kind.RBRACE)) break   // v3.0：尾随逗号
+                    continue
+                }
             break
         }
         at(Kind.GT)
@@ -423,7 +491,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                 val props = ArrayList<Expr>()
                 while (true) {
                     props += parseExpr(angle = false)
-                    if (peek(Kind.COMMA)) { pos++; continue }
+                    if (peek(Kind.COMMA)) {
+                    pos++
+                    if (peek(Kind.RPAREN) || peek(Kind.RBRACKET) || peek(Kind.RBRACE)) break   // v3.0：尾随逗号
+                    continue
+                }
                     break
                 }
                 at(Kind.RBRACKET)
@@ -453,7 +525,7 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         pos++
         val names = ArrayList<String>()
         names += nameToken()
-        while (peek(Kind.COMMA)) { pos++; names += nameToken() }
+        while (peek(Kind.COMMA)) { if (peek(Kind.RPAREN)) break; pos++; names += nameToken() }   // v3.0：尾随逗号
         at(Kind.RPAREN)
         return names
     }
@@ -501,7 +573,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
             pos++
             while (true) {
                 parents += parseNamedType()
-                if (peek(Kind.COMMA)) { pos++; continue }
+                if (peek(Kind.COMMA)) {
+                    pos++
+                    if (peek(Kind.RPAREN) || peek(Kind.RBRACKET) || peek(Kind.RBRACE) || peek(Kind.LBRACE)) break   // v3.0：尾随逗号
+                    continue
+                }
                 break
             }
         }
@@ -558,7 +634,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         if (!peek(Kind.RPAREN)) {
             while (true) {
                 out += parseType()
-                if (peek(Kind.COMMA)) { pos++; continue }
+                if (peek(Kind.COMMA)) {
+                    pos++
+                    if (peek(Kind.RPAREN) || peek(Kind.RBRACKET) || peek(Kind.RBRACE)) break   // v3.0：尾随逗号
+                    continue
+                }
                 break
             }
         }
@@ -624,6 +704,13 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
             if (t.kind == Kind.ELVIS) {
                 pos++; left = ElvisExpr(left, parseUnary()); continue
             }
+            // v3.0（区间）：`..` 中缀——先于通用 binops（in 的右操作数吃 `lo..hi`）
+            if (t.kind == Kind.RANGE) {
+                pos++; left = BinExpr("..", left, parseUnary()); continue
+            }
+            if (t.kind == Kind.IN) {
+                pos++; left = BinExpr("in", left, parseRangeOperand()); continue
+            }
             if (t.kind in binops) {
                 pos++; left = BinExpr(t.text, left, parseUnary()); continue
             }
@@ -662,6 +749,13 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
             nx.kind == Kind.RBRACKET || nx.kind == Kind.SEMI || nx.kind == Kind.RPAREN ||
             nx.kind == Kind.ASSIGN || nx.kind == Kind.RET) return false
         return true
+    }
+
+    /** v3.0（区间 in）：`in` 的右操作数——`lo..hi`（括号 `/无括号`）*/ 
+    private fun parseRangeOperand(): Expr {
+        var e = parseUnary()
+        if (peek(Kind.RANGE)) { pos++; e = BinExpr("..", e, parseUnary()) }
+        return e
     }
 
     private fun parseUnary(): Expr {
@@ -754,7 +848,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                 } else {
                     posArgs += parseExpr(angle = false)
                 }
-                if (peek(Kind.COMMA)) { pos++; continue }
+                if (peek(Kind.COMMA)) {
+                    pos++
+                    if (peek(Kind.RPAREN) || peek(Kind.RBRACKET) || peek(Kind.RBRACE)) break   // v3.0：尾随逗号
+                    continue
+                }
                 break
             }
         }
@@ -840,7 +938,7 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                     // 元组字面量：逗号是判据（决策 62）；`(a)` 仍是括号表达式
                     val items = ArrayList<Expr>()
                     items += first
-                    while (peek(Kind.COMMA)) { pos++; items += parseExpr(angle = false) }
+                    while (peek(Kind.COMMA)) { pos++; if (peek(Kind.RPAREN)) break; items += parseExpr(angle = false) }   // v3.0：尾随逗号
                     at(Kind.RPAREN)
                     TupleExpr(items, "${t.line}:${t.col}")
                 } else { at(Kind.RPAREN); first }
@@ -876,7 +974,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         val names = ArrayList<String>()
         while (true) {
             names += nameToken()
-            if (peek(Kind.COMMA)) { pos++; continue }
+            if (peek(Kind.COMMA)) {
+                    pos++
+                    if (peek(Kind.RPAREN) || peek(Kind.RBRACKET) || peek(Kind.RBRACE)) break   // v3.0：尾随逗号
+                    continue
+                }
             break
         }
         at(Kind.DOT)
@@ -907,25 +1009,39 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
     private fun parseWhen(): Expr {
         val sl = cur().line; val sc = cur().col
         at(Kind.WHEN)
-        at(Kind.LPAREN)
+        // v3.0：无主题 when——`when { cond -> ... }`（布尔条件分支）；主题可选 `when(x) { ... }`
         var binding: String? = null
-        val subject = if (peek(Kind.VAR)) {
+        var subject: Expr? = null
+        if (peek(Kind.LPAREN)) {
             pos++
-            binding = nameToken()
-            at(Kind.ASSIGN)
-            parseExpr(angle = false)
-        } else parseExpr(angle = false)
-        at(Kind.RPAREN)
+            subject = if (peek(Kind.VAR)) {
+                pos++
+                binding = nameToken()
+                at(Kind.ASSIGN)
+                parseExpr(angle = false)
+            } else parseExpr(angle = false)
+            at(Kind.RPAREN)
+        }
         at(Kind.LBRACE)
         val arms = ArrayList<WhenArm>()
         while (!peek(Kind.RBRACE)) {
             skipSemis()
             if (peek(Kind.RBRACE)) break
             val al = cur().line; val ac = cur().col
-            val pat = parsePattern()
-            val guard = if (peek(Kind.IF)) { pos++; parseExpr(angle = false, stopArrow = true) } else null
+            val pat: Pattern; var guard: Expr? = null; var cond: Expr? = null
+            if (subject == null && peek(Kind.ELSE)) {
+                pos++
+                pat = PatElse("$al:$ac")
+            } else if (subject == null) {
+                // 无主题分支位：布尔条件表达式，存 WhenArm.cond（pattern 用 PatCond 哨兵）
+                cond = parseExpr(angle = false, stopArrow = true)
+                pat = PatCond
+            } else {
+                pat = parsePattern()
+                guard = if (peek(Kind.IF)) { pos++; parseExpr(angle = false, stopArrow = true) } else null
+            }
             at(Kind.ARROW)
-            arms += WhenArm(pat, guard, parseBranchBody(), "$al:$ac")
+            arms += WhenArm(pat, guard, parseBranchBody(), "$al:$ac", cond = cond)
             skipSemis()
             if (peek(Kind.COMMA)) pos++
         }
@@ -951,7 +1067,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                     if (!peek(Kind.RPAREN)) {
                         while (true) {
                             args += parsePattern()
-                            if (peek(Kind.COMMA)) { pos++; continue }
+                            if (peek(Kind.COMMA)) {
+                    pos++
+                    if (peek(Kind.RPAREN) || peek(Kind.RBRACKET) || peek(Kind.RBRACE)) break   // v3.0：尾随逗号
+                    continue
+                }
                             break
                         }
                     }
@@ -994,7 +1114,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                     if (!peek(Kind.RPAREN)) {
                         while (true) {
                             args += parsePattern()
-                            if (peek(Kind.COMMA)) { pos++; continue }
+                            if (peek(Kind.COMMA)) {
+                    pos++
+                    if (peek(Kind.RPAREN) || peek(Kind.RBRACKET) || peek(Kind.RBRACE)) break   // v3.0：尾随逗号
+                    continue
+                }
                             break
                         }
                     }
@@ -1010,7 +1134,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                 if (!peek(Kind.RPAREN)) {
                     while (true) {
                         args += parsePattern()
-                        if (peek(Kind.COMMA)) { pos++; continue }
+                        if (peek(Kind.COMMA)) {
+                    pos++
+                    if (peek(Kind.RPAREN) || peek(Kind.RBRACKET) || peek(Kind.RBRACE)) break   // v3.0：尾随逗号
+                    continue
+                }
                         break
                     }
                 }
@@ -1030,7 +1158,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         if (!peek(Kind.RBRACKET)) {
             while (true) {
                 out += parseExpr(angle = false)
-                if (peek(Kind.COMMA)) { pos++; continue }
+                if (peek(Kind.COMMA)) {
+                    pos++
+                    if (peek(Kind.RPAREN) || peek(Kind.RBRACKET) || peek(Kind.RBRACE)) break   // v3.0：尾随逗号
+                    continue
+                }
                 break
             }
         }

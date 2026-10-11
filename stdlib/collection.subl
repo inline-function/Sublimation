@@ -89,3 +89,22 @@ fun toMap[K, V](xs: List[(K, V)]): Map[K, V] = when(xs) {
         (k, v) -> put(toMap(t), k, v)
     }
 }
+
+// ---- v3.0：可变元组（@vararg @tuple，Kotlin vararg 语义）与 Set 的函数式方法 ----
+// setOf：任意数量同型实参打包成 Set。codegen 特判生成 SetCons 链（变长元组无法结构拆解，body 仅为类型声明）。
+fun setOf[T](@vararg @tuple _items: (T)): Set[T] = SetNil()
+
+// Set.map：Kotlin 语义（Set → List）
+fun map[T, U](xs: Set[T], f: (T) => U): List[U] = when(xs) {
+    SetNil -> Nil()
+    SetCons(h, t) -> Cons(f(h), map(t, f))
+}
+
+// Set.forEach：无返回值（块体 → Null）
+fun forEach[T](xs: Set[T], f: (T) => Null) {
+    when(xs) {
+        SetNil -> null
+        SetCons(h, t) -> { f(h); forEach(t, f) }
+    }
+    return null
+}

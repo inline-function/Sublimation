@@ -3,12 +3,12 @@ package sugared.functor.lexer
 enum class Kind {
     INT, FLOAT, STR, IDENT, SYMBOL,
     // 硬关键字
-    FUN, CLASS, STRUCT, ENUM, VAR, IMPL, FOR, IF, ELSE, UNCHECKED, WHEN, IS, BY, TYPE, RET,
+    FUN, CLASS, STRUCT, ENUM, VAR, IMPL, FOR, IF, ELSE, UNCHECKED, WHEN, IS, BY, TYPE, RET, IN,   // v3.0：in 区间成员判断
     // 标点
     LPAREN, RPAREN, LBRACKET, RBRACKET, LBRACE, RBRACE,
     COMMA, SEMI, COLON, COLON2, DOT, AT, BACKSLASH, DOLLAR,   // COLON2 = `::`（v2.1 枚举成员访问 E::A）
     // 运算/比较/赋值
-    PLUS, MINUS, STAR, SLASH, PERCENT, ASSIGN, EQ, NEQ, LE, GE,
+    PLUS, MINUS, STAR, SLASH, PERCENT, ASSIGN, EQ, NEQ, LE, GE, RANGE,   // v3.0：`..` 区间
     ARROW, DARROW, IFF, AMP, PIPE, BANG,
     // v2.0 空安全运算符（多字符优先：`?.`/`?:` 在 `?` 前）
     // CAST `>:` **不在词法层粘连**——`<valid<7>>: Null` 的 `>>` 终止符序列会误粘连成 `>:`，
@@ -46,7 +46,7 @@ class Lexer(private val src: String, private val fileName: String) {
         "enum" to Kind.ENUM, "var" to Kind.VAR, "impl" to Kind.IMPL,
         "for" to Kind.FOR, "if" to Kind.IF, "else" to Kind.ELSE,
         "unchecked" to Kind.UNCHECKED, "when" to Kind.WHEN, "is" to Kind.IS, "by" to Kind.BY,
-        "type" to Kind.TYPE, "return" to Kind.RET,
+        "type" to Kind.TYPE, "return" to Kind.RET, "in" to Kind.IN,
     )
 
     companion object {
@@ -112,6 +112,8 @@ class Lexer(private val src: String, private val fileName: String) {
         // v2.0 空安全运算符（多字符优先：`?.`/`?:` 在 `?` 前）
         if (c == '?' && peekAt(i + 1) == '.') { adv(2); return Kind.SAFECALL to "?." }
         if (c == '?' && peekAt(i + 1) == ':') { adv(2); return Kind.ELVIS to "?:" }
+        // v3.0（区间）：`..` 须先于单 '.' 判定
+        if (c == '.' && peekAt(i + 1) == '.') { adv(2); return Kind.RANGE to ".." }
         // v2.1（对齐 Rust 关联项）：`::` 枚举成员访问——粘连判定，须先于单 ':'
         if (c == ':' && peekAt(i + 1) == ':') { adv(2); return Kind.COLON2 to "::" }
         if (c == '?') { adv(1); return Kind.QUEST to "?" }

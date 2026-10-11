@@ -1,4 +1,4 @@
-package sugared.functor
+﻿package sugared.functor
 
 import sugared.functor.ast.AstPrinter
 import sugared.functor.ast.tokenLine
@@ -39,7 +39,7 @@ val EXPLAIN: Map<String, String> = mapOf(
     "E-ASSIGN-TARGET" to "赋值目标不是变量：赋值左侧必须是局部变量名。",
     "E-IMPL-INCOMPLETE" to "impl 未实现类型类全部成员（或成员签名不匹配 E-IMPL-MISMATCH / 多实现了 E-IMPL-EXTRA）。",
     "E-NO-INSTANCE" to "类型类实例缺失：该类型的 impl 未声明，或约束字典无法解析。",
-    "E-IMPURE-CALL" to "纯上下文调用了非纯函数：@unpure 函数须在 @unpure 函数/unchecked 中调用，或持有 pure<f> 事实。",
+    "E-IMPURE-CALL" to "纯上下文调用了非纯函数：@impure 函数须在 @impure 函数/unchecked 中调用，或持有 pure<f> 事实。",
     "E-ANY-CALL" to "涉及 Any 的调用推导失效：Any 只作形参类型，请手动标注或改用具体类型（决策 59）。",
     "E-KIND-MISS-MATCH" to "kind 不匹配：类型构造子实参个数与声明不符（HKT [F[_]] 一参、[F[_,_]] 两参）。",
     "E-NEED-ASYNC" to "异步调用需要异步上下文：readFile/readLine/writeFile/appendFile/readDir/sleep 须在 @async 函数/Task 体/main 中调用。",

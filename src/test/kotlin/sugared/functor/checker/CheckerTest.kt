@@ -87,13 +87,13 @@ class CheckerTest {
     }
 
     @Test
-    fun `纯度 - unpure 函数体内调 print 合法`() {
-        assertTrue(ok("fun log(m: Str): Null { unchecked print(m) }\n@unpure fun loud(): Null { log(\"x\") }"))
+    fun `纯度 - impure 函数体内调 print 合法`() {
+        assertTrue(ok("fun log(m: Str): Null { unchecked print(m) }\n@impure fun loud(): Null { log(\"x\") }"))
     }
 
     @Test
     fun `impure 标注后纯函数调用需逃逸`() {
-        val src = "@unpure fun loud(): Null {}\nfun main() { loud() }"
+        val src = "@impure fun loud(): Null {}\nfun main() { loud() }"
         assertTrue(errs(src).contains("E-IMPURE-CALL"))
     }
 
@@ -195,7 +195,7 @@ class CheckerTest {
     @Test
     fun `枚举双冒号访问 构造与 is 解构分支`() {
         val src = "enum Shape[T] { Circle(T) Dot }\n" +
-            "@unpure fun test(o: Shape[Nat]): Nat =\n" +
+            "@impure fun test(o: Shape[Nat]): Nat =\n" +
             "    when(o) {\n" +
             "        is Shape::Circle(_) -> 1\n" +
             "        is Shape::Dot -> 0\n" +
@@ -284,7 +284,7 @@ class CheckerTest {
     @Test
     fun `P6 函数引用 o冒号冒号f 简单方法可传`() {
         val src = "fun id(x: Nat): Nat = x\n" +
-            "@unpure fun apply(f: (Nat) => Nat, v: Nat): Nat = f(v)\n" +
+            "@impure fun apply(f: (Nat) => Nat, v: Nat): Nat = f(v)\n" +
             "fun main() { var s = \"hi\"\nvar f = s::strUpper }"
         assertTrue(ok(src), "简单方法引用应通过")
     }
@@ -376,8 +376,8 @@ class CheckerTest {
 
     @Test
     fun `决策54 pure命题驱动纯度`() {
-        assertTrue(errs("@unpure fun side(): Null {}\nfun main() { side() }").contains("E-IMPURE-CALL"))
-        assertTrue(ok("@unpure fun side(): Null {}\nfun main() { unchecked.axiom[pure<side>]\nside() }"))
+        assertTrue(errs("@impure fun side(): Null {}\nfun main() { side() }").contains("E-IMPURE-CALL"))
+        assertTrue(ok("@impure fun side(): Null {}\nfun main() { unchecked.axiom[pure<side>]\nside() }"))
     }
 
     @Test
@@ -579,6 +579,22 @@ class CheckerTest {
     }
 
     @Test
+    fun `v30 - @vararg @tuple 可变元组打包`() {
+        val head = "fun f[T](@vararg @tuple xs: (T)): Nat = 0\n"
+        assertTrue(ok(head + "fun main() { f(1, 2, 3) }"))
+        assertTrue(ok(head + "fun main() { f() }"))
+        assertTrue(ok(head + "fun main() { f(\"a\", \"b\") }"))
+        assertTrue(errs(head + "fun main() { f(1, \"a\") }").isNotEmpty())   // 异构实参与单元素元组不统一
+    }
+
+    @Test
+    fun `v30 - 无主题 when 布尔条件分支 + 尾随逗号`() {
+        val src = "fun g(x: Nat): Str = when { x in (90 .. 100) -> \"A\"; x > 10 -> \"B\"; else -> \"C\" }\n"
+        assertTrue(ok(src + "fun main() { g(95,) }"))
+        assertTrue(ok("fun g(x: Nat): Str = \"a\"\nfun main() { var t = (1, 2,)\n g(1,) }"))
+    }
+
+    @Test
     fun `T6 参数引用 dollar n 前件`() {
         assertTrue(ok("fun f(a: Nat, b: Str): Null < \$1 = a > {}"))
     }
@@ -616,7 +632,7 @@ class CheckerTest {
         assertTrue(ok("class Show[T] { fun show(): Str }\n" +
             "impl Show for Nat { fun show(): Str = toStr(self) }\n" +
             "fun showIt[T: Show](x: T): Str = x.show()\n" +
-            "@unpure fun main() { print(showIt(1)) }"))
+            "@impure fun main() { print(showIt(1)) }"))
     }
 
     // ============ HKT（《高阶类型.md》）；单文件测不挂 stdlib，List/Optional 枚举内联 ============
@@ -1026,11 +1042,11 @@ class CheckerTest {
     }
 
     @Test
-    fun `P9 unchecked 与 unpure 放行非结构递归`() {
-        // 验收③：unchecked/unpure 逃逸通道不受停机检查约束
+    fun `P9 unchecked 与 impure 放行非结构递归`() {
+        // 验收③：unchecked/impure 逃逸通道不受停机检查约束
         val src = "fun dieA(): Nat { unchecked var r = dieA()\nreturn r }\n" +
-            "@unpure fun dieB(): Nat = dieB()"
-        assertTrue(ok(src), "unchecked 与 @unpure 应放行非结构递归")
+            "@impure fun dieB(): Nat = dieB()"
+        assertTrue(ok(src), "unchecked 与 @impure 应放行非结构递归")
     }
 
     // ============ v2.0 和类型（联合类型 A | B + 类型测收窄） ============
@@ -1038,7 +1054,7 @@ class CheckerTest {
     @Test
     fun `和类型 用户代码跑通`() {
         // 用户验收：Str | Nat 联合 + `o ? Str` 类型测 + then 收窄为 Str / else 反收窄为 Nat
-        val src = "@unpure\nfun test(o: Str | Nat) =\n    if(o is Str)\n        print(o)\n    else\n        print(\"\${o + 1}\")"
+        val src = "@impure\nfun test(o: Str | Nat) =\n    if(o is Str)\n        print(o)\n    else\n        print(\"\${o + 1}\")"
         assertTrue(ok(src), "联合类型 + else 反收窄应通过类型检查")
     }
 
@@ -1052,7 +1068,7 @@ class CheckerTest {
     @Test
     fun `和类型 then 分支智能收窄`() {
         // then 分支 o: Str，直接调 Str 专用内建（strUpper）；else 分支 o: Nat 数值运算
-        val src = "@unpure\nfun test(o: Str | Nat) =\n    if(o is Str)\n        print(strUpper(o))\n    else\n        print(o + 1)"
+        val src = "@impure\nfun test(o: Str | Nat) =\n    if(o is Str)\n        print(strUpper(o))\n    else\n        print(o + 1)"
         assertTrue(ok(src), "then/else 分支收窄后应各按收窄类型检查")
     }
 
@@ -1060,21 +1076,21 @@ class CheckerTest {
     fun `和类型 when is 分支密封穷尽`() {
         // Kotlin 风格 when(o) { is Str -> ..; is Nat -> .. }：无 else、is 覆盖全部变体 → 密封，
         // 作为表达式返回分支类型（: Str 注解要求 when 值类型不是 Null）
-        val src = "@unpure\nfun test(o: Str | Nat): Str =\n    when(o) {\n        is Str -> strUpper(o)\n        is Nat -> \"\${o + 1}\"\n    }"
+        val src = "@impure\nfun test(o: Str | Nat): Str =\n    when(o) {\n        is Str -> strUpper(o)\n        is Nat -> \"\${o + 1}\"\n    }"
         assertTrue(ok(src), "is 分支覆盖联合全部变体应判密封，且分支内收窄生效")
     }
 
     @Test
     fun `和类型 when else 分支反收窄`() {
         // else 分支联合主题排除已测 is 变体：o 收窄为 Nat，数值运算通过
-        val src = "@unpure\nfun probe2(o: Str | Nat): Nat =\n    when(o) {\n        is Str -> 0\n        else   -> o + 1\n    }"
+        val src = "@impure\nfun probe2(o: Str | Nat): Nat =\n    when(o) {\n        is Str -> 0\n        else   -> o + 1\n    }"
         assertTrue(ok(src), "else 分支应反收窄为剩余变体 Nat")
     }
 
     @Test
     fun `和类型 when is 分支必须命中联合变体`() {
         // is Bool 不在 Str|Nat 中 → E-TYPE-MISMATCH（联合成员校验）
-        val src = "@unpure\nfun test(o: Str | Nat) =\n    when(o) {\n        is Bool -> print(o)\n        else -> print(0)\n    }"
+        val src = "@impure\nfun test(o: Str | Nat) =\n    when(o) {\n        is Bool -> print(o)\n        else -> print(0)\n    }"
         assertTrue(errs(src).contains("E-TYPE-MISMATCH"), "is 非联合成员应报 E-TYPE-MISMATCH")
     }
 }

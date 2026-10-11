@@ -1,4 +1,4 @@
-package sugared.functor.checker
+﻿package sugared.functor.checker
 
 import sugared.functor.ast.*
 
@@ -8,25 +8,25 @@ import sugared.functor.ast.*
  */
 
 /**
- * 决策 34：每个未标 `@unpure` 的具名函数，编译器自动给出 `pure<name>` 证明。
+ * 决策 34：每个未标 `@impure` 的具名函数，编译器自动给出 `pure<name>` 证明。
  * 在符号收集完成后统一注册，使互相调用的函数无论声明顺序都能查到对方的纯度。
  * 内建非纯函数（print）不在 syms.funs 中，天然不注册。
- * P0：pure 事实仍是每模块本名注册（跨模块 @unpure 调用需 unchecked 逃逸，见《模块系统.md》限制）。
+ * P0：pure 事实仍是每模块本名注册（跨模块 @impure 调用需 unchecked 逃逸，见《模块系统.md》限制）。
  */
 internal fun Checker.registerPureFacts() {
     globalFacts.clear()
     for ((name, fn) in syms.funs) {
-        // v2.0 @root：无体内建声明的纯度/副作用由**内建表**决定（builtinUnpure/builtinPure），用户注解不参与——
-        // 否则用户 `@root fun readFile(...)`（无 @unpure）会被误注册 pure<readFile>，制造错误证明。
-        val builtin = builtinUnpure(name) ?: builtinPure(name)
+        // v2.0 @root：无体内建声明的纯度/副作用由**内建表**决定（builtinimpure/builtinPure），用户注解不参与——
+        // 否则用户 `@root fun readFile(...)`（无 @impure）会被误注册 pure<readFile>，制造错误证明。
+        val builtin = builtinimpure(name) ?: builtinPure(name)
         val anns = if (builtin != null) builtin.annotations else fn.annotations
-        if ("unpure" !in anns) globalFacts += PAtom("pure", listOf(NameRef(name)))
+        if ("impure" !in anns) globalFacts += PAtom("pure", listOf(NameRef(name)))
         // v2.0 异步（决策 93）：@async 函数注册自然命题 async<name>——同步上下文调用须显式供给/放行
         if ("async" in anns) globalFacts += PAtom("async", listOf(NameRef(name)))
     }
     // impl 方法同样注册（按方法名）
     for ((name, entries) in syms.methods) {
-        if (entries.any { "unpure" !in it.fn.annotations }) globalFacts += PAtom("pure", listOf(NameRef(name)))
+        if (entries.any { "impure" !in it.fn.annotations }) globalFacts += PAtom("pure", listOf(NameRef(name)))
     }
 }
 

@@ -1,4 +1,4 @@
-package sugared.functor.checker
+﻿package sugared.functor.checker
 
 import sugared.functor.parser.parseSource
 import kotlin.test.Test
@@ -57,7 +57,7 @@ class DiagCoverageTest {
     @Test fun `E-UNBOUND-NAME 未定义调用`() = assertTrue(has("fun main() { nosuch() }", "E-UNBOUND-NAME"))
 
     @Test fun `E-IMPURE-CALL`() =
-        assertTrue(has("@unpure fun side(): Null {}\nfun f(): Null { side() }", "E-IMPURE-CALL"))
+        assertTrue(has("@impure fun side(): Null {}\nfun f(): Null { side() }", "E-IMPURE-CALL"))
 
     @Test fun `E-IMMUT-ASSIGN`() =
         assertTrue(has("fun main() { var a = 1\na = 2 }", "E-IMMUT-ASSIGN"))

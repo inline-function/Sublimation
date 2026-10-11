@@ -110,12 +110,13 @@ internal fun Checker.coverShapes(subj: Expr, ty: Type, depth: Int): List<CoverSh
  * 注入分支帧的等式保持 ground（体内可用绑定变量）；返回给穷尽析取的命题才 ∃ 封闭（I-14）。
  */
 internal fun Checker.checkWhen(e: WhenExpr, f: Frame, pure: Boolean): Type {
-    val subjT = checkExpr(e.subject, f, pure)
-    val subjRef: Expr = e.subjectBinding?.let { NameRef(it) } ?: e.subject
-    if (e.subjectBinding != null) {
-        f.declareVar(e.subjectBinding, subjT)
-        if (isPureValue(e.subject)) f.inject(PAtom("=", listOf(subjRef, e.subject)))
-        f.inject(PAtom(":", listOf(subjRef, typeToExpr(subjT))))
+    // v3.0（无主题 when）：subject == null → 条件分支模式（WhenArm.cond）；不绑定主题
+    val subjT: Type? = e.subject?.let { checkExpr(it, f, pure) }
+    val subjRef: Expr? = if (subjT == null) null else e.subjectBinding?.let { NameRef(it) } ?: e.subject
+    if (e.subjectBinding != null && e.subject != null) {
+        f.declareVar(e.subjectBinding, subjT!!)
+        if (isPureValue(e.subject!!)) f.inject(PAtom("=", listOf(subjRef!!, e.subject!!)))
+        f.inject(PAtom(":", listOf(subjRef!!, typeToExpr(subjT!!))))
     }
     val branchProps = ArrayList<Prop>()
     var lastT: Type? = null
@@ -124,7 +125,13 @@ internal fun Checker.checkWhen(e: WhenExpr, f: Frame, pure: Boolean): Type {
     for (arm in e.arms) {
         val nf = Frame(f)
         branchProps.forEach { nf.inject(PNot(it)) }     // 顺序否定累积
-        val bp0 = bindPattern(arm.pattern, subjRef, subjT, nf)
+        val bp0: Prop = if (subjRef == null) {
+            // 无主题：分支位是布尔条件表达式（else 分支恒真）
+            if (arm.cond != null) {
+                checkExpr(arm.cond, nf, pure)
+                PropLogic.fromExpr(arm.cond)
+            } else PTop
+        } else bindPattern(arm.pattern, subjRef, subjT!!, nf)
         // v2.0 和类型（Kotlin 风格 else 反收窄）：else 分支把联合主题收窄为剩余变体
         if (arm.pattern is PatElse && subjT is UnionType && testedTypes.isNotEmpty()) {
             val rest = subjT.variants.filterNot { v -> testedTypes.any { typeLooseEq(it, v) } }
@@ -148,20 +155,20 @@ internal fun Checker.checkWhen(e: WhenExpr, f: Frame, pure: Boolean): Type {
     //  ②主题无覆盖律（元组/函数类型等结构化类型，判穷尽需等式合同推理，超 v1 片段）→ 静默退化，
     //    不打扰用户：这不是用户写错，而是编译器判不出。
     // 两种情形都退化为 unsealedT（Null）；流向非 Null 上下文仍由 E-NON-SEALED-MATCH 兜住（决策 49）。
-    val cov = if (subjT is NamedType && !subjT.isSynthetic()) enumCoverageDisj(subjRef, subjT) else null
+    val cov = if (subjT is NamedType && !subjT.isSynthetic()) enumCoverageDisj(subjRef!!, subjT) else null
     var exhaustive = sawCatchAll || branchProps.isEmpty() || run {
         val goal = branchProps.reduce { a, b -> POr(a, b) }
         val premises = if (cov != null) f.allFacts() + cov else f.allFacts()
         proveOrDeep(premises, goal)
     }
-    if (!exhaustive && cov != null && bindingCovered(e.arms, subjT)) exhaustive = true
+    if (!exhaustive && cov != null && bindingCovered(e.arms, subjT!!)) exhaustive = true
     // v2.0 和类型：联合主题的 is 分支覆盖全部变体 → 密封（Kotlin when(is T) 穷尽）
     if (!exhaustive && subjT is UnionType) {
         val tested = e.arms.filter { it.guard == null && it.pattern is PatIs }.map { (it.pattern as PatIs).type }
         if (subjT.variants.all { v -> tested.any { typeLooseEq(it, v) } }) exhaustive = true
     }
     if (!exhaustive) {
-        if (cov != null)
+        if (cov != null || e.subject == null)
             d.warn("W-NON-EXHAUSTIVE", e.pos, "when 非穷尽（缺 else 或覆盖不全），作为表达式时值类型退化为 Null")
         return unsealedT()
     }
@@ -213,6 +220,7 @@ internal fun Checker.bindPattern(p: Pattern, subj: Expr, subjT: Type, nf: Frame)
     }
     return when (p) {
     is PatElse -> PTop
+    is PatCond -> PTop   // v3.0：条件分支不进模式绑定（条件在 WhenArm.cond）
     is PatBind -> {
         if (p.name != "_") {
             nf.declareVar(p.name, subjT)
@@ -312,6 +320,7 @@ internal fun Checker.patternTerm(p: Pattern): Pair<Expr, List<String>> = when (p
     is PatLit -> p.value to emptyList()
     is PatIs -> NameRef("_") to emptyList()
     is PatElse -> NameRef("_") to emptyList()
+    is PatCond -> NameRef("true") to emptyList()   // v3.0：条件分支恒真占位
     is PatCtor -> {
         if (p.args.isEmpty()) {
             if (syms.ctors.containsKey(p.name)) NameRef(p.name) to emptyList()

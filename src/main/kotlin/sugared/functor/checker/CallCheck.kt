@@ -194,7 +194,8 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
                 methodSugarArgs[c]!!, listOfNotNull(selfT) + argTypes, isMethodPath = true)
     }
 
-    val fn: FunDecl = (if (fieldCallee != null) null else findCallable(name, argTypes))   // O2：点号形态直指类型类方法，不被同名自由函数截胡；v2.0 按实参挑重载
+    val fc = if (fieldCallee != null) null else findCallable(name, argTypes)   // v2.0 按实参挑重载；v3.0 跨可见模块（含 stdlib）
+    val fn: FunDecl = fc?.first
         ?: run {
             // 类型类方法调用（决策 60，T5；O2 双形态）：按 self 类型解析字典，按调用点留痕给 codegen
             if (isMethodName(name)) {
@@ -236,6 +237,8 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
 
     if (!isMethodPath && syms.funs.containsKey(name))
         moduleHits[c.callee] = jsOverloadName(modulePath, fn)   // P0：同模块全局调用按模块前缀留痕；v2.0 重载带首参标签
+    else if (!isMethodPath && fc != null && fc.second != modulePath)
+        moduleHits[c.callee] = jsOverloadName(fc.second, fn)   // v3.0：裸名跨模块（std）调用按来源模块留痕
     // v1.1 方法糖：接收者前置重排 `xs.map(f)` → `map(xs, f)`（实参类型首项为接收者类型）
     val sugar = methodSugarArgs[c]
     if (sugar != null)
@@ -283,9 +286,17 @@ internal fun Checker.findCollectionMethod(name: String, selfT: Type): Pair<FunDe
 }
 
 /** v2.0：普通（自由函数）调用按**实参首类型**从重载里挑选匹配项；无重载则退回主声明（保留原诊断路径）。
- *  只查本模块（重载目前仅用于 stdlib 同模块方法名；跨模块走 findCallableIn）。 */
-private fun Checker.findCallable(name: String, argTypes: List<Type>): FunDecl? =
-    findCallableIn(syms, name, argTypes)
+ *  v3.0：先查本模块；未命中再按可见路径（含 stdlib 挂载）跨模块找——Kotlin 默认导入风格，裸名可直接调用 stdlib 函数。
+ *  返回 (函数, 模块路径)；mod 供调用点 moduleHits 留痕。 */
+private fun Checker.findCallable(name: String, argTypes: List<Type>): Pair<FunDecl, String>? {
+    findCallableIn(syms, name, argTypes)?.let { return it to modulePath }
+    if (moduleTree != null) for (p in moduleTree.bareVisibleOf(modulePath)) {
+        if (p == modulePath) continue
+        val s = allSymbols[p] ?: continue
+        findCallableIn(s, name, argTypes)?.let { return it to p }
+    }
+    return null
+}
 
 /** 按目标模块符号表 + 实参首类型挑重载（限定调用 `stdlib.filter(xs, f)` 也须路由到 List 版，
  *  否则主声明先注册（如 Set 版）导致检查阶段选错版本报「List[Nat] 与 Set[T] 不符」）。 */
@@ -443,7 +454,9 @@ internal fun Checker.checkFnCall(
             val taken = BooleanArray(fn.params.size)
             val merged = arrayOfNulls<Expr>(fn.params.size)
             val mergedT = arrayOfNulls<Type>(fn.params.size)
-            if ("vararg" !in fn.annotations && effArgsIn.size > fn.params.size)
+            // v3.0：@vararg @tuple 形参 = 可变元组（吸收剩余实参打包）
+            val hasVararg = fn.params.any { "vararg" in it.annotations && "tuple" in it.annotations }
+            if (!hasVararg && "vararg" !in fn.annotations && effArgsIn.size > fn.params.size)
                 d.error("E-TYPE-MISMATCH", c.pos, "函数 $name 期望 ${fn.params.size} 实参，实际 ${effArgsIn.size}")
             effArgsIn.forEachIndexed { i, a ->
                 if (i < fn.params.size) { merged[i] = a; mergedT[i] = effTypesIn[i]; taken[i] = true }
@@ -453,8 +466,8 @@ internal fun Checker.checkFnCall(
                 if (taken[i]) d.error("E-NAMED-ARG", c.pos, "函数 $name 的参数 ${p.name} 已被位置实参占用")
                 merged[i] = nv; mergedT[i] = checkExpr(nv, f, pure); taken[i] = true
             }
-            if ("vararg" !in fn.annotations) {
-                val missing = fn.params.indices.filter { !taken[it] }
+            if ("vararg" !in fn.annotations && !hasVararg) {
+                val missing = fn.params.indices.filter { !taken[it] && !("vararg" in fn.params[it].annotations && "tuple" in fn.params[it].annotations) }
                 if (missing.isNotEmpty())
                     d.error("E-TYPE-MISMATCH", c.pos, "函数 $name 缺实参：${missing.joinToString(", ") { fn.params[it].name }}")
             }
@@ -471,18 +484,21 @@ internal fun Checker.checkFnCall(
     }
     // P9（决策 44，用户授权 Max 倾向：报错 + 判定含 when 解构变量）：纯函数自递归要求**至少一个**实参是某形参的语法子项。
     // 多参数递归（map(f, t)）允许透传参数（f 原样）——停止性由递减者（t）保证；全参数都不递减才算违规。
-    // unchecked 放行；@unpure 不受约束；方法路径（字典分发）暂不查。
-    if (!isMethodPath && "unpure" !in fn.annotations && uncheckedDepth == 0 && name == curFunName && curFunName != null) {
+    // unchecked 放行；@impure 不受约束；方法路径（字典分发）暂不查。
+    if (!isMethodPath && "impure" !in fn.annotations && uncheckedDepth == 0 && name == curFunName && curFunName != null) {
         if (effArgs.none { isStructuralArg(it) })
             d.error("E-NON-STRUCTURAL-REC", c.pos,
                 "函数 $name 的递归须有至少一个实参是某形参的语法子项（when 解构链）——用 unchecked 放行或改写为结构递归")
     }
     fn.params.forEachIndexed { i, p ->
-        if ("tuple" in p.annotations && i < effArgs.size && effArgs[i] !is TupleExpr)
-            d.error("E-TUPLE-VARARG", c.pos, "@tuple 形参 ${p.name} 只接受元组字面量，裸变量请先用 (x,) 打包（决策 61）")
+        if ("tuple" in p.annotations && "vararg" !in p.annotations) {
+            // v3.0：@vararg @tuple = 可变元组（Kotlin vararg）——吸收位置实参自动打包；普通 @tuple 仍只收元组字面量
+            if (i < effArgs.size && effArgs[i] !is TupleExpr)
+                d.error("E-TUPLE-VARARG", c.pos, "@tuple 形参 ${p.name} 只接受元组字面量，裸变量请先用 (x,) 打包（决策 61）；可变个数请用 @vararg @tuple")
+        }
     }
 
-    if ("unpure" in fn.annotations && pure) {
+    if ("impure" in fn.annotations && pure) {
         // 决策 54：pure 是上下文的单参命题，可改变代码行为——
         // 上下文持有 pure<被调函数> 时，编译器视该调用为纯，无需 unchecked 逃逸
         // O2：方法路径（点号/自由式）的纯度原子统一按方法名（registerPureFacts 同名注册）
@@ -501,7 +517,7 @@ internal fun Checker.checkFnCall(
     } else if ("async" in fn.annotations && curFunAsync) {
         asyncAwaitHits[c] = true   // 挂起点：codegen 生成 await
     }
-    if (fn.params.size != effTypes.size && "vararg" !in fn.annotations) {
+    if (fn.params.size != effTypes.size && "vararg" !in fn.annotations && !fn.params.any { "vararg" in it.annotations && "tuple" in it.annotations }) {
         // O2：方法路径参数数用专属码（期望数不含隐式 self，与自由函数区分开便于定位）
         if (isMethodPath) d.error("E-METHOD-ARGS", c.pos,
             "方法 $name 期望 ${fn.params.size} 实参（不含接收者），实际 ${effTypes.size}")
@@ -543,6 +559,21 @@ internal fun Checker.checkFnCall(
     if (rounds > 1) d.dedupe()
     // 非 lambda 实参核对（仅一次，避免迭代重复报错）
     fn.params.forEachIndexed { i, p ->
+        // v3.0：@vararg @tuple 可变元组——从 i 起所有剩余实参与元组分量逐个 unify（打包）
+        if ("vararg" in p.annotations && "tuple" in p.annotations && i < effTypes.size) {
+            val elem = (syms.expand(p.type) as? TupleType)?.items?.firstOrNull()
+            if (elem != null) {
+                // v3.0：可变元组 = 同型重复——逐实参合一；冲突（异构）显式报 E-TYPE-MISMATCH
+                var unified = true
+                for (j in i until effTypes.size) {
+                    val at = effTypes[j]
+                    if (!at.isSynthetic() && !unifyInto(elem, at, tps.toSet(), tsub, tpArityOf(fn))) unified = false
+                }
+                if (!unified)
+                    d.error("E-TYPE-MISMATCH", c.pos, "@vararg @tuple 形参 ${p.name}：实参须为同一类型（可变元组打包）")
+                return@forEachIndexed
+            }
+        }
         if (i >= effTypes.size) return@forEachIndexed
         val want = syms.expand(p.type).substT(tsub)
         // v2.0 和类型：联合形参（name=(union) 以 ( 开头）也要核对——实参须命中某个变体（成员匹配）。
@@ -669,7 +700,7 @@ private fun extractTpBinding(want: Type, got: Type, tps: Set<String>, tsub: Link
 
 /** P9（决策 44，递归停机）：实参是否为某形参的语法子项。
  *  变量实参：形参自身（链长 0）→ 否（无进展）；解构血缘链（structSub，when 解构登记的 子→父）向上可到形参 → 是。
- *  非变量实参（`n - 1`、调用、字面量）→ 否。unchecked/@unpure 的放行在调用侧判断。 */
+ *  非变量实参（`n - 1`、调用、字面量）→ 否。unchecked/@impure 的放行在调用侧判断。 */
 private fun Checker.isStructuralArg(a: Expr): Boolean {
     val vname: String? = when (a) {
         is NameRef -> a.name
