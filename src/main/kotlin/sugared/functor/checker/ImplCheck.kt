@@ -29,18 +29,25 @@ internal fun Checker.checkImplsFrom(files: List<FileAst>) {
                 if (ar > 0) pname to (when (val s = impl.self) { is NamedType -> NamedType(s.name); else -> s })
                 else pname to (impl.self.args.getOrNull(i) ?: impl.self)
             }.toMap()
+            // v3.0 特性 2：`impl C for T by field` 委托展开——转发字段方法补齐缺省方法
+            var expanded = impl.members
+            if (impl.delegate != null) {
+                expanded = expandDelegate(impl, cls)
+                if (expanded === impl.members && impl.members.isEmpty()) continue   // 委托字段无效（已报 E-BY-UNBOUND）不再级联
+                syms.delegatedImpls[impl] = expanded
+            }
             val classMethods = cls.members.associateBy { it.name }
-            val implNames = impl.members.map { it.name }.toSet()
+            val implNames = expanded.map { it.name }.toSet()
             for ((mname, msig) in classMethods) {
                 if (mname !in implNames) {
                     d.error("E-IMPL-INCOMPLETE", impl.pos, "impl ${impl.trait.render()} for ${impl.self.render()} 缺方法 $mname")
                     continue
                 }
-                val mfn = impl.members.first { it.name == mname }
+                val mfn = expanded.first { it.name == mname }
                 if (!signatureMatch(msig, mfn, sub))
                     d.error("E-IMPL-MISMATCH", mfn.pos, "方法 $mname 签名与类声明不一致")
             }
-            for (mfn in impl.members) {
+            for (mfn in expanded) {
                 if (mfn.name !in classMethods && "new" !in mfn.annotations)
                     d.error("E-IMPL-EXTRA", mfn.pos, "方法 ${mfn.name} 不属于类 ${cls.name}，需标 @new")
                 syms.methods.getOrPut(mfn.name) { ArrayList() }
@@ -225,4 +232,35 @@ private fun kindWildcardMatch(self: Type, argT: Type): Boolean = when {
 /** 占位变量判据（HKT-S6）：零实参、名字首字母小写、未声明为类型别名/基类型——即 `List[a]` 里的 a */
 private fun isKindPlaceholder(t: NamedType): Boolean =
     t.name.firstOrNull()?.isLowerCase() == true && t.args.isEmpty()
+
+/** v3.0 特性 2：impl C for T by field 委托展开——为缺的方法生成转发 m(args) = field.m(args)。
+ *  字段不存在（或 self 非结构体）报 E-BY-UNBOUND；E-BY-TYPE 为可选检查，v1 不做。
+ *  转发方法签名照抄类声明（参数/返回一致），codegen 按普通方法调用生成。 */
+internal fun Checker.expandDelegate(impl: ImplDecl, cls: ClassDecl): List<FunDecl> {
+    val byName = impl.delegate!!
+    val struct = (impl.self as? NamedType)?.let { st -> syms.structs[st.name] }
+    val fields = struct?.fields ?: emptyList()
+    if (fields.none { it.name == byName }) {
+        d.error("E-BY-UNBOUND", impl.pos, "impl " + impl.trait.render() + " for " + impl.self.render() + " 委托字段 " + byName + " 不存在（" + (struct?.name ?: impl.self.render()) + " 非结构体或无此字段）")
+        return impl.members
+    }
+    val have = impl.members.map { it.name }.toSet()
+    val forwards = cls.members.filter { it.name !in have }.map { msig ->
+        val args = msig.params.map { NameRef(it.name) as Expr }
+        FunDecl(
+            name = msig.name,
+            annotations = emptyList(),
+            theory = msig.theory,
+            params = msig.params.map { it.copy() },
+            preps = msig.preps,
+            retType = msig.retType,
+            posts = msig.posts,
+            body = CallExpr(FieldExpr(NameRef(byName), msig.name), args),
+            constraints = msig.constraints,
+            pos = impl.pos,
+        )
+    }
+    return impl.members + forwards
+}
+
 

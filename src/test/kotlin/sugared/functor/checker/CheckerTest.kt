@@ -1124,6 +1124,24 @@ class CheckerTest {
         assertTrue(errs(src).contains("E-TYPE-MISMATCH"), "is 非联合成员应报 E-TYPE-MISMATCH")
     }
     @Test
+    fun `委托 impl - 字段方法转发`() {
+        val src = "class Showable { fun label(): Str }\nstruct A\nimpl Showable for A { fun label(): Str = \"A\" }\nstruct B(a: A)\nimpl Showable for B by a\n@impure fun main() { var b = B(A())\nprint(b.label()) }"
+        assertTrue(ok(src))
+    }
+
+    @Test
+    fun `委托 impl - 带参方法转发`() {
+        val src = "class Binary { fun double(x: Nat): Nat }\nstruct Math\nimpl Binary for Math { fun double(x: Nat): Nat = x * 2 }\nstruct Wrapper(m: Math)\nimpl Binary for Wrapper by m\n@impure fun main() { var w = Wrapper(Math())\nprint(w.double(21)) }"
+        assertTrue(ok(src))
+    }
+
+    @Test
+    fun `委托 impl - 字段不存在报 E-BY-UNBOUND`() {
+        val src = "class Showable { fun label(): Str }\nstruct A\nstruct B(a: A)\nimpl Showable for B by x\n@impure fun main() { var b = B(A())\nprint(b.label()) }"
+        assertTrue(errs(src).contains("E-BY-UNBOUND"))
+    }
+
+    @Test
     fun `结构体伴生命题 - 字面量构造通过`() {
         val src = "struct Natural(n: Nat) <n ≠ 0>\n@impure fun main() { var t = Natural(3)\nprint(t.n) }"
         assertTrue(ok(src), "3 ≠ 0 应常量可证")

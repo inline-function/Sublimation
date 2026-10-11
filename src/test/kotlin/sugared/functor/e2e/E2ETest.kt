@@ -24,7 +24,7 @@ class E2ETest {
         val chk = Checker(ast)
         val bag = chk.run()
         assertEquals(false, bag.hasError, "语义检查应通过，实际:\n${bag.report()}")
-        val js = JsCodeGen().generate(ast, chk.dictHits, chk.moduleHits, chk.consHits, chk.dictSubHits, chk.namedArgOrder, chk.methodSugarArgs, chk.asyncAwaitHits, chk.channelUsed, chk.receiveSmartHits, chk.hktKindPosHits, chk.funRefTargets, chk.funRefFree.keys, chk.lambdaDestructKeys)
+        val js = JsCodeGen().generate(ast, chk.dictHits, chk.moduleHits, chk.consHits, chk.dictSubHits, chk.namedArgOrder, chk.methodSugarArgs, chk.asyncAwaitHits, chk.channelUsed, chk.receiveSmartHits, chk.hktKindPosHits, chk.funRefTargets, chk.funRefFree.keys, chk.lambdaDestructKeys, chk.delegatedImpls)
         val f = File.createTempFile("subl-e2e-", ".js")
         f.writeText(js)
         return try {
@@ -39,6 +39,16 @@ class E2ETest {
     fun `算术与函数调用`() {
         assumeTrue(nodeAvailable())
         assertEquals("5", run("fun add(a: Nat, b: Nat): Nat = a + b\nfun main() { unchecked print(add(2, 3)) }"))
+    }
+
+    @Test
+    fun `委托 impl 端到端`() {
+        assumeTrue(nodeAvailable())
+        val src = "class Showable { fun label(): Str }\n" +
+            "struct A\nimpl Showable for A { fun label(): Str = \"A\" }\n" +
+            "struct B(a: A)\nimpl Showable for B by a\n" +
+            "fun main() { var b = B(A())\nunchecked print(b.label()) }"
+        assertEquals("A", run(src))
     }
 
     @Test

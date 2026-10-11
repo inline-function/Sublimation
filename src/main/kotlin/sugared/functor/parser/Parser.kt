@@ -681,16 +681,28 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         at(Kind.IMPL)
         val trait = parseType()
         val self = if (peek(Kind.FOR)) { pos++; parseType() } else trait
-        at(Kind.LBRACE)
-        val members = ArrayList<FunDecl>()
-        while (!peek(Kind.RBRACE)) {
-            skipSemis()
-            if (peek(Kind.RBRACE)) break
-            val anns = parseAnnotations()
-            members += parseFun(anns)
+        // v3.0 特性 2：`impl C for T by field` 委托——by 后必须跟字段名（IDENT）
+        var delegate: String? = null
+        if (peek(Kind.BY)) {
+            pos++
+            val dt = cur()
+            if (dt.kind != Kind.IDENT)
+                throw ParseFailure(fileName, dt, "impl 委托 by 后应跟字段名")
+            else delegate = dt.text
+            pos++
         }
-        at(Kind.RBRACE)
-        return ImplDecl(trait, self, members)
+        val members = ArrayList<FunDecl>()
+        if (peek(Kind.LBRACE)) {
+            at(Kind.LBRACE)
+            while (!peek(Kind.RBRACE)) {
+                skipSemis()
+                if (peek(Kind.RBRACE)) break
+                val anns = parseAnnotations()
+                members += parseFun(anns)
+            }
+            at(Kind.RBRACE)
+        }
+        return ImplDecl(trait, self, members, delegate)
     }
 
     // ---------- 表达式 ----------

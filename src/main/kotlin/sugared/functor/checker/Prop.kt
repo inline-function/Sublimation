@@ -505,3 +505,4 @@ class Prover(private val maxRounds: Int = 3, private val maxDepth: Int = 4) {
         }
         return false
     }
+}

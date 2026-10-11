@@ -1,4 +1,4 @@
-﻿package sugared.functor.checker
+package sugared.functor.checker
 
 import sugared.functor.ast.*
 
@@ -285,6 +285,8 @@ class Symbols {
     val implsByTrait = HashMap<String, MutableList<ImplEntry>>()
     /** v2.1 子类型类：类型类名 → 父类型类引用列表（`class Sub : Base` 的 parents；约束蕴含/子类覆盖用） */
     val clsParents = HashMap<String, List<Type>>()
+    /** v3.0 特性 2：委托 impl（by field）的展开方法表（ImplDecl → 含转发的完整成员列表），供 codegen 字典生成 */
+    val delegatedImpls = LinkedHashMap<ImplDecl, List<FunDecl>>()
 
     fun findFun(name: String): FunDecl? = builtinimpure(name) ?: builtinPure(name) ?: funs[name]
 

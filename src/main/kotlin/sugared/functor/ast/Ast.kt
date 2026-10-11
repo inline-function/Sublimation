@@ -44,6 +44,8 @@ data class ImplDecl(
     val trait: Type,
     val self: Type,
     val members: List<FunDecl>,
+    /** v3.0 特性 2：`impl C for T by field` 委托——转发字段的方法到 C 的所有方法 */
+    val delegate: String? = null,
     override val pos: String = "",
 ) : Decl
 

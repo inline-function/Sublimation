@@ -89,6 +89,9 @@ class Checker(
      * 限定方法调用为 MODULE_METHOD_MARKER（字典分发的分支选择用）。
      */
     internal val moduleHits = java.util.IdentityHashMap<Expr, String>()
+    /** v3.0 特性 2：委托 impl 展开方法表（ImplDecl → 含转发的成员），codegen 字典生成用 */
+    internal val delegatedImpls: Map<ImplDecl, List<FunDecl>>
+        get() = syms.delegatedImpls
     /** P6（决策 95）：函数引用 `o::f` → 方法 JS 名（codegen 生成闭包引用） */
     internal val funRefTargets = java.util.IdentityHashMap<Expr, String>()
     /** v3.0（完美函数类型）：自由函数引用（o::f 中 f 是全局函数，o 仅作语法载体）——codegen 不注入接收者 */
@@ -184,7 +187,9 @@ class Checker(
             // O2：impl 成员带隐式 self（决策 68，用户样本形态），方法体内可裸用自类型字段
             is ImplDecl -> {
                 val selfT = syms.expand(decl.self)
-                decl.members.forEach { if (it.body != null) checkFun(it, selfT) }
+                // v3.0 特性 2：委托 impl 用展开成员（含转发方法），转发体也过检查登记字典
+                val mems = delegatedImpls[decl] ?: decl.members
+                mems.forEach { if (it.body != null) checkFun(it, selfT) }
             }
             else -> {}
         }

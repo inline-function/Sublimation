@@ -55,6 +55,8 @@ class JsCodeGen {
     private var moduleHits: Map<Expr, String> = emptyMap()
     private var funRefTargets: Map<Expr, String> = emptyMap()
 private var funRefFree: Set<Expr> = emptySet()
+    /** v3.0 特性 2：委托 impl 的展开方法表（checker 传参） */
+    private var delegatedImpls: Map<ImplDecl, List<FunDecl>> = emptyMap()
     private var lambdaDestructKeys: Map<Expr, List<List<String>?>> = emptyMap()
     /** P0（M8）：当前生成单元的模块 absPath（根 = ""） */
     private var currentPrefix = ""
@@ -106,7 +108,8 @@ private var funRefFree: Set<Expr> = emptySet()
         funRefTargets: Map<Expr, String> = emptyMap(),
         funRefFree: Set<Expr> = emptySet(),
         lambdaDestructKeys: Map<Expr, List<List<String>?>> = emptyMap(),
-    ): String = generateUnits(listOf("" to file), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, receiveSmartHits, hktKindPosHits, funRefTargets, funRefFree, lambdaDestructKeys)
+        delegatedImpls: Map<ImplDecl, List<FunDecl>> = emptyMap(),
+    ): String = generateUnits(listOf("" to file), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, receiveSmartHits, hktKindPosHits, funRefTargets, funRefFree, lambdaDestructKeys, delegatedImpls)
 
     /** M8：全部模块合成一个 JS（顶层名字带模块前缀，根无前缀） */
     fun generateUnits(
@@ -124,11 +127,13 @@ private var funRefFree: Set<Expr> = emptySet()
         funRefTargets: Map<Expr, String> = emptyMap(),
         funRefFree: Set<Expr> = emptySet(),
         lambdaDestructKeys: Map<Expr, List<List<String>?>> = emptyMap(),
+        delegatedImpls: Map<ImplDecl, List<FunDecl>> = emptyMap(),
     ): String {
         dicts = dictHits
         this.moduleHits = moduleHits
         consDicts = consHits
         dictSubArgs = dictSubHits
+        this.delegatedImpls = delegatedImpls
         namedArgOrders = namedArgHits
         sugarArgs = sugarHits
         this.awaitHits = awaitHits
@@ -366,7 +371,9 @@ private var funRefFree: Set<Expr> = emptySet()
         line("const $dn = {")
         indent++
         val fields = structFields[(impl.self as? NamedType)?.name ?: ""] ?: emptyList()
-        for ((i, m) in impl.members.withIndex()) {
+        // v3.0 特性 2：委托 impl 用 checker 展开成员（含转发方法）
+        val members = delegatedImpls[impl] ?: impl.members
+        for ((i, m) in members.withIndex()) {
             val body = m.body ?: continue
             // 隐藏首参 d（字典自身，供体内递归分发）。零参类型类加隐式接收者 __self（决策 68）；
             // kind 类型类（HKT-D2）self 已显式在形参表（map(f, fa) 的 fa 位），签名无 __self——(d, f, fa...)。
@@ -374,7 +381,7 @@ private var funRefFree: Set<Expr> = emptySet()
                 (listOf("d") + m.params.map { mangle(it.name) }).joinToString(", ")
             else
                 (listOf("d", "__self") + m.params.map { mangle(it.name) }).joinToString(", ")
-            val comma = if (i == impl.members.lastIndex) "" else ","
+            val comma = if (i == members.lastIndex) "" else ","
             // 字段裸用重写上下文：字段名 − 体内一切绑定名（保守：存在同名局部绑定时整体不重写，
             // 宁可 JS 报未定义也不产出静默错值）
             val savedFields = methodFields; val savedLocals = methodLocals
