@@ -283,6 +283,8 @@ class Symbols {
     val aliases = LinkedHashMap<String, TypeAliasDecl>()          // 类型别名（决策 30）
     /** P6（决策 82）：类型类 → 实现条目（含声明模块路径）。约束 `T: Show` 的字典解析用（I-22 复用可见性过滤） */
     val implsByTrait = HashMap<String, MutableList<ImplEntry>>()
+    /** v2.1 子类型类：类型类名 → 父类型类引用列表（`class Sub : Base` 的 parents；约束蕴含/子类覆盖用） */
+    val clsParents = HashMap<String, List<Type>>()
 
     fun findFun(name: String): FunDecl? = builtinUnpure(name) ?: builtinPure(name) ?: funs[name]
 

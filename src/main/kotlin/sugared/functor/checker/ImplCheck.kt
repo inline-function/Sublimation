@@ -153,6 +153,21 @@ internal fun StructDecl.typeArgsSub(t: Type): Map<String, Type> {
     return tps.zip(t.args).toMap()
 }
 
+/** v2.1 子类型类强制（对齐 Rust 子特质）：`impl Sub for X` 时，父类型类 Super 必须已实现于 X。
+ *  在全部 impl 收集完成后调用（父类 impl 可能声明在后）；违反 → E-NO-INSTANCE 并提示先实现父类。 */
+internal fun Checker.checkSubTraitParents() {
+    for ((name, entries) in syms.implsByTrait) {
+        val cls = syms.classes[name] ?: continue
+        for (parent in cls.parents) {
+            val pName = syms.expand(parent).name
+            val parentImpls = syms.implsByTrait[pName].orEmpty()
+            for (entry in entries)
+                if (parentImpls.none { typeLooseEq(it.self, entry.self) })
+                    d.error("E-NO-INSTANCE", "", "实现类型类 ${entry.traitName} for ${entry.self.render()} 须先实现父类型类 ${pName}（子类型类 ${entry.traitName} : ${pName}）")
+        }
+    }
+}
+
 /** HKT（《高阶类型.md》HKT-S6，方案 A）：impl self 是否匹配实参类型。
  *  普通 self（`Show[Int]` for Int）走 typeLooseEq；self 是**构造子应用占位**（`List[a]` 的 a 为小写裸名）
  *  时按 kind 通配——同构造子同 arity 即匹配，占位变量接受任何同位置实参（含嵌套，如 `List[a]` vs `List[Nat]`）。 */

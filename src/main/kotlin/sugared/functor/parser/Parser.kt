@@ -463,6 +463,16 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         at(Kind.CLASS)
         val name = nameToken()
         val theory = if (peek(Kind.LBRACKET)) parseTheory() else emptyList()
+        // v2.1 子类型类：`class Sub[T] : Base[T] , Ord[T]`（父类型类列表，逗号分隔）
+        val parents = ArrayList<Type>()
+        if (peek(Kind.COLON)) {
+            pos++
+            while (true) {
+                parents += parseNamedType()
+                if (peek(Kind.COMMA)) { pos++; continue }
+                break
+            }
+        }
         at(Kind.LBRACE)
         val members = ArrayList<FunDecl>()
         while (!peek(Kind.RBRACE)) {
@@ -472,7 +482,7 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
             members += parseFun(anns)
         }
         at(Kind.RBRACE)
-        return ClassDecl(name, theory, members)
+        return ClassDecl(name, theory, members, parents)
     }
 
     private fun parseStruct(): StructDecl {
@@ -559,9 +569,15 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                 if (!t.precededBySpace) break   // 紧贴的 < 属于 postfix 实例化
                 pos++; left = BinExpr("<", left, parseUnary()); continue
             }
-            // v2.0 空安全：`a ? T` 运行时类型测（? 需前后空格——紧贴 = T? 后缀已在类型位处理）。
-            // 右操作数是类型名（结构判定目标），非值表达式。
-            if (t.kind == Kind.QUEST) {
+            // v2.0 空安全：`T?` 后缀、`a ?: b` 空替代、`a ?.f` 安全调用继续保留；
+            // v2.1（对齐 Rust）：`a ? T` 运行时类型测正式改为中缀 `a is T`（is 复用模式匹配关键词），
+            // 右操作数是类型名（结构判定目标），非值表达式；类型类判定由 checkTypeTest 拦截。
+            // 同行约束：is 与被测表达式必须同一行（否则会被 when 分支体的换行 is 误吞，
+            // 如 `is Str -> 0 \n is Nat -> o`——0 之后的换行 is 属于下一个分支的模式）。
+            if (t.kind == Kind.IS) {
+                // is 前一个 token 的行即左操作数结束行；跨行的 is 不是中缀（when 分支体换行后的 is 属下一分支模式）
+                val leftEnd = toks.getOrNull(pos - 1)?.line
+                if (leftEnd != null && leftEnd != t.line) break
                 pos++
                 left = TypeTestExpr(left, parseType())
                 continue

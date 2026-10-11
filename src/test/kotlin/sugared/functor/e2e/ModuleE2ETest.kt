@@ -503,7 +503,7 @@ class ModuleE2ETest {
     @Test
     fun `v2 空安全 - 类型测问号 T`() {
         assumeTrue(nodeAvailable())
-        val main = "fun describe(x: Any): Bool = x ? Rat\n" +
+        val main = "fun describe(x: Any): Bool = x is Rat\n" +
             "@unpure fun main() {\n" +
             "var b1 = describe(5)\n" +
             "var b2 = describe(\"a\")\n" +
@@ -754,7 +754,7 @@ class ModuleE2ETest {
         // o: Any 参数，`if (o ? Point)` 分支内 o 从 Any 收窄为 Point（Kotlin 智能转换扩展）
         val main = "struct Point(x: Nat, y: Nat)\n" +
             "@unpure fun describe(o: Any): Null {\n" +
-            "  if (o ? Point) {\n" +
+            "  if (o is Point) {\n" +
             "    var pt: Point = o\n" +
             "    print(\"pt.x=\${pt.x}\")\n" +
             "  }\n" +

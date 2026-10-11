@@ -124,6 +124,36 @@ class CheckerTest {
         assertTrue(errs(src).contains("E-IMPL-EXTRA"))
     }
 
+    // ============ v2.1 子类型类（对齐 Rust 子特质：class Sub : Base） ============
+
+    @Test
+    fun `子类型类 父类已实现则通过`() {
+        val src = "class Base[T] { fun base(t: T): T }\n" +
+            "class Sub[T] : Base[T] { fun sub(t: T): T }\n" +
+            "impl Base for Nat { fun base(t: Nat): Nat = t }\n" +
+            "impl Sub for Nat { fun sub(t: Nat): Nat = t }\n" +
+            "fun f[T: Sub](x: T): T = x"
+        assertTrue(ok(src), "子类型类 + 父类已实现 + 泛型约束应通过")
+    }
+
+    @Test
+    fun `子类型类 缺父类实现报错`() {
+        val src = "class Base[T] { fun base(t: T): T }\n" +
+            "class Sub[T] : Base[T] { fun sub(t: T): T }\n" +
+            "impl Sub for Nat { fun sub(t: Nat): Nat = t }"
+        assertTrue(errs(src).contains("E-NO-INSTANCE"), "impl Sub 须先实现父类型类 Base")
+    }
+
+    @Test
+    fun `子类型类 具体类型可调父类方法`() {
+        val src = "class Base[T] { fun base(t: T): T }\n" +
+            "class Sub[T] : Base[T] { fun sub(t: T): T }\n" +
+            "impl Base for Nat { fun base(t: Nat): Nat = t }\n" +
+            "impl Sub for Nat { fun sub(t: Nat): Nat = t }\n" +
+            "fun main() { var x = 1.base(1) }"
+        assertTrue(ok(src), "父类字典应可解析")
+    }
+
     @Test
     fun `var 注入等式事实可作供给`() {
         val src = "fun need0()<n = 0>: Null {}\nfun main() { var n = 0\nneed0() }"
@@ -883,13 +913,13 @@ class CheckerTest {
     @Test
     fun `和类型 用户代码跑通`() {
         // 用户验收：Str | Nat 联合 + `o ? Str` 类型测 + then 收窄为 Str / else 反收窄为 Nat
-        val src = "@unpure\nfun test(o: Str | Nat) =\n    if(o ? Str)\n        print(o)\n    else\n        print(\"\${o + 1}\")"
+        val src = "@unpure\nfun test(o: Str | Nat) =\n    if(o is Str)\n        print(o)\n    else\n        print(\"\${o + 1}\")"
         assertTrue(ok(src), "联合类型 + else 反收窄应通过类型检查")
     }
 
     @Test
     fun `和类型 联合之外的实参报错`() {
-        val src = "fun test(o: Str | Nat): Null = o ? Str\n" +
+        val src = "fun test(o: Str | Nat): Null = o is Str\n" +
             "fun main() { test(true) }"
         assertTrue(errs(src).contains("E-TYPE-MISMATCH"), "Bool 不在 Str|Nat 中，应报 E-TYPE-MISMATCH")
     }
@@ -897,7 +927,7 @@ class CheckerTest {
     @Test
     fun `和类型 then 分支智能收窄`() {
         // then 分支 o: Str，直接调 Str 专用内建（strUpper）；else 分支 o: Nat 数值运算
-        val src = "@unpure\nfun test(o: Str | Nat) =\n    if(o ? Str)\n        print(strUpper(o))\n    else\n        print(o + 1)"
+        val src = "@unpure\nfun test(o: Str | Nat) =\n    if(o is Str)\n        print(strUpper(o))\n    else\n        print(o + 1)"
         assertTrue(ok(src), "then/else 分支收窄后应各按收窄类型检查")
     }
 

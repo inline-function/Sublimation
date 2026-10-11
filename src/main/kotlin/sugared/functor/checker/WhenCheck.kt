@@ -226,6 +226,9 @@ internal fun Checker.bindPattern(p: Pattern, subj: Expr, subjT: Type, nf: Frame)
     }
     is PatIs -> {
         checkTypeResolvable(p.type, emptyList())
+        val tn = (p.type as? NamedType)?.name
+        if (tn != null && syms.classes.containsKey(tn))
+            d.error("E-TYPE-MISMATCH", p.pos, "is 模式不能判断类型类 ${p.type.render()}（类型类是编译期约束，无运行时 tag）")
         if (subjT.isNominal() && !typeLooseEq(subjT, p.type))
             d.error("E-TYPE-MISMATCH", p.pos, "is ${p.type.render()} 与主题类型 ${subjT.render()} 冲突")
         // v2.0 和类型：联合主题下被测类型必须是某变体（否则 is 分支无意义），并做 Kotlin 风格收窄——

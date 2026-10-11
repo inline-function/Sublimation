@@ -146,6 +146,7 @@ class Checker(
     internal fun finishCollect(files: List<FileAst>) {
         for (fa in files) for (e in fa.entries) if (e is DeclEntry) checkDeclTypes(e.decl)
         checkImplsFrom(files)
+        checkSubTraitParents()          // v2.1 子类型类：父类型类强制（须先实现父类）
         registerPureFacts()
         registerImmutableFacts()   // v2.0 可变性（§4.2）：immutable<T> 自动判定
         registerUntouchFacts()     // v2.0 可变性（§6.2）：非 @mut 形参自动 untouch<param>
@@ -829,9 +830,14 @@ class Checker(
         return namedT("Optional", listOf(e.type))
     }
 
-    /** `a ? T`——运行时结构判定 a 是否为 T；返回 Bool。校验 T 可解析。分支内智能转换由 IfExpr 处理。 */
+    /** `a is T`（v2.1 由 `a ? T` 迁移）——运行时结构判定 a 是否为 T；返回 Bool。校验 T 可解析。
+     *  分支内智能转换由 IfExpr 处理。v2.1 规则：is 只能判断结构体/枚举（含基本类型），
+     *  类型类是编译期约束、无运行时 tag，禁止（对齐 Rust 语义）。 */
     private fun checkTypeTest(e: TypeTestExpr): Type {
         checkTypeResolvable(e.type, emptyList())
+        val tn = (e.type as? NamedType)?.name
+        if (tn != null && syms.classes.containsKey(tn))
+            d.error("E-TYPE-MISMATCH", e.pos, "is 不能判断类型类 ${e.type.render()}（类型类是编译期约束，无运行时 tag）")
         return namedT("Bool", emptyList())
     }
 }

@@ -28,11 +28,14 @@ data class FunDecl(
     override val pos: String = "",
 ) : Decl
 
-/** class ≈ Rust trait；成员为签名级 FunDecl（body=null）或带默认实现 */
+/** class ≈ Rust trait；成员为签名级 FunDecl（body=null）或带默认实现
+ *  v2.1 子类型类（对齐 Rust 子特质）：`class Sub[T] : Base[T]`，parents 为父类型类列表。
+ *  语义：impl Sub for X 时要求父类也实现于 X（E-NO-INSTANCE）；父类字典因此恒可用。 */
 data class ClassDecl(
     val name: String,
     val theory: List<TheoryParam>,
     val members: List<FunDecl>,
+    val parents: List<Type> = emptyList(),
     override val pos: String = "",
 ) : Decl
 

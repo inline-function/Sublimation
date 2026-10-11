@@ -119,6 +119,8 @@ internal fun Checker.collectDecl(decl: Decl) {
             syms.typeParamNames[decl.name] = tpNamesOf(decl)
             // 决策 60（T5）：登记候选方法名，使"只有 class、没有 impl"的调用报 E-NO-INSTANCE
             decl.members.forEach { syms.traitMethods.add(it.name) }
+            // v2.1 子类型类：登记父链（impl 强制/约束蕴含/覆盖优先级用）
+            if (decl.parents.isNotEmpty()) syms.clsParents[decl.name] = decl.parents
         }
         is FunDecl -> {
             // `_` 是匿名占位名，不入符号表（指导§54：标注为 _ 的标识符无法被后续引用）

@@ -376,7 +376,7 @@ class ParserTest {
 
     @Test
     fun `typetest 问号类型测解析`() {
-        val v = (stmtsOf("var z = x ? Rat")[0] as VarStmt).value as TypeTestExpr
+        val v = (stmtsOf("var z = x is Rat")[0] as VarStmt).value as TypeTestExpr
         assertEquals("x", (v.target as NameRef).name)
         assertEquals("Rat", v.type.name)
     }
