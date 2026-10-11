@@ -205,6 +205,33 @@ class CheckerTest {
     }
 
     @Test
+    fun `P4 函数参数解构 fun 左括号a逗号b右括号Point`() {
+        val src = "struct Point(x: Nat, y: Nat)\n" +
+            "fun psum((a, b): Point): Nat = a + b\n" +
+            "fun tsum((x, y): (Nat, Str)): Str = y\n" +
+            "fun main() { var (m, n) = (3, 4)\nvar p = Point(5, 6) }"
+        assertTrue(ok(src), "函数与 var 元组参数解构应通过")
+    }
+
+    @Test
+    fun `P4 lambda 参数解构`() {
+        val src = "fun apply(f: (Nat, Str) => Str, v: (Nat, Str)): Str = f(v)\n" +
+            "fun main() { var f = { (a, b) => b } }"
+        assertTrue(ok(src), "lambda 解构参数应通过")
+    }
+
+    @Test
+    fun `P4 解构参数禁用指名参数`() {
+        val src = "fun f((a, b): (Nat, Nat)): Nat = a\nfun main() { var x = f(a = 1, b = 2) }"
+        assertTrue(errs(src).contains("E-NAMED-ARG"), "解构参数函数禁用指名参数")
+    }
+
+    @Test
+    fun `P4 解构不可解构类型报错`() {
+        val src = "fun f((a, b): Nat): Nat = a\nfun main() {}"
+        assertTrue(errs(src).contains("E-DESTRUCT"), "Nat 不可解构应报 E-DESTRUCT")
+    }
+    @Test
     fun `P6 函数引用 o冒号冒号f 简单方法可传`() {
         val src = "fun id(x: Nat): Nat = x\n" +
             "@unpure fun apply(f: (Nat) => Nat, v: Nat): Nat = f(v)\n" +

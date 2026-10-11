@@ -90,6 +90,8 @@ data class Param(
     val type: Type,
     val annotations: List<String> = emptyList(),
     val default: Expr? = null,
+    /** P4（v2.1）：元组参数解构 `fun f((a, b): (Nat, Str))`——name 为占位，函数体内按 destruct 分量绑定 */
+    val destruct: List<String>? = null,
 )
 
 /**

@@ -190,19 +190,51 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                 // 形参注解（如 @tuple，决策 61）：@ 前缀出现在名字位即为注解列表
                 val anns = ArrayList<String>()
                 while (peek(Kind.AT)) { pos++; anns += at(Kind.IDENT).text }
-                val n = nameToken()
+                // P4（v2.1）：`fun f((a, b): Point)` 元组参数解构——LPAREN 紧跟在注解后即解构分量表
+                val destruct = if (peek(Kind.LPAREN)) parseParamDestruct() else null
+                val n = if (destruct != null) destruct.first() else nameToken()
                 at(Kind.COLON)
                 val ty = parseType()
                 // O3（决策 69）：`= expr` 是字段默认值。解析层一律接受，合法性由 checker 判
                 //（仅 struct 字段允许；函数形参带默认值报 E-DEFAULT-PARAM）
                 val dft = if (peek(Kind.ASSIGN)) { pos++; parseExpr(angle = false) } else null
-                out += Param(n, ty, anns, dft)
+                out += Param(n, ty, anns, dft, destruct)
                 if (peek(Kind.COMMA)) { pos++; continue }
                 break
             }
         }
         at(Kind.RPAREN)
         return out
+    }
+
+    /** P4（v2.1）：元组参数解构分量表 `(a, b)`——LPAREN 未消费，读扁平分量名列表 */
+    private fun parseParamDestruct(): List<String> {
+        at(Kind.LPAREN)
+        val out = ArrayList<String>()
+        if (!peek(Kind.RPAREN)) {
+            while (true) {
+                out += nameToken()
+                if (peek(Kind.COMMA)) { pos++; continue }
+                break
+            }
+        }
+        at(Kind.RPAREN)
+        return out
+    }
+
+    /** P4（v2.1）：lambda 解构参数 `(a, b)` → 编码特殊参数名 "(a,b)"（LPAREN 未消费） */
+    private fun parseLambdaDestructName(): String {
+        at(Kind.LPAREN)
+        val parts = ArrayList<String>()
+        if (!peek(Kind.RPAREN)) {
+            while (true) {
+                parts += nameToken()
+                if (peek(Kind.COMMA)) { pos++; continue }
+                break
+            }
+        }
+        at(Kind.RPAREN)
+        return "(" + parts.joinToString(",") + ")"
     }
 
     /** O3（决策 69）：当前位是否"命名字段构造"的左括号——`(IDENT =` 形态。
@@ -1015,7 +1047,8 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         if (braceIsLambda(start)) {
             // 显式参数带箭头（`{ a, b -> … }` / `{ -> 7 }`）：读参数表直到箭头
             while (!peek(Kind.DARROW) && !peek(Kind.ARROW)) {
-                ps += nameToken()
+                // P4（v2.1）：`{(a, b) => …}` 单个元组参数解构——编码分量名为 (a,b) 特殊参数名
+                ps += if (peek(Kind.LPAREN)) parseLambdaDestructName() else nameToken()
                 if (peek(Kind.COMMA)) pos++
             }
             hasArrow = true
@@ -1045,6 +1078,7 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
      */
     private fun braceIsLambda(start: Int): Boolean {
         var depth = 0
+        var pd = 0   // P4（v2.1）：lambda 解构参数的括号配对深度 `{(a, b) => …}`
         var j = start
         var sawBad = false   // 名字表里出现非名字/非逗号 token（如数字）即非 lambda
         while (j < toks.size) {
@@ -1055,6 +1089,9 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                 // 遇箭头：depth 1 且参数表仅由名字/逗号组成（可为空 → 零参 lambda `{ -> 7 }`）
                 k == Kind.DARROW || k == Kind.ARROW -> return if (depth == 1) !sawBad else false
                 k == Kind.EOF -> return false
+                depth == 1 && k == Kind.LPAREN -> pd++
+                depth == 1 && k == Kind.RPAREN -> { if (pd > 0) pd-- else sawBad = true }
+                depth == 1 && pd > 0 -> {}   // 解构括号内任意（含逗号/标识符）
                 depth == 1 && (k == Kind.IDENT || k == Kind.SYMBOL) -> {}
                 depth == 1 && k == Kind.COMMA -> {}
                 depth == 1 -> sawBad = true   // 混入任何其他 token（如 `{ 1 -> x }` 的数字）即非 lambda

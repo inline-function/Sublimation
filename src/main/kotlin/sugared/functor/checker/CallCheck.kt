@@ -428,6 +428,9 @@ internal fun Checker.checkFnCall(
     if (c.namedArgs.isNotEmpty()) {
         if (isMethodPath) {
             d.error("E-NAMED-ARG", c.pos, "方法调用不支持命名参数（v1 限制：命名实参仅自由函数调用）")
+        } else if (fn.params.any { it.destruct != null || it.name == "_" }) {
+            // P4（v2.1）：解构或 _ 参数 → 禁用指名参数语法糖（用户第 4 项）
+            d.error("E-NAMED-ARG", c.pos, "函数 $name 含解构或 _ 参数，不支持命名参数")
         } else {
             val names = fn.params.map { it.name }
             c.namedArgs.keys.forEach { n ->

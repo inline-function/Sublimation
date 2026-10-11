@@ -254,11 +254,25 @@ class Checker(
             checkTypeResolvable(p.type, tps, tpArityOf(fn))
             // 决策 61：@tuple 形参在函数体内即元组本身（类型实参由调用处匹配，声明期无替换表）
             val pt = syms.expand(p.type)
-            // O2：参数名遮蔽了 self 字段 → 提示（遮蔽合法，但要让用户知道裸名从此指向参数）
-            if (selfT != null && p.name != "self" && p.name in structFieldNames(selfT))
-                d.hint("H-FIELD-SHADOW", fn.body?.pos ?: "", "参数 ${p.name} 遮蔽了 ${selfT.render()} 的同名字段，体内裸用 ${p.name} 将指向参数")
-            f.declareVar(p.name, pt, fn.pos)   // 参数警告锚定函数声明位置（fn.body.pos 对表达式体可能为空）
-            f.inject(PAtom(":", listOf(NameRef(p.name), typeToExpr(pt))))
+            // P4（v2.1）：元组/结构体参数解构——分量按声明类型解绑，占位名不再声明为变量
+            if (p.destruct != null) {
+                val comps: List<Type> = when (pt) {
+                    is TupleType -> pt.items
+                    is NamedType -> syms.structs[pt.name]?.fields?.map { syms.expand(it.type) } ?: emptyList()
+                    else -> emptyList()
+                }
+                if (comps.isEmpty())
+                    d.error("E-DESTRUCT", fn.pos, "参数 ${p.name} 解构但类型 ${pt.render()} 不可解构（仅支持元组或结构体）")
+                else if (comps.size != p.destruct.size)
+                    d.error("E-DESTRUCT", fn.pos, "参数 ${p.name} 解构分量 ${p.destruct.size} ≠ 类型 ${pt.render()} 分量 ${comps.size}")
+                else p.destruct.forEachIndexed { i, nm -> f.declareVar(nm, comps[i], fn.pos) }
+            } else {
+                // O2：参数名遮蔽了 self 字段 → 提示（遮蔽合法，但要让用户知道裸名从此指向参数）
+                if (selfT != null && p.name != "self" && p.name in structFieldNames(selfT))
+                    d.hint("H-FIELD-SHADOW", fn.body?.pos ?: "", "参数 ${p.name} 遮蔽了 ${selfT.render()} 的同名字段，体内裸用 ${p.name} 将指向参数")
+                f.declareVar(p.name, pt, fn.pos)   // 参数警告锚定函数声明位置（fn.body.pos 对表达式体可能为空）
+                f.inject(PAtom(":", listOf(NameRef(p.name), typeToExpr(pt))))
+            }
         }
         // 决策 65（T6）：上/下文里的 $n 替换为参数名，并发提示级诊断；越界报错。
         val preRewritten = fn.preps.map { rewriteDollarN(it, fn.params, "前件") }
@@ -578,7 +592,17 @@ class Checker(
             if (ft != null && ft.params.size != e.params.size)
                 d.error("E-TYPE-MISMATCH", e.pos, "lambda 有 ${e.params.size} 个参数，期望类型要求 ${ft.params.size} 个")
             e.params.forEachIndexed { i, pname ->
-                nf.declareVar(pname, ft?.params?.getOrNull(i) ?: syntheticT("参数"))
+                // P4（v2.1）：lambda 解构参数 `(a, b)`——分量按期望类型（元组 items/结构体字段）绑定，无期望则占位
+                if (pname.startsWith("(") && pname.endsWith(")")) {
+                    val parts = pname.substring(1, pname.length - 1).split(",")
+                    val pt = ft?.params?.getOrNull(i)?.let { syms.expand(it) }
+                    val comps: List<Type> = when (pt) {
+                        is TupleType -> pt.items
+                        is NamedType -> syms.structs[pt.name]?.fields?.map { syms.expand(it.type) } ?: emptyList()
+                        else -> emptyList()
+                    }
+                    parts.forEachIndexed { j, nm -> nf.declareVar(nm, comps.getOrNull(j) ?: syntheticT("参数分量")) }
+                } else nf.declareVar(pname, ft?.params?.getOrNull(i) ?: syntheticT("参数"))
             }
             val bt = run {
                 lambdaRetTypes.add(ft?.ret ?: syntheticT("lambda返回"))

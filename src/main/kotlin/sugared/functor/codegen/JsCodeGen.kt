@@ -435,7 +435,8 @@ class JsCodeGen {
         // v2.1：Any 是默认类型类（恒满足、零方法无字典）——不生成槽
         val slots = fn.theory.filterIsInstance<TypeParam>().filter { it.constraint != null && it.constraint != "Any" }   // v2.1：Any 零字典不设槽
             .map { "d_${it.constraint}_${it.name}" }
-        val ps = (slots + fn.params.map { mangle(it.name) }).joinToString(", ")
+        // P4（v2.1）：解构参数的 JS 形参用合成名 __dtN，函数体开头 const 拆解分量
+        val ps = (slots + fn.params.mapIndexed { i, p -> if (p.destruct != null) "__dt$i" else mangle(p.name) }).joinToString(", ")
         // v2.0 重载：本模块内同名 >1 的函数按首参标签唯一化（`stdlib__map$List`），与 Checker 侧 moduleHits 同名规则一致
         val base = moduleJsName(currentPrefix, fn.name)
         val jsName = if (overloadsByUnit[currentPrefix]?.contains(fn.name) == true) "$base\$${fnTag(fn)}" else base
@@ -443,6 +444,18 @@ class JsCodeGen {
         val asyncKw = if ("async" in fn.annotations || fn.name == "main") "async " else ""
         line("${asyncKw}function $jsName($ps) {")
         indent++
+        // P4（v2.1）：解构分量在函数体入口解绑。结构体值是命名键对象（x/y/...），
+        // 元组（与枚举构造子）是下标对象（0/1/...），按声明类型选键。
+        fn.params.forEachIndexed { i, p ->
+            if (p.destruct != null) {
+                val isTuple = p.type is TupleType
+                val keys = if (isTuple) emptyList() else (p.type as? NamedType)?.let { structFields[it.name] } ?: emptyList()
+                p.destruct.forEachIndexed { j, nm ->
+                    val acc = if (isTuple) "[$j]" else (if (j < keys.size) ".${keys[j]}" else "[$j]")
+                    line("const ${mangle(nm)} = __dt$i$acc;")
+                }
+            }
+        }
         when (body) {
             is BlockExpr -> genBlockBody(body)
             else -> line("return ${expr(body)};")
@@ -577,10 +590,18 @@ class JsCodeGen {
         is CallExpr -> call(e)
         is InstExpr -> expr(e.target)   // 实例化/供给整体擦除，只留被调名
         is LambdaExpr -> {
-            val ps = e.params.joinToString(", ") { mangle(it) }
-            // v1.1：lambda 体可为语句块（含 return/var/if）；块体默认返回最后表达式
-            if (e.body is BlockExpr) "($ps) => ${lambdaBodyStr(e.body)}"
-            else "($ps) => ${expr(e.body)}"
+            // P4（v2.1）：`(a, b)` 解构参数——合成形参 + 块体开头 const 拆解（分量按下标取）
+            val jsParams = e.params.mapIndexed { i, x -> if (x.startsWith("(")) "__dt$i" else mangle(x) }.joinToString(", ")
+            val dtBind = e.params.withIndex().filter { (_, x) -> x.startsWith("(") }.joinToString("") { (i, x) ->
+                x.substring(1, x.length - 1).split(",").mapIndexed { j, nm -> "const ${mangle(nm)} = __dt$i[$j]; " }.joinToString("")
+            }
+            if (dtBind.isEmpty()) {
+                if (e.body is BlockExpr) "($jsParams) => ${lambdaBodyStr(e.body)}"
+                else "($jsParams) => ${expr(e.body)}"
+            } else {
+                val tail = if (e.body is BlockExpr) lambdaBodyStr(e.body) else "return ${expr(e.body)};"
+                "($jsParams) => { $dtBind $tail }"
+            }
         }
         is TupleExpr -> "[" + e.items.joinToString(", ") { expr(it) } + "]"   // 元组→JS 数组（决策 61）
         is StructCtorExpr -> structCtorJs(e)   // O3（决策 69）：命名字段构造→位置实参工厂调用
