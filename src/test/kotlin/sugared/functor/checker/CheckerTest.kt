@@ -1199,4 +1199,22 @@ class CheckerTest {
         val src = "class M { fun f(): Nat }\nstruct S\nimpl M for S { }"
         assertTrue(errs(src).contains("E-IMPL-INCOMPLETE"), "类方法无 body 时缺方法仍应报 E-IMPL-INCOMPLETE")
     }
+
+    @Test
+    fun `Because 注入与 Therefore 证明特性五`() {
+        val src = "@impure fun main() { ∵ x = 1\n∴ x = 1\n+∵ y = 2\n∴ x = 1 }"
+        assertTrue(ok(src), "∵ 注入后 ∴ 应证明 x = 1；+∵ 累积不报错")
+    }
+
+    @Test
+    fun `Therefore 证不出报特性五`() {
+        val src = "@impure fun main() { ∵ x = 1\n∴ x = 2 }"
+        assertTrue(errs(src).contains("E-CANNOT-PROVE"), "Γ 无 x = 2 应报 E-CANNOT-PROVE")
+    }
+
+    @Test
+    fun `theorem 合一特性五`() {
+        val src = "@theorem\nfun LawOfExcludedMiddle[@p]: <p ∨ ¬p>\n@impure fun main() { ∴ q ∨ ¬q }"
+        assertTrue(ok(src), "@theorem 后件与目标合一应证明")
+    }
 }

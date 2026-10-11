@@ -101,6 +101,65 @@ internal fun Checker.proveOrDeep(gamma: List<Prop>, goal: Prop): Boolean {
     return res
 }
 
+/** v3.0 特性 5：@theorem 定理搜索（`∴` 用）。只搜 @theorem 标记函数（普通函数不搜）。
+ *  搜索深度默认两跳——超限报 E-THEOREM-SEARCH-DEPTH（by solve 未来加深）。
+ *  命中判据：定理后件（post）与目标做**结构合一**——theorem 的 theory 参数（如 @p）为元变量，
+ *  可绑定到目标对应位置的任意项（实例化后 post ≡ q）。 */
+internal fun Checker.searchTheorems(q: Prop, depth: Int): Boolean {
+    if (depth > 2) {
+        d.error("E-THEOREM-SEARCH-DEPTH", "", "定理搜索深度超限（默认两跳）：目标 " + PropLogic.render(q))
+        return false
+    }
+    for (t in syms.theorems.values) {
+        val vars = t.theory.mapNotNull { when (it) { is TypeParam -> it.name; is PropParam -> it.name; else -> null } }.toSet()
+        for (post in t.posts) {
+            val pp = PropLogic.fromExpr(post)
+            if (postUnifies(pp, q, vars, LinkedHashMap())) return true
+            // 常量归约：后件里的名字若可由全局事实归为字面量，归约后再合一
+            reduceGoalToConstants(globalFacts, pp)?.let { rg ->
+                if (postUnifies(rg, q, vars, LinkedHashMap())) return true
+            }
+        }
+    }
+    return false
+}
+
+/** 结构合一：post 与 q 逐层匹配；post 中名字在 vars（定理 theory 参数）内的 NameRef 是元变量，可绑到 q 对应项。 */
+private fun postUnifies(post: Prop, q: Prop, vars: Set<String>, env: MutableMap<String, Expr>): Boolean =
+    when {
+        // 命题元变量：定理后件里无参数的裸名原子（如 @p）可绑定到任意目标命题（排中律等形态）
+        post is PAtom && post.terms.isEmpty() && post.head in vars -> true
+        post is PAtom && q is PAtom ->
+            post.head == q.head && post.terms.size == q.terms.size &&
+                post.terms.zip(q.terms).all { (a, b) -> termUnifies(a, b, vars, env) }
+        post is PNot && q is PNot -> postUnifies(post.p, q.p, vars, env)
+        post is PAnd && q is PAnd -> postUnifies(post.a, q.a, vars, env) && postUnifies(post.b, q.b, vars, env)
+        post is POr && q is POr -> postUnifies(post.a, q.a, vars, env) && postUnifies(post.b, q.b, vars, env)
+        post is PImp && q is PImp -> postUnifies(post.a, q.a, vars, env) && postUnifies(post.b, q.b, vars, env)
+        post == q -> true
+        else -> false
+    }
+
+private fun termUnifies(a: Expr, b: Expr, vars: Set<String>, env: MutableMap<String, Expr>): Boolean {
+    if (a is NameRef && a.name in vars) {
+        val prev = env[a.name]
+        if (prev == null) { env[a.name] = b; return true }
+        return termUnifies(prev, b, vars, env)
+    }
+    if (a is NameRef && b is NameRef) return a.name == b.name
+    if (a is IntLit && b is IntLit) return a.value == b.value
+    if (a is FieldExpr && b is FieldExpr)
+        return a.name == b.name && termUnifies(a.target, b.target, vars, env)
+    return a.toStr() == b.toStr()
+}
+
+/** Expr 结构化渲染（termUnifies 兜底用；避免依赖 toString 的引用噪声） */
+private fun Expr.toStr(): String = when (this) {
+    is NameRef -> name
+    is IntLit -> value
+    else -> toString()
+}
+
 internal fun Checker.typeLooseEq(a0: Type, b0: Type): Boolean {
     val a = syms.expand(a0); val b = syms.expand(b0)   // 别名展开（决策 30）
     // v2.1（对齐 Rust 无限类型语义）：Nothing 是底类型——可被当成任何结构体/枚举/类型类

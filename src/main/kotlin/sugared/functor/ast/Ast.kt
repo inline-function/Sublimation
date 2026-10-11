@@ -216,6 +216,17 @@ data class UncheckedStmt(val inner: Stmt, override val pos: String = "") : Stmt
 
 data class ExprStmt(val expr: Expr, override val pos: String = "") : Stmt
 
+// ---------- v3.0 特性 5：∵ / ∴ 语句（命题层，语句位） ----------
+
+/** `∵ p` —— "因为 p"：优先尝试证明，证不出则信任注入 Γ（留痕 D-BECAUSE-TRUSTED） */
+data class BecauseStmt(val prop: Expr, override val pos: String = "") : Stmt
+
+/** `∴ q` —— "所以 q"：检查 Γ ⊢ q（现有 proveOrDeep + @theorem 搜索），通过后 q 自动加入 Γ（连续 ∴ 累积） */
+data class ThereforeStmt(val prop: Expr, override val pos: String = "") : Stmt
+
+/** `+∵ r` —— "又因为 r"：等价于把 r 与先前结论一起注入 Γ */
+data class PlusBecauseStmt(val prop: Expr, override val pos: String = "") : Stmt
+
 /**
  * `return e` / 裸 `return` / `return@label`（Kotlin 风格显式返回，v1.1 扩展标签）。
  * 具名函数体语句位：返回该函数；lambda 体内：返回当前 lambda（label 为 lambda 调用标签名）。

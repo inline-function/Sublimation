@@ -18,6 +18,7 @@ enum class Kind {
     ELVIS,        // `?:` —— 空替代 `a ?: b`
     // Unicode 逻辑符号（固定单 token，不做标识符）
     FORALL, EXISTS, EXISTS1, LAND, LOR, LNOT, IMPLIES, EQUIV, TOP, BOT,
+    BECAUSE, THEREFORE, PLUS_BECAUSE,   // v3.0 特性 5：∵ 因为 / ∴ 所以 / +∵ 又因为
     LT, GT, EOF,
 }
 
@@ -98,8 +99,10 @@ class Lexer(private val src: String, private val fileName: String) {
         if (c in '0'..'9') return readInt()
         if (c == '"') return readString()
         // v3.0：标识符支持 Unicode（字母开头：英文/中文/希腊字母等均可；下划线亦为首字符）
-        if (c == '_' || c.isLetter()) return readIdent()
-        if (isSymbolStart(c)) return readSymbol()
+        // v3.0 特性 5：∵/∴ 是固定单 token（BECAUSE/THEREFORE），不得作为符号标识符首字符（∷∴ 非字母但 isSymbolStart 会误收）
+        val isBecauseSym = c == '∵' || c == '∴'
+        if (!isBecauseSym && (c == '_' || c.isLetter())) return readIdent()
+        if (!isBecauseSym && isSymbolStart(c)) return readSymbol()
 
         // 多字符优先
         if (c == '<' && peekAt(i + 1) == '-' && peekAt(i + 2) == '>') { adv(3); return Kind.IFF to "<->" }
@@ -110,6 +113,8 @@ class Lexer(private val src: String, private val fileName: String) {
         if (c == '>' && peekAt(i + 1) == '=') { adv(2); return Kind.GE to ">=" }
         if (c == '-' && peekAt(i + 1) == '>') { adv(2); return Kind.ARROW to "->" }
         if (c == '∃' && peekAt(i + 1) == '!') { adv(2); return Kind.EXISTS1 to "∃!" }
+        // v3.0 特性 5：`+∵`（又因为）须先于单 '+' 判定
+        if (c == '+' && peekAt(i + 1) == '∵') { adv(2); return Kind.PLUS_BECAUSE to "+∵" }
         // v2.0 空安全运算符（多字符优先：`?.`/`?:` 在 `?` 前）
         if (c == '?' && peekAt(i + 1) == '.') { adv(2); return Kind.SAFECALL to "?." }
         if (c == '?' && peekAt(i + 1) == ':') { adv(2); return Kind.ELVIS to "?:" }
@@ -132,6 +137,7 @@ class Lexer(private val src: String, private val fileName: String) {
             '∧' -> Kind.LAND; '∨' -> Kind.LOR; '¬' -> Kind.LNOT
             '→' -> Kind.IMPLIES; '↔' -> Kind.EQUIV; '≠' -> Kind.NEQ
             '⊤' -> Kind.TOP; '⊥' -> Kind.BOT
+            '∵' -> Kind.BECAUSE; '∴' -> Kind.THEREFORE
             else -> throw LexFailure(fileName, line, col, "非法字符 '$c'")
         }
         adv()

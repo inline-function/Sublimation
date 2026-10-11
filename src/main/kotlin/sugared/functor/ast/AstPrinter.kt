@@ -73,6 +73,9 @@ private fun Stmt.toTree(): Tree = when (this) {
     is AssignStmt -> Tree("assign", listOf(target.toTree(), value.toTree()))
     is AxiomStmt -> Tree("axiom[${props.joinToString(", ") { it.toTag() }}]")
     is ByStmt -> Tree("by[${props.joinToString(", ") { it.toTag() }}]")
+    is BecauseStmt -> Tree("∵${prop.toTag()}")
+    is ThereforeStmt -> Tree("∴${prop.toTag()}")
+    is PlusBecauseStmt -> Tree("+∵${prop.toTag()}")
     is UncheckedStmt -> Tree("unchecked", listOf(inner.toTree()))
     is ReturnStmt -> Tree("return", listOfNotNull(expr?.toTree()))
     is ExprStmt -> Tree("expr", listOf(expr.toTree()))
@@ -160,6 +163,9 @@ private fun Stmt.toPlain(): String = when (this) {
     is AssignStmt -> "${target.toTag()} = ${value.toTag()}"
     is AxiomStmt -> "axiom[${props.joinToString(", ") { it.toTag() }}]"
     is ByStmt -> "by[${props.joinToString(", ") { it.toTag() }}]"
+    is BecauseStmt -> "∵ ${prop.toTag()}"
+    is ThereforeStmt -> "∴ ${prop.toTag()}"
+    is PlusBecauseStmt -> "+∵ ${prop.toTag()}"
     is UncheckedStmt -> "unchecked ${inner.toPlain()}"
     is ReturnStmt -> if (expr != null) "return ${expr.toTag()}" else "return"
     is ExprStmt -> expr.toTag()

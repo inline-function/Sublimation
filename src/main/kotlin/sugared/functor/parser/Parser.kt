@@ -467,6 +467,10 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
     }
 
     private fun parseStmt(): Stmt {
+        // v3.0 特性 5：∵ / ∴ / +∵ 语句（命题裸表达式，无需括号）
+        if (peek(Kind.BECAUSE)) { val t = next(); return BecauseStmt(parseExpr(angle = false), "${t.line}:${t.col}") }
+        if (peek(Kind.THEREFORE)) { val t = next(); return ThereforeStmt(parseExpr(angle = false), "${t.line}:${t.col}") }
+        if (peek(Kind.PLUS_BECAUSE)) { val t = next(); return PlusBecauseStmt(parseExpr(angle = false), "${t.line}:${t.col}") }
         if (peek(Kind.UNCHECKED)) return parseUnchecked()
         if (peek(Kind.RET)) return parseReturn()
         if (peek(Kind.BY)) { pos++; return ByStmt(parseBracketList()) }

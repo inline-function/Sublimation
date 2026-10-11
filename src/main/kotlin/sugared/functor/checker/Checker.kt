@@ -474,6 +474,32 @@ class Checker(
                 }
                 checkExpr(s.value, f, pure)
             }
+            // ---------- v3.0 特性 5：∵ / ∴ 语句（命题层，语句位） ----------
+            is BecauseStmt -> {
+                val p = PropLogic.fromExpr(s.prop)
+                val proves = proveOrDeep(f.allFacts(), p) || searchTheorems(p, 0)
+                d.supplement(if (proves) "D-BECAUSE-PROVED" else "D-BECAUSE-TRUSTED", s.pos,
+                    "∵ " + PropLogic.render(p) + (if (proves) "（可证，注入 Γ）" else "（信任，注入 Γ——留痕可审计）"))
+                f.inject(p)
+                namedT("Null", emptyList())
+            }
+            is ThereforeStmt -> {
+                val q = PropLogic.fromExpr(s.prop)
+                if (proveOrDeep(f.allFacts(), q) || searchTheorems(q, 0)) {
+                    f.inject(q)   // 连续 ∴ 自动累积上文（q 成为下文事实）
+                    d.supplement("D-THEREFORE", s.pos, "∴ " + PropLogic.render(q) + " 成立")
+                } else {
+                    val tried = if (syms.theorems.isEmpty()) "（无 @theorem 定理）" else syms.theorems.keys.joinToString(", ")
+                    d.error("E-CANNOT-PROVE", s.pos,
+                        "∴ " + PropLogic.render(q) + " 证不出。尝试的定理：" + tried + "；当前 Γ：" + f.allFacts().joinToString("； ") { PropLogic.render(it) })
+                }
+                namedT("Null", emptyList())
+            }
+            is PlusBecauseStmt -> {
+                f.inject(PropLogic.fromExpr(s.prop))
+                d.supplement("D-PLUSBECAUSE", s.pos, "+∵ 注入 " + PropLogic.render(PropLogic.fromExpr(s.prop)))
+                namedT("Null", emptyList())
+            }
             is AxiomStmt -> { s.props.forEach { f.inject(PropLogic.fromExpr(it)) }; namedT("Null", emptyList()) }
             is ByStmt -> {
                 s.props.forEach { f.inject(PropLogic.fromExpr(it)) }

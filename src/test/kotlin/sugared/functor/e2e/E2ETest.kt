@@ -660,4 +660,14 @@ class E2ETest {
             "}"
         assertEquals("3\ntrue", run(src))
     }
+
+    @Test
+    fun `Because 与 Therefore 零代码 v3 特性五`() {
+        val src = "@impure fun main() {\n" +
+            "    ∵ x = 1\n" +
+            "    ∴ x = 1\n" +
+            "    print(\"ok\")\n" +
+            "}"
+        assertEquals("ok", run(src))
+    }
 }

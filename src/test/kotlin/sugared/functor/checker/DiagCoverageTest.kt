@@ -94,6 +94,10 @@ class DiagCoverageTest {
             "struct A(x: Nat)\nclass M { fun get(): Nat }\nimpl M for A { fun get(): Nat { return x } }\nfun main() { A(1).get(9) }",
             "E-METHOD-ARGS"))
 
+    // v3.0 特性 5：∴ q 证不出 → E-CANNOT-PROVE
+    @Test fun `E-CANNOT-PROVE`() =
+        assertTrue(has("@impure fun main() { ∵ x = 1\n∴ x = 2 }", "E-CANNOT-PROVE"))
+
     // v3.0 特性 4：类方法带体=默认实现，E-SELF-UNKNOWN 不再产生（原为该码唯一触发场景，语义被特性 4 取代）
     @Test fun `E-SELF-UNKNOWN 类型类成员带体合法(缺陷4)`() =
         assertFalse(has("class M { fun m(): Nat { return 1 } }", "E-SELF-UNKNOWN"))
