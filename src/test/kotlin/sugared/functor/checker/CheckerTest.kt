@@ -1217,4 +1217,22 @@ class CheckerTest {
         val src = "@theorem\nfun LawOfExcludedMiddle[@p]: <p ∨ ¬p>\n@impure fun main() { ∴ q ∨ ¬q }"
         assertTrue(ok(src), "@theorem 后件与目标合一应证明")
     }
+
+    @Test
+    fun `IfProp 双支同结论特性六`() {
+        val src = "@classic\n@impure fun main() { ∵ x = 1\nif[y = 2] { ∴ x = 1 } else { ∴ x = 1 } }"
+        assertTrue(ok(src), "挂载 core.classic 后双支证明同结论应通过")
+    }
+
+    @Test
+    fun `IfProp 未挂载报特性六`() {
+        val src = "@impure fun main() { if[y = 2] { ∴ y = 1 } else { ∴ y = 1 } }"
+        assertTrue(errs(src).contains("E-NEED-CLASSIC"), "未挂载 core.classic 应报 E-NEED-CLASSIC")
+    }
+
+    @Test
+    fun `IfProp 结论集不同报特性六`() {
+        val src = "@classic\n@impure fun main() { ∵ y = 1\nif[z = 2] { ∴ y = 1 } }"
+        assertTrue(errs(src).contains("E-IF-CONCLUSION-MISMATCH"), "两支 ∴ 结论集不同应报 E-IF-CONCLUSION-MISMATCH")
+    }
 }

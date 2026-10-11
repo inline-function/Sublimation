@@ -670,4 +670,15 @@ class E2ETest {
             "}"
         assertEquals("ok", run(src))
     }
+
+    @Test
+    fun `IfProp 排中律零代码 v3 特性六`() {
+        val src = "@classic\n" +
+            "@impure fun main() {\n" +
+            "    ∵ x = 1\n" +
+            "    if[y = 2] { ∴ x = 1 } else { ∴ x = 1 }\n" +
+            "    print(\"ok\")\n" +
+            "}"
+        assertEquals("ok", run(src))
+    }
 }

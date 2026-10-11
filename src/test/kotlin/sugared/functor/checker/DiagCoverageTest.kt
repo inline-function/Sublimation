@@ -94,6 +94,13 @@ class DiagCoverageTest {
             "struct A(x: Nat)\nclass M { fun get(): Nat }\nimpl M for A { fun get(): Nat { return x } }\nfun main() { A(1).get(9) }",
             "E-METHOD-ARGS"))
 
+    // v3.0 特性 6：if[p] 未挂载 core.classic
+    @Test fun `E-NEED-CLASSIC`() =
+        assertTrue(has("@impure fun main() { if[y = 2] { ∴ y = 1 } else { ∴ y = 1 } }", "E-NEED-CLASSIC"))
+
+    @Test fun `E-IF-CONCLUSION-MISMATCH`() =
+        assertTrue(has("@classic\n@impure fun main() { ∵ y = 1\nif[z = 2] { ∴ y = 1 } }", "E-IF-CONCLUSION-MISMATCH"))
+
     // v3.0 特性 5：∴ q 证不出 → E-CANNOT-PROVE
     @Test fun `E-CANNOT-PROVE`() =
         assertTrue(has("@impure fun main() { ∵ x = 1\n∴ x = 2 }", "E-CANNOT-PROVE"))

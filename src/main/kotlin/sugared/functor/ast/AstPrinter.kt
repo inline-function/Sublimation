@@ -76,6 +76,7 @@ private fun Stmt.toTree(): Tree = when (this) {
     is BecauseStmt -> Tree("∵${prop.toTag()}")
     is ThereforeStmt -> Tree("∴${prop.toTag()}")
     is PlusBecauseStmt -> Tree("+∵${prop.toTag()}")
+    is IfPropStmt -> Tree("if[${prop.toTag()}]", thenStmts.map { it.toTree() } + elseStmts.map { it.toTree() })
     is UncheckedStmt -> Tree("unchecked", listOf(inner.toTree()))
     is ReturnStmt -> Tree("return", listOfNotNull(expr?.toTree()))
     is ExprStmt -> Tree("expr", listOf(expr.toTree()))
@@ -166,6 +167,7 @@ private fun Stmt.toPlain(): String = when (this) {
     is BecauseStmt -> "∵ ${prop.toTag()}"
     is ThereforeStmt -> "∴ ${prop.toTag()}"
     is PlusBecauseStmt -> "+∵ ${prop.toTag()}"
+    is IfPropStmt -> "if[${prop.toTag()}]"
     is UncheckedStmt -> "unchecked ${inner.toPlain()}"
     is ReturnStmt -> if (expr != null) "return ${expr.toTag()}" else "return"
     is ExprStmt -> expr.toTag()

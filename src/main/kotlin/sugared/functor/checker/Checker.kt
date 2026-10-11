@@ -500,6 +500,30 @@ class Checker(
                 d.supplement("D-PLUSBECAUSE", s.pos, "+∵ 注入 " + PropLogic.render(PropLogic.fromExpr(s.prop)))
                 namedT("Null", emptyList())
             }
+            // ---------- v3.0 特性 6：if[p] 排中律（语句位纯证明构造） ----------
+            is IfPropStmt -> {
+                val p = PropLogic.fromExpr(s.prop)
+                if (!syms.classicMounted) {
+                    d.error("E-NEED-CLASSIC", s.pos, "if[p] 需要挂载 core.classic（文件内任一声明加 @classic 注解即挂载）")
+                } else {
+                    val thenF = Frame(f); thenF.inject(p)
+                    val elseF = Frame(f); elseF.inject(PNot(p))
+                    s.thenStmts.forEach { checkStmt(it, thenF, pure, flow) }
+                    s.elseStmts.forEach { checkStmt(it, elseF, pure, flow) }
+                    // 两支 ∴ 结论集比对（渲染等价）；分支内证不出由 ThereforeStmt 分支报 E-CANNOT-PROVE
+                    val thenC = LinkedHashMap<String, Prop>()
+                    val elseC = LinkedHashMap<String, Prop>()
+                    fun collect(ss: List<Stmt>, m: LinkedHashMap<String, Prop>) {
+                        ss.filterIsInstance<ThereforeStmt>().forEach { t -> val pr = PropLogic.fromExpr(t.prop); m[PropLogic.render(pr)] = pr }
+                    }
+                    collect(s.thenStmts, thenC); collect(s.elseStmts, elseC)
+                    if (thenC.keys != elseC.keys)
+                        d.error("E-IF-CONCLUSION-MISMATCH", s.pos,
+                            "if[p] 两支 ∴ 结论集不同：then=${thenC.keys}；else=${elseC.keys}（排中律要求两支结论相同）")
+                    else thenC.values.forEach { f.inject(it) }   // 块外 Γ += q₁ ∧ … ∧ qₙ
+                }
+                namedT("Null", emptyList())
+            }
             is AxiomStmt -> { s.props.forEach { f.inject(PropLogic.fromExpr(it)) }; namedT("Null", emptyList()) }
             is ByStmt -> {
                 s.props.forEach { f.inject(PropLogic.fromExpr(it)) }

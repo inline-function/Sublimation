@@ -467,6 +467,8 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
     }
 
     private fun parseStmt(): Stmt {
+        // v3.0 特性 6：`if[p]` 命题层排中律（IF 后紧跟 [ 与值层 if ( 区分）
+        if (peek(Kind.IF) && toks.getOrNull(pos + 1)?.kind == Kind.LBRACKET) return parseIfProp()
         // v3.0 特性 5：∵ / ∴ / +∵ 语句（命题裸表达式，无需括号）
         if (peek(Kind.BECAUSE)) { val t = next(); return BecauseStmt(parseExpr(angle = false), "${t.line}:${t.col}") }
         if (peek(Kind.THEREFORE)) { val t = next(); return ThereforeStmt(parseExpr(angle = false), "${t.line}:${t.col}") }
@@ -492,6 +494,17 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
             pos = save
         } catch (_: ParseFailure) { pos = save }
         return ExprStmt(parseExpr(angle = false))
+    }
+
+    /** v3.0 特性 6：`if[p] { … } else { … }` —— 命题层排中律；块内是语句（常为 ∴） */
+    private fun parseIfProp(): Stmt {
+        val t = next()   // IF
+        at(Kind.LBRACKET)
+        val prop = parseExpr(angle = true)
+        at(Kind.RBRACKET)
+        val thenBlk = parseBlock()
+        val elseBlk = if (peek(Kind.ELSE)) { pos++; parseBlock() } else null
+        return IfPropStmt(prop, thenBlk.stmts, elseBlk?.stmts ?: emptyList(), "${t.line}:${t.col}")
     }
 
     /** `return e` / 裸 `return` / `return@label`（Kotlin 标签返回，v1.1）：

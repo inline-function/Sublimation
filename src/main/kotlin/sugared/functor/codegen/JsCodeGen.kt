@@ -558,8 +558,8 @@ private var funRefFree: Set<Expr> = emptySet()
 
     private fun genStmt(s: Stmt) {
         when (s) {
-            // v3.0 特性 5：∵∴ 是纯证明构造——不产生运行时代码
-            is BecauseStmt, is ThereforeStmt, is PlusBecauseStmt -> {}
+            // v3.0 特性 5/6：∵∴ 与 if[p] 是纯证明构造——不产生运行时代码
+            is BecauseStmt, is ThereforeStmt, is PlusBecauseStmt, is IfPropStmt -> {}
             is VarStmt -> {
                 if (s.destruct != null) {
                     val kw = if ("mut" in s.annotations) "let" else "const"
@@ -1081,7 +1081,7 @@ private var funRefFree: Set<Expr> = emptySet()
 
     /** 语句转单行字符串（供 IIFE 内联；var/assign/expr 足够，axiom/by 擦除为空） */
     private fun stmtStr(s: Stmt): String = when (s) {
-        is BecauseStmt, is ThereforeStmt, is PlusBecauseStmt -> ""
+        is BecauseStmt, is ThereforeStmt, is PlusBecauseStmt, is IfPropStmt -> ""
         is VarStmt -> if (s.destruct != null)
             "${if ("mut" in s.annotations) "let" else "const"} [${s.destruct.joinToString(", ") { mangle(it) }}] = ${expr(s.value)};"
         else "${if ("mut" in s.annotations) "let" else "const"} ${mangle(s.name)} = ${expr(s.value)};"
@@ -1131,7 +1131,7 @@ private var funRefFree: Set<Expr> = emptySet()
     /** lambda 体内单条语句 → 缩进行（if 展平为真语句，return 原样发射） */
     private fun lambdaStmtToLines(s: Stmt, out: MutableList<String>, ind: String) {
         when (s) {
-            is BecauseStmt, is ThereforeStmt, is PlusBecauseStmt -> {}
+            is BecauseStmt, is ThereforeStmt, is PlusBecauseStmt, is IfPropStmt -> {}
             is VarStmt -> if (s.destruct != null)
                 out += "$ind${if ("mut" in s.annotations) "let" else "const"} [${s.destruct.joinToString(", ") { mangle(it) }}] = ${expr(s.value)};"
             else out += "$ind${if ("mut" in s.annotations) "let" else "const"} ${mangle(s.name)} = ${expr(s.value)};"

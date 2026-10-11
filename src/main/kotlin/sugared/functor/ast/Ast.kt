@@ -227,6 +227,16 @@ data class ThereforeStmt(val prop: Expr, override val pos: String = "") : Stmt
 /** `+∵ r` —— "又因为 r"：等价于把 r 与先前结论一起注入 Γ */
 data class PlusBecauseStmt(val prop: Expr, override val pos: String = "") : Stmt
 
+// ---------- v3.0 特性 6：if[p] 排中律（语句位，纯证明构造，零运行时代码） ----------
+
+/** `if[p] { ∴ q… } else { ∴ q… }` —— 两支分别以 p / ¬p 入 Γ 证明相同结论集，块外 Γ += 结论 */
+data class IfPropStmt(
+    val prop: Expr,
+    val thenStmts: List<Stmt>,
+    val elseStmts: List<Stmt>,
+    override val pos: String = "",
+) : Stmt
+
 /**
  * `return e` / 裸 `return` / `return@label`（Kotlin 风格显式返回，v1.1 扩展标签）。
  * 具名函数体语句位：返回该函数；lambda 体内：返回当前 lambda（label 为 lambda 调用标签名）。

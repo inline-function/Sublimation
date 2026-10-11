@@ -152,6 +152,8 @@ internal fun Checker.collectDecl(decl: Decl) {
         is FunDecl -> {
             // v3.0 特性 5：@theorem 函数登记进定理空间（∴ 搜索只搜这里）
             if ("theorem" in decl.annotations) syms.theorems[decl.name] = decl
+            // v3.0 特性 6：@classic 标注的函数 → core.classic 已挂载（if[p] 前置检查用）
+            if ("classic" in decl.annotations) syms.classicMounted = true
             // `_` 是匿名占位名，不入符号表（指导§54：标注为 _ 的标识符无法被后续引用）
             if (decl.name == "_") return
             val prev = syms.funs.putIfAbsent(decl.name, decl)
