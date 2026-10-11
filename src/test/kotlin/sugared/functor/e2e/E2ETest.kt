@@ -509,4 +509,17 @@ class E2ETest {
             "}"
         assertEquals("[ 1, 2 ]", run(src))
     }
+
+    @Test
+    fun `v30 完美函数类型 - 多态函数类型位收 lambda 字面量`() {
+        assumeTrue(nodeAvailable())
+        // 函数类型理论语法 `[T](T)=>T`（parsePolyFunType）；lambda 满足多态函数类型位并继承 theory →
+        // 实例化调用 f(3)/f("a")（实参合一反推）
+        val src = "@impure fun main() {\n" +
+            "    var f: [T](T) => T = {x -> x}\n" +
+            "    print(f(3))\n" +
+            "    print(f(\"a\"))\n" +
+            "}"
+        assertEquals("3\na", run(src))
+    }
 }

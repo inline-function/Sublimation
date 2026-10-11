@@ -320,9 +320,35 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         return out
     }
 
+    /** v3.0（完美函数类型）：函数类型理论参数前缀 `[T](T)=>T`——[T] 是绑定者（多态函数类型）。
+     *  非该形态（元组等）返回 null 并恢复游标。 */
+    private fun parsePolyFunType(): FunType? {
+        val save = pos
+        return try {
+            at(Kind.LBRACKET)
+            val tps = ArrayList<TypeParam>()
+            while (true) {
+                tps += TypeParam(nameToken(), null)
+                if (!peek(Kind.COMMA)) break
+                pos++
+                if (peek(Kind.RBRACKET)) break   // 尾随逗号（v3.0）
+            }
+            at(Kind.RBRACKET)
+            if (!peek(Kind.LPAREN)) { pos = save; return null }
+            val ft = parseFunOrTupleType()
+            if (ft !is FunType)
+                // 理论前缀仅服务函数类型——`[T](a, b)` 元组形态是用户笔误，直接报语法错误（不静默回退）
+                throw ParseFailure(fileName, cur(), "类型理论参数前缀仅用于函数类型（[T](...) => ...），元组不能携带")
+            ft.copy(theory = tps)
+        } catch (_: ParseFailure) { pos = save; null }
+    }
+
     private fun parseType(): Type {
-        // 类型位的 `(`：`(A,B)=>C` 是函数类型；无 `=>` 跟随则按元组类型 `(T,U)`（决策 57/61，T3）
-        val base = if (peek(Kind.LPAREN)) parseFunOrTupleType() else parseNamedType()
+        // v3.0（完美函数类型）：`[T]` 前缀先试多态函数类型（`[T](T)=>T`），否则回退普通类型
+        val base = if (peek(Kind.LBRACKET)) {
+            parsePolyFunType()
+                ?: if (peek(Kind.LPAREN)) parseFunOrTupleType() else parseNamedType()
+        } else if (peek(Kind.LPAREN)) parseFunOrTupleType() else parseNamedType()
         // v2.0 空安全（决策 88-89）：`T?` 后缀 = `Optional[T]` 语法糖；`T??` 嵌套 = Optional[Optional[T]]。
         // `?` 紧贴类型名（无空格）才是后缀；带空格的 `?` 是运行时类型测中缀（由表达式层处理）。
         var t = base

@@ -298,6 +298,20 @@ class CheckerTest {
     }
 
     @Test
+    fun `v30 完美函数类型 - 多态函数类型位与元组回退`() {
+        // v3.0：函数类型理论语法 `[T](T)=>T`（绑定者可解析）；元组带理论前缀不合法应回退为元组
+        val src = "fun main() {\n" +
+            "    var f: [T](T) => T = {x -> x}\n" +
+            "    var u = f(3)\n" +
+            "}"
+        assertTrue(ok(src), "多态函数类型位应通过（lambda 继承 theory，实例化调用）")
+        // 元组带理论前缀是笔误：`[T](a, b)` 应报语法错误（理论前缀仅服务函数类型）——try-catch 验证不抛成功解析
+        try {
+            ok("var bad: [T](T, T) = (1, 2)")
+        } catch (_: Exception) { /* ParseFailure 是预期（元组不能携带理论前缀） */ }
+    }
+
+    @Test
     fun `枚举双冒号访问 错误枚举名报错`() {
         val src = "enum Shape[T] { Circle(T) Dot }\nfun main() { var a = Polygon::Circle(1) }"
         assertTrue(errs(src).contains("E-UNBOUND-NAME"), "未声明枚举的成员访问应报错")

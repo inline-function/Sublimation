@@ -1,4 +1,4 @@
-﻿package sugared.functor.checker
+package sugared.functor.checker
 
 import sugared.functor.ast.*
 
@@ -251,7 +251,12 @@ internal fun Checker.tpArityOf(decl: Decl): Map<String, Int> = when (decl) {
 
 internal fun Checker.checkTypeResolvable(t: Type, tps: List<String>, arity: Map<String, Int> = emptyMap()) {
     when (t) {
-        is FunType -> { t.params.forEach { checkTypeResolvable(it, tps, arity) }; checkTypeResolvable(t.ret, tps, arity) }
+        is FunType -> {
+            // v3.0（完美函数类型）：theory 名是绑定者（α 安全）——params/ret 里的同名引用可解析
+            val bound = t.theory.map { it.name } + tps
+            t.params.forEach { checkTypeResolvable(it, bound, arity) }
+            checkTypeResolvable(t.ret, bound, arity)
+        }
         is TupleType -> t.items.forEach { checkTypeResolvable(it, tps, arity) }
         is UnionType -> t.variants.forEach { checkTypeResolvable(it, tps, arity) }
         is QualifiedType -> {

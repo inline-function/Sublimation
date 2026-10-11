@@ -657,7 +657,10 @@ class Checker(
             // P2（决策 78）：带期望时返回**实际组合类型** FunType(期望参数, 实际体类型)，
             // 无期望时返回 FunType(合成参数, 实际体类型)——调用点据此反推类型参数
             //（如 map 的 U 只能由 lambda 体类型推出；fold 的 U 由 init 推出）
-            if (ft != null) FunType(ft.params, bt)
+            // v3.0（完美函数类型 统一刀）：lambda 满足多态函数类型位（如 `[T](T)=>T`）时
+            // **继承期望类型的理论参数**——lambda 字面量保持多态、可实例化调用；
+            // 泛型槽位（map 的 (T)=>U，T 是外围形参）expect.theory 为空，不受影响。
+            if (ft != null) FunType(ft.params, bt, theory = ft.theory)
             else FunType(e.params.map { syntheticT("参数") }, bt)
         }
         is BlockExpr -> {
