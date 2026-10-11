@@ -304,6 +304,15 @@ private fun Checker.checkInlineFunCall(
             val tt = typeOfTerm(instTerms[i])
             if (tt != null && !tt.isSynthetic()) tsub[tn] = tt
         }
+        // v3.0（完美函数类型 soundness）：显式实例化后逐位核对实参与实例化形参——
+        // `id<Nat>("a")`（实例化为 Nat 却传 Str）应报 E-TYPE-MISMATCH
+        ft.params.zip(argTypes).forEachIndexed { i, (p, at) ->
+            if (!at.isSynthetic()) {
+                val want = p.substT(tsub)
+                if (!want.isSynthetic() && !typeLooseEq(want, at))
+                    d.error("E-TYPE-MISMATCH", c.pos, "实例化调用实参 ${i + 1} 类型 ${at.render()} 与实例化形参 ${want.render()} 不符")
+            }
+        }
     } else if (tnames.isNotEmpty()) {
         ft.params.zip(argTypes).forEach { (p, at) ->
             if (!at.isSynthetic()) unifyInto(p, at, tnames.toSet(), tsub, emptyMap())
@@ -572,6 +581,15 @@ internal fun Checker.checkFnCall(
     }
 
     val tsub = LinkedHashMap<String, Type>()
+    // v3.0（完美函数类型 soundness）：显式类型实例化（f<Nat>(...)）**优先绑定**理论参数——
+    // 实参反推（extractTpBinding）不再覆盖（unifyInto 已绑定即一致性检查不覆盖），
+    // 故 `id<Nat>("a")` 显式 T:=Nat 后，实参 "a" 与实例化形参 Nat 在下方核对处报 E-TYPE-MISMATCH
+    instTermsOf(c).forEachIndexed { i, iterm ->
+        if (i < fn.theory.count { tp -> tp is TypeParam }) {
+            val tn = fn.theory.filterIsInstance<TypeParam>()[i].name
+            typeOfTerm(iterm)?.let { tt -> if (!tt.isSynthetic()) tsub[tn] = tt }
+        }
+    }
     fn.params.forEachIndexed { i, p ->
         if (i < effTypes.size) {
             val at = effTypes[i]

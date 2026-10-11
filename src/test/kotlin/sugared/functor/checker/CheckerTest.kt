@@ -312,6 +312,13 @@ class CheckerTest {
     }
 
     @Test
+    fun `v30 完美函数类型 - 显式实例化与实参不符报错`() {
+        // soundness：f<Nat>(...) 显式实例化优先绑定，实参 Str 与实例化形参 Nat 不符 → E-TYPE-MISMATCH
+        val src = "fun id[T](x: T): T = x\nfun main() { var t = id<Nat>(\"a\") }"
+        assertTrue(errs(src).contains("E-TYPE-MISMATCH"), "id<Nat>(\"a\")：显式实例化 Nat 与实参 Str 应报类型错误")
+    }
+
+    @Test
     fun `v30 完美函数类型 - 纯上下文调用 impure 函数值报错`() {
         // lambda 构造（体含 impure 调用）与函数值调用都在纯上下文 → 双重 E-IMPURE-CALL
         val src = "@impure fun log(x: Nat): Nat = x\n" +
