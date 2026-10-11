@@ -84,6 +84,8 @@ class MultiModule(root: File) {
         val funRefFree = IdentityHashMap<Expr, Boolean>()
         val lambdaDestructKeys = IdentityHashMap<Expr, List<List<String>?>>()
         var channelUsed = false
+        val rangeHits = IdentityHashMap<CallExpr, String>()
+        var rangeUsed = false
         for (chk in checkers.values) {
             dictHits.putAll(chk.dictHits)
             funRefTargets.putAll(chk.funRefTargets)
@@ -98,7 +100,9 @@ class MultiModule(root: File) {
             receiveSmarts.putAll(chk.receiveSmartHits)
             hktKindHits.putAll(chk.hktKindPosHits)
             if (chk.channelUsed) channelUsed = true
+            rangeHits.putAll(chk.rangeHits)
+            if (chk.rangeUsed) rangeUsed = true
         }
-        return JsCodeGen().generateUnits(asts.toList(), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, receiveSmarts, hktKindHits, funRefTargets, funRefFree.keys, lambdaDestructKeys)
+        return JsCodeGen().generateUnits(asts.toList(), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, rangeHits, rangeUsed, receiveSmarts, hktKindHits, funRefTargets, funRefFree.keys, lambdaDestructKeys)
     }
 }

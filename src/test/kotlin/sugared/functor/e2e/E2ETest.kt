@@ -24,7 +24,7 @@ class E2ETest {
         val chk = Checker(ast)
         val bag = chk.run()
         assertEquals(false, bag.hasError, "语义检查应通过，实际:\n${bag.report()}")
-        val js = JsCodeGen().generate(ast, chk.dictHits, chk.moduleHits, chk.consHits, chk.dictSubHits, chk.namedArgOrder, chk.methodSugarArgs, chk.asyncAwaitHits, chk.channelUsed, chk.receiveSmartHits, chk.hktKindPosHits, chk.funRefTargets, chk.funRefFree.keys, chk.lambdaDestructKeys, chk.delegatedImpls)
+        val js = JsCodeGen().generate(ast, chk.dictHits, chk.moduleHits, chk.consHits, chk.dictSubHits, chk.namedArgOrder, chk.methodSugarArgs, chk.asyncAwaitHits, chk.channelUsed, chk.rangeHits, chk.rangeUsed, chk.receiveSmartHits, chk.hktKindPosHits, chk.funRefTargets, chk.funRefFree.keys, chk.lambdaDestructKeys, chk.delegatedImpls)
         val f = File.createTempFile("subl-e2e-", ".js")
         f.writeText(js)
         return try {
@@ -628,5 +628,20 @@ class E2ETest {
             "    print(gl(11))\n" +
             "}"
         assertEquals("3\na\n7\nb\n7\n13\n120\n9\n11", run(src))
+    }
+
+    @Test
+    fun `Range 惰性区间端到端 v3 特性三`() {
+        val src = "@impure fun main() {\n" +
+            "    var r = 0..3\n" +
+            "    print(r.length())\n" +
+            "    print(r.toList())\n" +
+            "    print(r.contains(2))\n" +
+            "    print(5 in 0..3)\n" +
+            "    var s = 1..4\n" +
+            "    print(s.map({ x => x * x }))\n" +
+            "    print(s.fold(0, { (acc, x) => acc + x }))\n" +
+            "}"
+        assertEquals("4\n[ 0, 1, 2, 3 ]\ntrue\nfalse\n[ 1, 4, 9, 16 ]\n10", run(src))
     }
 }

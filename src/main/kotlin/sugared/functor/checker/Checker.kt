@@ -42,6 +42,8 @@ class Checker(
     internal var funConsSlots: Map<String, List<Pair<String, String>>> = emptyMap()
     /** P6：约束槽方法调用留痕（调用点实例 → 槽名），codegen 生成 `$slot.m($slot, self, ...)` */
     internal val consHits = java.util.IdentityHashMap<CallExpr, String>()
+    /** v3.0 特性 3：Range 内建方法调用点 → 方法名（codegen 成员访问生成） */
+    internal val rangeHits = java.util.IdentityHashMap<CallExpr, String>()
     /** P6：带约束泛型函数的调用点字典实参留痕（调用点实例 → 按声明顺序的字典名），codegen 前插实参 */
     internal val dictSubHits = java.util.IdentityHashMap<CallExpr, List<String>>()
     /** HKT（《高阶类型.md》HKT-D2）：带参类型类方法（如 `Functor.map`）的字典分发——接收者是 **kind 应用位**
@@ -77,6 +79,8 @@ class Checker(
     internal var openChannels: MutableSet<String> = LinkedHashSet()
     /** v2.0 异步（§5.4）：源码是否用到 Channel（决定 codegen 是否注入 Channel 运行时 class） */
     internal var channelUsed = false
+    /** v3.0 特性 3：源码用到 `..` 值或 Range 内建方法 → 注入 __range 运行时（与 channelUsed 同机制） */
+    internal var rangeUsed = false
     /** v2.0 异步（CH-5）：receive 智能转换留痕（CallExpr → 是否为本地未关闭通道），codegen 据此解包 */
     internal val receiveSmartHits = java.util.IdentityHashMap<CallExpr, Boolean>()
     /** P9：变量血缘（子 → 父）：when 解构绑定变量 → 主题变量（`when(xs){Cons(_,t)->...}` ⇒ t→xs）。checkFun 进出清空恢复。 */
@@ -944,6 +948,13 @@ class Checker(
             return namedT("Bool", emptyList())
         }
         return when (e.op) {
+            // v3.0 特性 3：`..` 返回惰性 Range[Int]（修正：非 List）；`x in lo..hi` 的 O(1) 判定在上面处理
+            ".." -> {
+                rangeUsed = true
+                if (!l.isNumeric() || !r.isNumeric())
+                    d.error("E-TYPE-MISMATCH", e.pos, "区间 `..` 的端点须为数值，实际 ${l.render()} 与 ${r.render()}")
+                namedT("Range", listOf(l))
+            }
             "!" -> namedT("Bool", emptyList())
             else -> {
                 if (e.op == "/" && e.right is IntLit && (e.right as IntLit).value == "0")

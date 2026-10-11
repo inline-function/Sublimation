@@ -81,6 +81,10 @@ private var funRefFree: Set<Expr> = emptySet()
     private var awaitHits: Map<CallExpr, Boolean> = emptyMap()
     /** v2.0 异步（§5.4）：源码用到 Channel 时注入 Channel 运行时 class（唯一的运行时组件，几十行） */
     private var channelUsed = false
+    /** v3.0 特性 3：Range 内建方法调用点 → 方法名（成员访问生成） */
+    private var rangeHits: Map<CallExpr, String> = emptyMap()
+    /** v3.0 特性 3：用到 `..` 值或 Range 方法 → 注入 __range 小运行时（与 Channel 同层） */
+    private var rangeUsed = false
     /** v2.0 异步（CH-5）：receive 智能转换（CallExpr → true）→ codegen 解包 `(…)[0]` */
     private var receiveSmartHits: Map<CallExpr, Boolean> = emptyMap()
     /** HKT（《高阶类型.md》HKT-D2）：带参类型类方法调用点 → kind 应用位下标（点号式 `xs.map(f)` 的 fa 位）。
@@ -103,13 +107,15 @@ private var funRefFree: Set<Expr> = emptySet()
         sugarHits: Map<CallExpr, List<Expr>> = emptyMap(),
         awaitHits: Map<CallExpr, Boolean> = emptyMap(),
         channelUsed: Boolean = false,
+        rangeHits: Map<CallExpr, String> = emptyMap(),
+        rangeUsed: Boolean = false,
         receiveSmartHits: Map<CallExpr, Boolean> = emptyMap(),
         hktKindPosHits: Map<CallExpr, Int> = emptyMap(),
         funRefTargets: Map<Expr, String> = emptyMap(),
         funRefFree: Set<Expr> = emptySet(),
         lambdaDestructKeys: Map<Expr, List<List<String>?>> = emptyMap(),
         delegatedImpls: Map<ImplDecl, List<FunDecl>> = emptyMap(),
-    ): String = generateUnits(listOf("" to file), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, receiveSmartHits, hktKindPosHits, funRefTargets, funRefFree, lambdaDestructKeys, delegatedImpls)
+    ): String = generateUnits(listOf("" to file), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, rangeHits, rangeUsed, receiveSmartHits, hktKindPosHits, funRefTargets, funRefFree, lambdaDestructKeys, delegatedImpls)
 
     /** M8：全部模块合成一个 JS（顶层名字带模块前缀，根无前缀） */
     fun generateUnits(
@@ -122,6 +128,8 @@ private var funRefFree: Set<Expr> = emptySet()
         sugarHits: Map<CallExpr, List<Expr>> = emptyMap(),
         awaitHits: Map<CallExpr, Boolean> = emptyMap(),
         channelUsed: Boolean = false,
+        rangeHits: Map<CallExpr, String> = emptyMap(),
+        rangeUsed: Boolean = false,
         receiveSmartHits: Map<CallExpr, Boolean> = emptyMap(),
         hktKindPosHits: Map<CallExpr, Int> = emptyMap(),
         funRefTargets: Map<Expr, String> = emptyMap(),
@@ -138,6 +146,8 @@ private var funRefFree: Set<Expr> = emptySet()
         sugarArgs = sugarHits
         this.awaitHits = awaitHits
         this.channelUsed = channelUsed
+        this.rangeHits = rangeHits
+        this.rangeUsed = rangeUsed
         this.receiveSmartHits = receiveSmartHits
         this.hktKindPosHits = hktKindPosHits
         this.funRefTargets = funRefTargets
@@ -242,6 +252,17 @@ private var funRefFree: Set<Expr> = emptySet()
             line("  close() { this.closed = true; }")
             line("  isClosed() { return this.closed; }")
             line("}")
+        }
+        // v3.0 特性 3：Range 小运行时——惰性区间（第二个运行时组件，与 Channel 同层）。
+        // 不预生成元素：in/contains O(1) 闭区间判定；map/fold 迭代；toList/length 按需展开。
+        if (rangeUsed) {
+            line("const __range = (lo, hi) => ({ lo, hi,")
+            line("  contains: (x) => lo <= x && x <= hi,")
+            line("  length: () => Math.max(0, hi - lo + 1),")
+            line("  toList: () => Array.from({ length: Math.max(0, hi - lo + 1) }, (_, i) => lo + i),")
+            line("  map: (f) => Array.from({ length: Math.max(0, hi - lo + 1) }, (_, i) => f(lo + i)),")
+            line("  fold: (init, f) => { let acc = init; for (let i = lo; i <= hi; i++) acc = f([i, acc]); return acc; },")
+            line("});")
         }
         for ((p, fa) in units) {
             currentPrefix = p
@@ -671,7 +692,7 @@ private var funRefFree: Set<Expr> = emptySet()
                 return "(${expr(rr.left)} <= ${expr(e.left)} && ${expr(e.left)} <= ${expr(rr.right)})"
             return "true"   // 语义层已拦；兜底
         }
-        if (e.op == "..") return "[${expr(e.left)}, ${expr(e.right)}]"   // 区间字面量（in 外）兜底
+        if (e.op == "..") return "__range(${expr(e.left)}, ${expr(e.right)})"   // v3.0 特性 3：惰性 Range（非 List 数组）
         val op = when (e.op) {
             "+", "-", "*", "/", "%", "<", ">", "<=", ">=" -> e.op
             // `==` 是结构相等（决策 32/53）：struct 全字段相等即相等，禁重写
@@ -987,6 +1008,12 @@ private var funRefFree: Set<Expr> = emptySet()
         // 点号形态 o.m(args) 与自由式 m(o, args) 统一补齐隐藏字典 d 与接收者 __self。
         // P0：限定方法 `core.show(p)` 用 MODULE_METHOD_MARKER 标记——首实参即接收者（自由形态语义）。
         // P6（决策 82）：约束槽方法调用 `x.show()`（x: T, T: Show）→ `d_Show_T.show(d_Show_T, x)`
+        // v3.0 特性 3：Range 内建方法——成员访问 `recv.name(args...)`（__range 对象自带方法）
+        if (rangeHits[e] != null && callee is FieldExpr) {
+            val recv = expr(callee.target)
+            val ajs = e.args.joinToString(", ") { expr(it) }
+            return recv + "." + name + "(" + ajs + ")"
+        }
         val consSlot = consDicts[e]
         if (consSlot != null && name != null) {
             val selfJs = if (callee is FieldExpr) expr(callee.target)

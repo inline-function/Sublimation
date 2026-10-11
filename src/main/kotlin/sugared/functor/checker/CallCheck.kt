@@ -115,6 +115,15 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
         }
     }
 
+    // v3.0 特性 3：Range 惰性值的内建方法特判（contains/length/toList/map/fold）——成员访问生成
+    if (selfT is NamedType && selfT.name == "Range") {
+        rangeMethodType(name, selfT, argTypes, c)?.let { rt ->
+            rangeHits[c] = name
+            rangeUsed = true
+            return rt
+        }
+    }
+
     if (selfT == null) {
         // O2：方法路径（self 已知）不参与构造子/结构体判定，避免同名截胡
     syms.ctors[name]?.let { ci -> return checkCtorCall(ci, name, c, argTypes, modulePath) }
@@ -933,6 +942,22 @@ private fun Checker.checkStructProps(st: StructDecl, f: Frame, pos: String, args
         } else {
             d.error("E-STRUCT-PROP-UNPROVEN", pos, "构造 " + st.name + " 须证明 " + PropLogic.render(g) + "（当前 Γ 无法蕴含）")
         }
+    }
+}
+
+/** v3.0 特性 3：Range 内建方法签名（contains/length/toList/map/fold）；返回 null 表示非 Range 方法。 */
+internal fun Checker.rangeMethodType(name: String, selfT: Type, argTypes: List<Type>, c: CallExpr): Type? {
+    val elem = (selfT as? NamedType)?.args?.getOrNull(0) ?: namedT("Int")
+    return when (name) {
+        "contains" -> { if (argTypes.size != 1) d.error("E-TYPE-MISMATCH", c.pos, "contains 期望 1 个实参"); namedT("Bool", emptyList()) }
+        "length" -> { if (argTypes.isNotEmpty()) d.error("E-TYPE-MISMATCH", c.pos, "length 无参"); namedT("Nat", emptyList()) }
+        "toList" -> namedT("List", listOf(elem))
+        "map" -> {
+            val rt = (argTypes.getOrNull(0) as? FunType)?.ret ?: syntheticT("map返回")
+            namedT("List", listOf(rt))
+        }
+        "fold" -> argTypes.getOrNull(0) ?: syntheticT("fold返回")
+        else -> null
     }
 }
 

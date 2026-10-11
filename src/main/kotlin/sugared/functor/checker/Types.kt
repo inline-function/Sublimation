@@ -6,6 +6,7 @@ import sugared.functor.ast.*
 val BASE_TYPES = setOf("Nat", "Int", "Rat", "Str", "Bool", "Null", "Nothing", "Any",
     "EmptyTuple", "SingleTuple", "Array",
     "Task", "Channel",   // v2.0 异步（决策 93）：内建泛类型类型（无用户声明，形如 Array）
+    "Range",           // v3.0 特性 3：惰性区间 `..` 返回 Range[Int]
     "Json")              // v2.0 基本库（内建 JS 实现）：JSON 值（编译成 JS 原生 JSON 对象/数组/字面量）
 
 /** 合成类型（v1 类型推导不完整时的占位：泛型未绑定、lambda、$ 命题变量等） */

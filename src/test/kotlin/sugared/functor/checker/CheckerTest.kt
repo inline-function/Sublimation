@@ -1177,4 +1177,14 @@ class CheckerTest {
         assertTrue(ok(src), "函数体内 t.n ≠ 0 应自动注入")
     }
 
+    @Test
+    fun `Range 区间返回且成员判定`() {
+        val src = "@impure fun main() { var r = 0..3\nprint(r.length())\nprint(r.contains(3)) }"
+        assertTrue(ok(src), "0..3 应返回 Range，contains 成员判定")
+    }
+
+    @Test
+    fun `Range 区间端点须数值`() {
+        assertTrue(errs("@impure fun main() { var s = \"a\"..\"b\" }").contains("E-TYPE-MISMATCH"))
+    }
 }
