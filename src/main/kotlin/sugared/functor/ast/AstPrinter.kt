@@ -97,6 +97,7 @@ private fun Expr.toTree(): Tree = when (this) {
     is CallExpr -> Tree("call ${callee.toTag()}(${args.joinToString(", ") { it.toTag() }})")
     is InstExpr -> Tree("inst ${target.toTag()}<${terms.joinToString(", ") { it.toTag() }}>")
     is FieldExpr -> Tree("field ${target.toTag()}.$name")
+    is FunRefExpr -> Tree("funref ${target.toTag()}::$name")
     is SymbolCallExpr -> Tree("sym ${op}(${args.joinToString(", ") { it.toTag() }})")
     is LambdaExpr -> Tree("lambda(${params.joinToString(", ")}) => ${body.toTag()}")
     is BlockExpr -> Tree("block", stmts.map { it.toTree() })
@@ -137,6 +138,7 @@ private fun Expr.toTag(): String = when (this) {
     is CallExpr -> "${callee.toTag()}(${args.joinToString(", ") { it.toTag() }})"
     is InstExpr -> "${target.toTag()}<${terms.joinToString(", ") { it.toTag() }}>"
     is FieldExpr -> "${target.toTag()}.$name"
+    is FunRefExpr -> "${target.toTag()}::$name"
     is SymbolCallExpr -> "$op(${args.joinToString(", ") { it.toTag() }})"
     is LambdaExpr -> "\\(${params.joinToString(", ")}) => ${body.toTag()}"
     is BlockExpr -> "{${stmts.joinToString("; ") { it.toPlain() }}}"

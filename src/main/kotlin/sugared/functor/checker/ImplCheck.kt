@@ -175,7 +175,7 @@ internal fun Checker.checkSubTraitParents() {
 /** HKT（《高阶类型.md》HKT-S6，方案 A）：impl self 是否匹配实参类型。
  *  普通 self（`Show[Int]` for Int）走 typeLooseEq；self 是**构造子应用占位**（`List[a]` 的 a 为小写裸名）
  *  时按 kind 通配——同构造子同 arity 即匹配，占位变量接受任何同位置实参（含嵌套，如 `List[a]` vs `List[Nat]`）。 */
-private fun Checker.doesSelfMatch(self: Type, argT: Type): Boolean {
+internal fun Checker.doesSelfMatch(self: Type, argT: Type): Boolean {
     if (typeLooseEq(self, argT)) return true
     return kindWildcardMatch(self, argT)
 }

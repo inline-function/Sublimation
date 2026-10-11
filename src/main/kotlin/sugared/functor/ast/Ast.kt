@@ -300,6 +300,9 @@ data class InstExpr(val target: Expr, val terms: List<Expr>, override val pos: S
 
 data class FieldExpr(val target: Expr, val name: String, override val pos: String = "") : Expr
 
+/** P6（决策 95）：函数引用 `o::f`（类 Kotlin 方法引用）——不加括号传递函数值 */
+data class FunRefExpr(val target: Expr, val name: String, override val pos: String = "") : Expr
+
 /** 比较符前缀调用形式 `<(1, 2)` */
 data class SymbolCallExpr(val op: String, val args: List<Expr>, override val pos: String = "") : Expr
 

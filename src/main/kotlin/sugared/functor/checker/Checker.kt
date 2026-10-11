@@ -83,6 +83,8 @@ class Checker(
      * 限定方法调用为 MODULE_METHOD_MARKER（字典分发的分支选择用）。
      */
     internal val moduleHits = java.util.IdentityHashMap<Expr, String>()
+    /** P6（决策 95）：函数引用 `o::f` → 方法 JS 名（codegen 生成闭包引用） */
+    internal val funRefTargets = java.util.IdentityHashMap<Expr, String>()
     /** I-20：当前模块的完整可见路径集合（目录模式计算；单文件模式空集不用过滤） */
     internal val visiblePaths: Set<String>
         get() = if (moduleTree == null) emptySet() else moduleTree.visiblePathsOf(modulePath)
@@ -539,6 +541,32 @@ class Checker(
                     else null
                     ret ?: syntheticT("字段${e.name}")
                 }
+            }
+        }
+        // P6（决策 95）：`o::f` 方法引用——不加括号传递函数值。
+        // 复杂（泛型参数）方法没有可值的"完美函数类型" → E-FUTURE-FUN（用户措辞）。
+        is FunRefExpr -> {
+            val tt = checkExpr(e.target, f, pure)
+            val method = (syms.methods[e.name] ?: emptyList()).firstOrNull { doesSelfMatch(it.self, tt) }
+            // P5（决策 81）：内建点号方法（strUpper/length…）不在 syms.methods，走 builtin 表按首参匹配
+            var fn = method?.fn
+            if (fn == null) {
+                val bi = builtinPure(e.name) ?: builtinUnpure(e.name)
+                if (bi != null && bi.params.isNotEmpty() && typeLooseEq(bi.params[0].type, tt)) fn = bi
+                else fn = syms.funs[e.name]
+            }
+            if (fn == null) {
+                d.error("E-NO-METHOD", e.pos, "类型 ${tt.render()} 无方法 ${e.name}")
+                syntheticT("函数引用")
+            } else if (fn.theory.isNotEmpty() || (method != null && method.trait.isNotEmpty())) {
+                // 泛型或字典方法（impl trait 需 dict 实参）无完美函数类型可供引用
+                d.error("E-FUTURE-FUN", e.pos, "请期待未来的完美函数类型")
+                syntheticT("函数引用")
+            } else {
+                val jsName = method?.let { moduleJsName(it.modulePath, it.fn.name) }
+                    ?: moduleJsName(modulePath, fn.name)
+                funRefTargets[e] = jsName
+                FunType(fn.params.map { it.type }, fn.retType ?: namedT("Null", emptyList()))
             }
         }
         is InstExpr -> { checkExpr(e.target, f, pure); e.terms.forEach { checkExpr(it, f, pure) }; namedT("Bool", emptyList()) }

@@ -658,13 +658,14 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                     e = SafeCallExpr(e, name, args)
                 }
                 t.kind == Kind.COLON2 -> {
-                    // v2.1（对齐 Rust 关联项）：`E::A` 枚举成员访问 → 折叠为构造子复合名 "E::A"
+                    // v2.1（对齐 Rust 关联项）：`E::A` 枚举成员访问 → 折叠为构造子复合名
                     // （语义层按 syms.ctors 复合键解析构造；后随 `(` 则为构造调用）
-                    if (e !is NameRef)
-                        throw ParseFailure(fileName, cur(), ":: 前须是枚举类型名")
+                    // P6（决策 95）：`o::f` 非大写名左侧为方法引用 → FunRefExpr
                     pos++
-                    val ctor = nameToken()
-                    e = NameRef(e.name + "::" + ctor, e.pos)
+                    val member = nameToken()
+                    e = if (e is NameRef && e.name.first().isUpperCase())
+                        NameRef(e.name + "::" + member, e.pos)
+                    else FunRefExpr(e, member, e.pos)
                 }
                 t.kind == Kind.DOT -> { pos++; e = FieldExpr(e, nameToken()) }
                 t.kind == Kind.LPAREN -> {

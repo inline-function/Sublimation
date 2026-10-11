@@ -51,6 +51,7 @@ class JsCodeGen {
     private var sugarArgs: Map<CallExpr, List<Expr>> = emptyMap()
     /** P0（M8）：全局引用的 JS 名留痕（键 = 引用表达式节点；限定方法调用 = MODULE_METHOD_MARKER） */
     private var moduleHits: Map<Expr, String> = emptyMap()
+    private var funRefTargets: Map<Expr, String> = emptyMap()
     /** P0（M8）：当前生成单元的模块 absPath（根 = ""） */
     private var currentPrefix = ""
     /** O2（决策 68）：当前正在生成的字典方法所属结构体的字段名（裸用→ __self.字段） */
@@ -98,7 +99,8 @@ class JsCodeGen {
         channelUsed: Boolean = false,
         receiveSmartHits: Map<CallExpr, Boolean> = emptyMap(),
         hktKindPosHits: Map<CallExpr, Int> = emptyMap(),
-    ): String = generateUnits(listOf("" to file), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, receiveSmartHits, hktKindPosHits)
+        funRefTargets: Map<Expr, String> = emptyMap(),
+    ): String = generateUnits(listOf("" to file), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, receiveSmartHits, hktKindPosHits, funRefTargets)
 
     /** M8：全部模块合成一个 JS（顶层名字带模块前缀，根无前缀） */
     fun generateUnits(
@@ -113,6 +115,7 @@ class JsCodeGen {
         channelUsed: Boolean = false,
         receiveSmartHits: Map<CallExpr, Boolean> = emptyMap(),
         hktKindPosHits: Map<CallExpr, Int> = emptyMap(),
+        funRefTargets: Map<Expr, String> = emptyMap(),
     ): String {
         dicts = dictHits
         this.moduleHits = moduleHits
@@ -124,6 +127,7 @@ class JsCodeGen {
         this.channelUsed = channelUsed
         this.receiveSmartHits = receiveSmartHits
         this.hktKindPosHits = hktKindPosHits
+        this.funRefTargets = funRefTargets
         currentPrefix = ""
         structFields.clear()
         overloadsByUnit.clear()
@@ -564,6 +568,12 @@ class JsCodeGen {
         is TaskExpr -> taskJs(e)
         is SymbolCallExpr -> symbolCall(e)
         is FieldExpr -> moduleHits[e] ?: "${expr(e.target)}.${mangle(e.name)}"   // P0：跨模块限定引用走留痕名
+        // P6（决策 95）：`o::f` 方法引用 → 绑定 self 的闭包 `(…a) => f(o, …a)`
+        is FunRefExpr -> {
+            val jsName = funRefTargets[e] ?: "${expr(e.target)}.${mangle(e.name)}"
+            val tgt = expr(e.target)
+            "(...a) => $jsName($tgt, ...a)"
+        }
         is CallExpr -> call(e)
         is InstExpr -> expr(e.target)   // 实例化/供给整体擦除，只留被调名
         is LambdaExpr -> {

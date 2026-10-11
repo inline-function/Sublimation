@@ -205,6 +205,21 @@ class CheckerTest {
     }
 
     @Test
+    fun `P6 函数引用 o冒号冒号f 简单方法可传`() {
+        val src = "fun id(x: Nat): Nat = x\n" +
+            "@unpure fun apply(f: (Nat) => Nat, v: Nat): Nat = f(v)\n" +
+            "fun main() { var s = \"hi\"\nvar f = s::strUpper }"
+        assertTrue(ok(src), "简单方法引用应通过")
+    }
+
+    @Test
+    fun `P6 函数引用 泛型函数报请期待未来`() {
+        val src = "fun pair[T](x: T, y: T): (T, T) = (x, y)\n" +
+            "fun main() { var f = \"s\"::pair }"
+        assertTrue(errs(src).contains("E-FUTURE-FUN"), "泛型函数引用应报 E-FUTURE-FUN")
+    }
+
+    @Test
     fun `枚举双冒号访问 错误枚举名报错`() {
         val src = "enum Shape[T] { Circle(T) Dot }\nfun main() { var a = Polygon::Circle(1) }"
         assertTrue(errs(src).contains("E-UNBOUND-NAME"), "未声明枚举的成员访问应报错")

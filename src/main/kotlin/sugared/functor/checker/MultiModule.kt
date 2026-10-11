@@ -80,9 +80,11 @@ class MultiModule(root: File) {
         val awaitHits = IdentityHashMap<CallExpr, Boolean>()
         val receiveSmarts = IdentityHashMap<CallExpr, Boolean>()
         val hktKindHits = IdentityHashMap<CallExpr, Int>()
+        val funRefTargets = IdentityHashMap<Expr, String>()
         var channelUsed = false
         for (chk in checkers.values) {
             dictHits.putAll(chk.dictHits)
+            funRefTargets.putAll(chk.funRefTargets)
             moduleHits.putAll(chk.moduleHits)
             consHits.putAll(chk.consHits)
             dictSubHits.putAll(chk.dictSubHits)
@@ -93,6 +95,6 @@ class MultiModule(root: File) {
             hktKindHits.putAll(chk.hktKindPosHits)
             if (chk.channelUsed) channelUsed = true
         }
-        return JsCodeGen().generateUnits(asts.toList(), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, receiveSmarts, hktKindHits)
+        return JsCodeGen().generateUnits(asts.toList(), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, receiveSmarts, hktKindHits, funRefTargets)
     }
 }
