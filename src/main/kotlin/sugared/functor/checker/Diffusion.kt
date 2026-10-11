@@ -10,6 +10,8 @@ import sugared.functor.ast.*
 class Frame(val parent: Frame?) {
     val vars = LinkedHashMap<String, Type>()
     val facts = ArrayList<Prop>()
+    /** v3.0 特性 7：局部定理表（块内局部函数定义=∀ 引入），作用域随帧；∴ 搜索时并入定理空间 */
+    val localTheorems = LinkedHashMap<String, FunDecl>()
     private val muts = LinkedHashSet<String>()
     val children = ArrayList<Frame>()
     private val used = HashSet<String>()
@@ -105,13 +107,14 @@ internal fun Checker.proveOrDeep(gamma: List<Prop>, goal: Prop): Boolean {
  *  搜索深度默认两跳——超限报 E-THEOREM-SEARCH-DEPTH（by solve 未来加深）。
  *  命中判据：定理后件（post）与目标做**结构合一**——theorem 的 theory 参数（如 @p）为元变量，
  *  可绑定到目标对应位置的任意项（实例化后 post ≡ q）。 */
-internal fun Checker.searchTheorems(q: Prop, depth: Int): Boolean {
+internal fun Checker.searchTheorems(q: Prop, depth: Int, local: Map<String, FunDecl> = emptyMap()): Boolean {
     if (depth > 2) {
         d.error("E-THEOREM-SEARCH-DEPTH", "", "定理搜索深度超限（默认两跳）：目标 " + PropLogic.render(q))
         return false
     }
-    for (t in syms.theorems.values) {
-        val vars = t.theory.mapNotNull { when (it) { is TypeParam -> it.name; is PropParam -> it.name; else -> null } }.toSet()
+    for (t in (local.values + syms.theorems.values)) {
+        // v3.0 特性 7：局部函数（∀ 引入）的形参是绑定变元——并入 theory 参数一起做合一
+        val vars = (t.theory.mapNotNull { when (it) { is TypeParam -> it.name; is PropParam -> it.name; else -> null } } + t.params.map { it.name }).toSet()
         for (post in t.posts) {
             val pp = PropLogic.fromExpr(post)
             if (postUnifies(pp, q, vars, LinkedHashMap())) return true

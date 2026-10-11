@@ -229,6 +229,17 @@ data class PlusBecauseStmt(val prop: Expr, override val pos: String = "") : Stmt
 
 // ---------- v3.0 特性 6：if[p] 排中律（语句位，纯证明构造，零运行时代码） ----------
 
+// ---------- v3.0 特性 7：量词（∃引入/∃消去/∀引入=局部函数） ----------
+
+/** `∃ x = t . P(x)` —— ∃ 引入：替换 x→t 后证明 P(t)，成功注入 `∃ x. P(x)` 到 Γ */
+data class ExistIntroStmt(val name: String, val witness: Expr, val prop: Expr, override val pos: String = "") : Stmt
+
+/** `∃ x . P(x) { ∴ q… }` —— ∃ 消去：前提 ∃x. P(x) 在 Γ（否则 E-PROP-UNBOUND），块内新帧注入 x 与 P(x)，块外 Γ += 结论 */
+data class ExistsElimStmt(val name: String, val prop: Expr, val body: List<Stmt>, override val pos: String = "") : Stmt
+
+/** 块内局部函数定义（∀ 引入：定义即证明）——登记为当前帧局部定理，participates in ∴ 搜索；V1 不生成 JS 值代码 */
+data class FunStmt(val fn: FunDecl, override val pos: String = "") : Stmt
+
 /** `if[p] { ∴ q… } else { ∴ q… }` —— 两支分别以 p / ¬p 入 Γ 证明相同结论集，块外 Γ += 结论 */
 data class IfPropStmt(
     val prop: Expr,

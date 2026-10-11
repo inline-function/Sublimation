@@ -1235,4 +1235,34 @@ class CheckerTest {
         val src = "@classic\n@impure fun main() { ∵ y = 1\nif[z = 2] { ∴ y = 1 } }"
         assertTrue(errs(src).contains("E-IF-CONCLUSION-MISMATCH"), "两支 ∴ 结论集不同应报 E-IF-CONCLUSION-MISMATCH")
     }
+
+    @Test
+    fun `Exists 引入特性七`() {
+        val src = "@impure fun main() { ∃ x = 1 . x = 1 }"
+        assertTrue(ok(src), "替换 x→1 后 1 = 1 可证，应注入 ∃x. x = 1")
+    }
+
+    @Test
+    fun `Exists 消去特性七`() {
+        val src = "@impure fun main() { ∃ x = 1 . x = 1\n∃ x . x = 1 { ∴ x = 1 } }"
+        assertTrue(ok(src), "前提 ∃x. x=1 在 Γ，块内 ∴ x=1 应证出")
+    }
+
+    @Test
+    fun `Exists 前提不在 Γ 报特性七`() {
+        val src = "@impure fun main() { ∃ y . y = 1 { ∴ y = 1 } }"
+        assertTrue(errs(src).contains("E-PROP-UNBOUND"), "前提不在 Γ 应报 E-PROP-UNBOUND")
+    }
+
+    @Test
+    fun `Exists 引入实例证不出报特性七`() {
+        val src = "@impure fun main() { ∃ x = 1 . x = 2 }"
+        assertTrue(errs(src).contains("E-QUANT-UNPROVEN"), "实例 1 = 2 证不出应报 E-QUANT-UNPROVEN")
+    }
+
+    @Test
+    fun `Forall 引入局部函数特性七`() {
+        val src = "@impure fun main() { fun helper(a: Nat)<a = 1>: <a = 1> { }\n∴ b = 1 }"
+        assertTrue(ok(src), "局部函数定义即 ∀ 引入，∴ b = 1 应搜索到 helper 命中")
+    }
 }

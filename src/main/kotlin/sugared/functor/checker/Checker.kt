@@ -477,7 +477,7 @@ class Checker(
             // ---------- v3.0 特性 5：∵ / ∴ 语句（命题层，语句位） ----------
             is BecauseStmt -> {
                 val p = PropLogic.fromExpr(s.prop)
-                val proves = proveOrDeep(f.allFacts(), p) || searchTheorems(p, 0)
+                val proves = proveOrDeep(f.allFacts(), p) || searchTheorems(p, 0, f.localTheorems)
                 d.supplement(if (proves) "D-BECAUSE-PROVED" else "D-BECAUSE-TRUSTED", s.pos,
                     "∵ " + PropLogic.render(p) + (if (proves) "（可证，注入 Γ）" else "（信任，注入 Γ——留痕可审计）"))
                 f.inject(p)
@@ -485,7 +485,7 @@ class Checker(
             }
             is ThereforeStmt -> {
                 val q = PropLogic.fromExpr(s.prop)
-                if (proveOrDeep(f.allFacts(), q) || searchTheorems(q, 0)) {
+                if (proveOrDeep(f.allFacts(), q) || searchTheorems(q, 0, f.localTheorems)) {
                     f.inject(q)   // 连续 ∴ 自动累积上文（q 成为下文事实）
                     d.supplement("D-THEREFORE", s.pos, "∴ " + PropLogic.render(q) + " 成立")
                 } else {
@@ -521,6 +521,41 @@ class Checker(
                         d.error("E-IF-CONCLUSION-MISMATCH", s.pos,
                             "if[p] 两支 ∴ 结论集不同：then=${thenC.keys}；else=${elseC.keys}（排中律要求两支结论相同）")
                     else thenC.values.forEach { f.inject(it) }   // 块外 Γ += q₁ ∧ … ∧ qₙ
+                }
+                namedT("Null", emptyList())
+            }
+            // ---------- v3.0 特性 7：量词（∃引入 / ∃消去 / ∀引入=局部函数） ----------
+            is ExistIntroStmt -> {
+                val sub = LinkedHashMap<String, Expr>()
+                sub[s.name] = s.witness
+                val inst = substPropTerms(PropLogic.fromExpr(s.prop), sub)   // P(x)[x→t]
+                if (proveOrDeep(f.allFacts(), inst) || searchTheorems(inst, 0, f.localTheorems)) {
+                    f.inject(PExists(listOf(s.name), PropLogic.fromExpr(s.prop)))
+                    d.supplement("D-EXIST-INTRO", s.pos, "∃ 引入成立：∃${s.name}. " + PropLogic.render(PropLogic.fromExpr(s.prop)))
+                } else
+                    d.error("E-QUANT-UNPROVEN", s.pos, "∃ 引入实例 " + PropLogic.render(inst) + " 证不出")
+                namedT("Null", emptyList())
+            }
+            is ExistsElimStmt -> {
+                val goal = PExists(listOf(s.name), PropLogic.fromExpr(s.prop))
+                val premise = f.allFacts().any { it is PExists && PropLogic.render(it) == PropLogic.render(goal) }
+                if (!premise) {
+                    d.error("E-PROP-UNBOUND", s.pos, "前提 " + PropLogic.render(goal) + " 不在 Γ 中（先用 ∃ 引入或 ∵ 注入）。当前 Γ：" + f.allFacts().joinToString("；") { PropLogic.render(it) })
+                } else {
+                    val subF = Frame(f)
+                    subF.inject(PropLogic.fromExpr(s.prop))   // P(x) 注入块内（x 作用域限于块）
+                    s.body.forEach { checkStmt(it, subF, pure, flow) }
+                    s.body.filterIsInstance<ThereforeStmt>().forEach { t0 -> f.inject(PropLogic.fromExpr(t0.prop)) }   // 块外 Γ += 结论
+                }
+                namedT("Null", emptyList())
+            }
+            is FunStmt -> {
+                // ∀ 引入（V1）：局部函数定义登记为局部定理（形参即绑定变元）；定义体非空（不是"签名即证明"）
+                if (s.fn.body == null)
+                    d.error("E-QUANT-UNPROVEN", s.pos, "局部函数 ${s.fn.name} 必须体（∀ 引入要求有体，不是签名即证明）")
+                else {
+                    f.localTheorems[s.fn.name] = s.fn
+                    d.supplement("D-LOCAL-FUN", s.pos, "局部函数 ${s.fn.name} 登记为局部定理（∀ 引入）")
                 }
                 namedT("Null", emptyList())
             }

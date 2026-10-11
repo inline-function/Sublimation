@@ -681,4 +681,16 @@ class E2ETest {
             "}"
         assertEquals("ok", run(src))
     }
+
+    @Test
+    fun `量词零代码 v3 特性七`() {
+        val src = "@impure fun main() {\n" +
+            "    ∃ x = 1 . x = 1\n" +
+            "    ∃ x . x = 1 { ∴ x = 1 }\n" +
+            "    fun helper(a: Nat)<a = 1>: <a = 1> { }\n" +
+            "    ∴ b = 1\n" +
+            "    print(\"ok\")\n" +
+            "}"
+        assertEquals("ok", run(src))
+    }
 }

@@ -467,6 +467,10 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
     }
 
     private fun parseStmt(): Stmt {
+        // v3.0 特性 7：`∃ x = t . P`（引入）与 `∃ x . P { }`（消去）——EXISTS 后跟名字再消歧
+        if (peek(Kind.EXISTS)) return parseExistsStmt()
+        // v3.0 特性 7：块内局部函数定义（∀ 引入）
+        if (peek(Kind.FUN)) { val fn = parseFun(if (peek(Kind.AT)) parseAnnotations() else emptyList()); return FunStmt(fn, fn.pos) }
         // v3.0 特性 6：`if[p]` 命题层排中律（IF 后紧跟 [ 与值层 if ( 区分）
         if (peek(Kind.IF) && toks.getOrNull(pos + 1)?.kind == Kind.LBRACKET) return parseIfProp()
         // v3.0 特性 5：∵ / ∴ / +∵ 语句（命题裸表达式，无需括号）
@@ -521,6 +525,26 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         val bare = nx.kind == Kind.RBRACE || nx.kind == Kind.SEMI || nx.kind == Kind.EOF
         return if (bare || label != null) ReturnStmt(null, atPos, label)
         else ReturnStmt(parseExpr(angle = false), atPos)
+    }
+
+    /** v3.0 特性 7：`∃ x = t . P(x)`（引入）或 `∃ x . P(x) { … }`（消去）——EXISTS 已消费 */
+    private fun parseExistsStmt(): Stmt {
+        val t = next()   // EXISTS
+        val x = at(Kind.IDENT).text
+        if (peek(Kind.ASSIGN)) {
+            pos++
+            val witness = parseExpr(angle = false)
+            at(Kind.DOT)
+            val prop = parseExpr(angle = true)
+            return ExistIntroStmt(x, witness, prop, "${t.line}:${t.col}")
+        }
+        at(Kind.DOT)
+        val prop = parseExpr(angle = true)
+        if (peek(Kind.LBRACE)) {
+            val blk = parseBlock()
+            return ExistsElimStmt(x, prop, blk.stmts, "${t.line}:${t.col}")
+        }
+        return ExistsElimStmt(x, prop, emptyList(), "${t.line}:${t.col}")
     }
 
     private fun parseUnchecked(): Stmt {
@@ -859,7 +883,8 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                         NameRef(e.name + "::" + member, e.pos)
                     else FunRefExpr(e, member, e.pos)
                 }
-                t.kind == Kind.DOT -> { pos++; e = FieldExpr(e, nameToken()) }
+                // v3.0 特性 7：`.` 字段访问 ⇔ 点前无空格（`a.b`），或点在自己行的行首（换行链 `\n    .map`）；`1 . x = 1` 同行带空格点是 ∃ 分隔符
+                t.kind == Kind.DOT && (!t.precededBySpace || toks.getOrNull(pos - 1)?.line != t.line) -> { pos++; e = FieldExpr(e, nameToken()) }
                 t.kind == Kind.LPAREN -> {
                     // O3（决策 69）：大写名字 + `()`/`(IDENT = …)` 形态 → 命名字段构造；其余仍走普通调用
                     // v2.1：`E::A(...)` 枚举成员路径不走命名字段构造（复合名含 ::），保持普通调用 → codegen 归一化裸名
@@ -876,8 +901,9 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                     catch (f: ParseFailure) { pos = save; break }
                 }
                 // 尾随 lambda（含隐式单参）；`Task { … }`（决策 93）是代码块非 lambda，交给下一分支
+                // v3.0 特性 7：字面量/运算符结果后 `{` 不是尾随 lambda（`1 {` 是 ∃ 消去块的边界）；可调用结果才允许
                 t.kind == Kind.LBRACE && (braceIsLambda(pos) ||
-                    (braceHasImplicitBody(pos) && !(e is NameRef && e.name == "Task"))) -> {
+                    (braceHasImplicitBody(pos) && !(e is NameRef && e.name == "Task"))) && !(e is IntLit || e is StrLit || e is BinExpr || e is UniExpr) -> {
                     // v1.1 尾随 lambda 语法糖（Kotlin）：`f(a) { x -> … }` 追加为**最后**位置实参
                     val lam = parseBraceLambda()
                     e = if (e is CallExpr) e.copy(args = e.args + lam) else CallExpr(e, listOf(lam))
