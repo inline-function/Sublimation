@@ -123,14 +123,25 @@ data class NamedType(override val name: String, override val args: List<Type> = 
 }
 
 /** 函数类型 `(A,B)=>C`（决策 57，v1 为 Kotlin 级：无理论参数、无前后件） */
-data class FunType(val params: List<Type>, val ret: Type, val purity: String = "") : Type {
+data class FunType(
+    val params: List<Type>,
+    val ret: Type,
+    val purity: String = "",
+    // v3.0（完美函数类型）：理论参数（多态函数类型 `[T](T)=>T`）。theory 里的名字是**绑定者**——
+    // substT 时被屏蔽（α 安全）；类型比对（typeEq/unifyInto/typeLooseEq）V1 忽略 theory 位（宽松，后续收紧）。
+    val theory: List<TypeParam> = emptyList(),
+) : Type {
     override val name: String get() = "(fn)"
     override val args: List<Type> get() = params + ret
     override fun render(): String =
         (if (purity.isEmpty()) "" else "$purity ") +
+            (if (theory.isEmpty()) "" else "[" + theory.joinToString(", ") { it.name } + "]") +
             "(" + params.joinToString(", ") { it.render() } + ")=>" + ret.render()
-    override fun substT(sub: Map<String, Type>): Type =
-        FunType(params.map { it.substT(sub) }, ret.substT(sub), purity)
+    override fun substT(sub: Map<String, Type>): Type {
+        val bound = theory.map { it.name }.toSet()
+        val inner = if (bound.isEmpty()) sub else sub.filterKeys { it !in bound }
+        return FunType(params.map { it.substT(inner) }, ret.substT(inner), purity, theory)
+    }
 }
 
 /** 元组类型 `(T,U)`；`EmptyTuple`/`SingleTuple<T>` 是具名形态，走 NamedType（决策 62） */

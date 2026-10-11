@@ -231,7 +231,10 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
         }
         ?: run {
             // 回退：调用持有函数值的局部变量（如 `var id = \(x)=>x; id(1)`）
-            if (f.lookupVar(name) != null) return syntheticT("变量函数调用$name")
+            // v3.0（完美函数类型）：变量类型是函数类型（含多态 `fun[T](x: T): T = x`）→ 实例化调用检查
+            val vt = f.lookupVar(name)
+            if (vt is FunType) return checkInlineFunCall(vt, c, f, pure, instTerms, argTypes)
+            if (vt != null) return syntheticT("变量函数调用$name")
             d.error("E-UNBOUND-NAME", c.pos, "调用未定义函数 $name"); return syntheticT("调用")
         }
 
@@ -283,6 +286,42 @@ internal fun Checker.findCollectionMethod(name: String, selfT: Type): Pair<FunDe
         val p0 = fn.params.firstOrNull()?.type ?: return@firstOrNull false
         paramMatchesRecv(syms.expand(p0), selfT)
     }
+}
+
+/** v3.0（完美函数类型）：多态函数值调用——`var id = fun[T](x: T): T = x` 后 `id(3)` / `id[Nat](3)`。
+ *  实例化：显式 `f[X](…)`（InstExpr terms）优先；否则实参合一反推；返回实例化后的返回类型。 */
+private fun Checker.checkInlineFunCall(
+    ft: FunType, c: CallExpr, f: Frame, pure: Boolean, instTerms: List<Expr>, argTypes: List<Type>,
+): Type {
+    val tnames = ft.theory.map { it.name }
+    val tsub = LinkedHashMap<String, Type>()
+    if (instTerms.isNotEmpty()) {
+        if (instTerms.size != tnames.size) {
+            d.error("E-TYPE-MISMATCH", c.pos, "函数类型 ${ft.render()} 有 ${tnames.size} 个类型参数，显式给了 ${instTerms.size} 个")
+            return syntheticT("内联函数调用")
+        }
+        tnames.forEachIndexed { i, tn ->
+            val tt = typeOfTerm(instTerms[i])
+            if (tt != null && !tt.isSynthetic()) tsub[tn] = tt
+        }
+    } else if (tnames.isNotEmpty()) {
+        ft.params.zip(argTypes).forEach { (p, at) ->
+            if (!at.isSynthetic()) unifyInto(p, at, tnames.toSet(), tsub, emptyMap())
+        }
+    }
+    // V1（本轮第一刀）不做 arity/参数核对——保留 v2 对变量函数调用的宽容（`f(v)` 单元组实参形态等）；
+    // 参数配对与诊断后续轮次收紧（与 checkFnCall 的宽严对齐另行设计）。
+    return ft.ret.substT(tsub)
+}
+
+/** 类型实参表达式 → 类型（V1：具名类型与实例化应用，如 `Nat` / `List[Nat]`；`(T)=>U` 形态后续） */
+private fun Checker.typeOfTerm(e: Expr): Type? = when (e) {
+    is NameRef -> namedT(e.name, emptyList())
+    is InstExpr -> {
+        val tn = (e.target as? NameRef)?.name ?: return null
+        namedT(tn, e.terms.mapNotNull { typeOfTerm(it) })
+    }
+    else -> null
 }
 
 /** v2.0：普通（自由函数）调用按**实参首类型**从重载里挑选匹配项；无重载则退回主声明（保留原诊断路径）。

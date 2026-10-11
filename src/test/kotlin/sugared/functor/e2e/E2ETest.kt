@@ -1,4 +1,4 @@
-﻿package sugared.functor.e2e
+package sugared.functor.e2e
 
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
@@ -444,5 +444,21 @@ class E2ETest {
             "}\n" +
             "}"
         assertEquals("30", run(src))
+    }
+
+    @Test
+    fun `v30 完美函数类型 - 多态匿名函数值实例化调用`() {
+        assumeTrue(nodeAvailable())
+        // M-v3.1 第一刀：fun[T](x: T): T = x 是真实多态函数类型（非 synthetic）
+        // 实参反推实例化 + 显式尖括号实例化 + lambda 局部函数值调用
+        val src = "@impure fun main() {\n" +
+            "    var id = fun[T](x: T): T = x\n" +
+            "    print(id(3))\n" +
+            "    print(id(\"a\"))\n" +
+            "    print(id<Nat>(7))\n" +
+            "    var f = {x -> x + 1}\n" +
+            "    print(f(2))\n" +
+            "}"
+        assertEquals("3\na\n7\n3", run(src))
     }
 }

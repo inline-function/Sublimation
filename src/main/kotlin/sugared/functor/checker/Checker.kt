@@ -767,7 +767,9 @@ class Checker(
             t
         }
         is AnonFunExpr -> {
-            // 匿名函数表达式（A3）：独立帧检查体，返回合成函数类型（v1 无函数字面类型）
+            // 匿名函数表达式（A3）：独立帧检查体
+            // v3.0（完美函数类型）：返回**真函数类型**——带理论参数（theory）的多态函数类型 `[T](T)=>T`，
+            // 不再是 synthetic；值可存入局部变量、参与类型检查与实例化调用。
             val nf = Frame(f)
             val tps = e.theory.filterIsInstance<TypeParam>().map { it.name }
             e.params.forEach { p ->
@@ -776,19 +778,21 @@ class Checker(
                 nf.inject(PAtom(":", listOf(NameRef(p.name), typeToExpr(p.type))))
             }
             e.preps.forEach { nf.inject(PropLogic.fromExpr(it)) }
-            if (e.body != null) {
-                val bt = checkExpr(e.body, nf, pure)
+            val bt = if (e.body != null) {
+                val bt0 = checkExpr(e.body, nf, pure)
                 val rt = e.retType
-                if (rt != null && !bt.isSynthetic() && !typeLooseEq(bt, rt))
-                    d.error("E-TYPE-MISMATCH", e.pos, "匿名函数体类型 ${bt.render()} 与声明 ${rt.render()} 不符")
+                if (rt != null && !bt0.isSynthetic() && !typeLooseEq(bt0, rt))
+                    d.error("E-TYPE-MISMATCH", e.pos, "匿名函数体类型 ${bt0.render()} 与声明 ${rt.render()} 不符")
                 val tail = dollarOf(e.body)
                 for (post in e.posts) {
                     val goal = PropLogic.substDollar(PropLogic.fromExpr(post), tail)
                     if (!proveOrDeep(nf.allFacts(), goal))
                         d.error("E-POST-UNPROVEN", e.pos, "匿名函数未证明下文 ${PropLogic.render(goal)}")
                 }
-            }
-            syntheticT("匿名函数")
+                bt0
+            } else null
+            val ptypes = e.params.map { it.type }
+            FunType(ptypes, bt ?: syntheticT("匿名函数返回"), theory = e.theory.filterIsInstance<TypeParam>())
         }
     }
 
