@@ -228,6 +228,9 @@ internal fun Checker.doesSelfMatch(self: Type, argT: Type): Boolean {
 }
 
 private fun kindWildcardMatch(self: Type, argT: Type): Boolean = when {
+    // v3.0 第三批 4.3：Tuple 类型族 impl——`impl Tuple for (a,b)` 的 self 元素占位匹配具体元组（逐项容器匹配）
+    self is TupleType && argT is TupleType ->
+        self.items.size == argT.items.size && self.items.zip(argT.items).all { (s, a) -> kindWildcardMatch(s, a) || (s is NamedType && isKindPlaceholder(s)) }
     // 构造子本体通配（HKT-D2）：约束/合一解出的裸构造子名 `List`（零实参）匹配任何同类型类占位
     // 应用 self `List[a]`（占位数任意）——字典 self 是构造子，不是具体类型。size 不等则归此分支。
     self is NamedType && argT is NamedType && self.args.isNotEmpty() && argT.args.isEmpty() &&

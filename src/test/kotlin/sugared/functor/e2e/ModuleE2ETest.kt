@@ -961,4 +961,49 @@ class ModuleE2ETest {
             "main.subl" to src,
             "stdlib/collection.subl" to list)))
     }
+    // ============ v3.0 第三批：Collection 型类 / 扩展调用法 / Tuple 类型族 ============
+
+    @Test
+    fun `v3第三批 - Collection 型类 contains size 扩展调用法优先类型类`() {
+        assumeTrue(nodeAvailable())
+        // 扩展调用法 x.contains(e)/x.size() 走类型类字典（Collection impl）；普通调用法 contains(xs,e) 走自由函数
+        val src = "@impure fun main() {\n" +
+            "  var xs = stdlib.Cons(1, stdlib.Cons(2, stdlib.Nil()))\n" +
+            "  print(xs.contains(2))\n" +
+            "  print(xs.size())\n" +
+            "  var ys = stdlib.Cons(3, stdlib.Cons(4, stdlib.Nil()))\n" +
+            "  print(contains(ys, 4))\n" +
+            "}"
+        val col = File("stdlib/collection.subl").readText()
+        assertEquals("true\n2\ntrue", runTree(mapOf("main.subl" to src, "stdlib/collection.subl" to col)))
+    }
+
+    @Test
+    fun `v3第三批 - Tuple 类型族 size isEmpty 全形态`() {
+        assumeTrue(nodeAvailable())
+        // EmptyTuple/SingleTuple/(T,U)/(T,U,V) 统一 Tuple 型类：emptyTuple() 构造零元组
+        val src = "@impure fun main() {\n" +
+            "  print(emptyTuple().size())\n" +
+            "  print(emptyTuple().isEmpty())\n" +
+            "  print(singleTuple(5).size())\n" +
+            "  print(singleTuple(5).isEmpty())\n" +
+            "  print((1, \"x\").size())\n" +
+            "  print((1, \"x\", true).size())\n" +
+            "}"
+        val col = File("stdlib/collection.subl").readText()
+        assertEquals("0\ntrue\n1\nfalse\n2\n3", runTree(mapOf("main.subl" to src, "stdlib/collection.subl" to col)))
+    }
+
+    @Test
+    fun `v3第三批 - List Result Optional 统一在 collection 且方法糖可用`() {
+        assumeTrue(nodeAvailable())
+        // 重组：List/Result/Optional 并入 collection.subl——三者在同一模块仍互见（方法重载按接收者路由）
+        val src = "@impure fun main() {\n" +
+            "  var xs = stdlib.Cons(1, stdlib.Cons(5, stdlib.Nil()))\n" +
+            "  print(xs.map({ x -> x * 2 }))\n" +
+            "  print(xs.size())\n" +
+            "}"
+        val col = File("stdlib/collection.subl").readText()
+        assertEquals("[ 2, 10 ]\n2", runTree(mapOf("main.subl" to src, "stdlib/collection.subl" to col)))
+    }
 }

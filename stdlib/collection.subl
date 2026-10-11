@@ -428,3 +428,26 @@ impl Collection for Result[a, e] {
         Err(_) -> 0
     }
 }
+
+// ---------- v3.0 第三批 4.3：Tuple 类型族（决策 61/62）----------
+// EmptyTuple/SingleTuple[T]/(T,U)/(T,U,V) 统一抽象为 Tuple 型类：size/isEmpty（元组共有函数）。
+class Tuple {
+    fun size(): Nat
+    fun isEmpty(): Bool
+}
+impl Tuple for EmptyTuple {
+    fun size(): Nat = 0
+    fun isEmpty(): Bool = true
+}
+impl Tuple for SingleTuple[a] {
+    fun size(): Nat = 1
+    fun isEmpty(): Bool = false
+}
+impl Tuple for (a, b) {
+    fun size(): Nat = 2
+    fun isEmpty(): Bool = false
+}
+impl Tuple for (a, b, c) {
+    fun size(): Nat = 3
+    fun isEmpty(): Bool = false
+}

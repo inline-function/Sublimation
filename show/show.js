@@ -795,5 +795,21 @@
   return null;
 })()
   };
+  const dict_stdlib_Tuple_EmptyTuple = {
+    size: (d, __self) => 0,
+    isEmpty: (d, __self) => true
+  };
+  const dict_stdlib_Tuple_SingleTuple = {
+    size: (d, __self) => 1,
+    isEmpty: (d, __self) => false
+  };
+  const dict_stdlib_Tuple__a__b_ = {
+    size: (d, __self) => 2,
+    isEmpty: (d, __self) => false
+  };
+  const dict_stdlib_Tuple__a__b__c_ = {
+    size: (d, __self) => 3,
+    isEmpty: (d, __self) => false
+  };
   main();
 })();
