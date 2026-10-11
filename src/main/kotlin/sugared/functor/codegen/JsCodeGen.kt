@@ -528,6 +528,15 @@ class JsCodeGen {
         is StrLit -> q(e.value)
         is NameRef -> when {
             e.name == "true" || e.name == "false" || e.name == "null" -> e.name   // JS 字面量
+            // v2.1：E::A 复合构造子名 → 裸名（工厂/tag 均裸名）
+            e.name.contains("::") -> {
+                val bn = e.name.substringAfterLast("::")
+                when {
+                    bn in nullaryCtors && bn in listCtorSet -> "[]"
+                    bn in nullaryCtors -> "${mangle(bn)}()"
+                    else -> mangle(bn)
+                }
+            }
             // v2.0 基本库：数组化 List 的零参构造子值引用 → 空数组（工厂已跳过生成，不能调 stdlib__Nil()）
             e.name in nullaryCtors && e.name in listCtorSet -> "[]"
             e.name in nullaryCtors -> "${moduleHits[e] ?: mangle(e.name)}()"       // 零参构造子值引用→调用
@@ -873,7 +882,8 @@ class JsCodeGen {
                 else "[" + dropped.joinToString(", ") { expr(it) } + "]"   // 防御：多实参时打包成变长元组
             val argsJs = listOf(fixed, packed).filter { it.isNotEmpty() }.joinToString(", ")
             val calleeJs = when (callee) {
-                is NameRef -> moduleHits[callee] ?: mangle(callee.name)
+                is NameRef -> if (callee.name.contains("::")) mangle(callee.name.substringAfterLast("::"))
+                    else moduleHits[callee] ?: mangle(callee.name)   // v2.1：E::A 复合名绕过留痕直取裸名
                 is FieldExpr -> moduleHits[callee] ?: "${expr(callee.target)}.${mangle(callee.name)}"
                 is InstExpr -> expr(callee.target)
                 else -> expr(callee)
@@ -920,7 +930,9 @@ class JsCodeGen {
         val genArgs: List<Expr> = sugarArgs[e] ?: (namedArgOrders[e] ?: e.args)
         val args = genArgs.joinToString(", ") { if (it is VarExpr) varExprJs(it) else expr(it) }
         val calleeJs = when (callee) {
-            is NameRef -> moduleHits[callee] ?: mangle(callee.name)
+            // v2.1：E::A 复合构造子名绕过留痕直取裸名（moduleHits 可能存了 mangle 全名）
+            is NameRef -> if (callee.name.contains("::")) mangle(callee.name.substringAfterLast("::"))
+                else moduleHits[callee] ?: mangle(callee.name)
             is FieldExpr -> moduleHits[callee] ?: "${expr(callee.target)}.${mangle(callee.name)}"   // 非方法字段（函数值字段）调用
             is InstExpr -> expr(callee.target)
             else -> expr(callee)
@@ -1074,8 +1086,10 @@ class JsCodeGen {
                 p.items.forEachIndexed { i, ip -> matchJs(ip, "$path[$i]", conds, binds) }
             }
             is PatCtor -> {
+                // v2.1：`E::A` 复合构造子名归一化为裸名（工厂函数与 tag 均为裸名）
+                val cn = p.name.substringAfterLast("::")
                 // v2.0 基本库（内建 JS 实现）：数组化 List 的模式解构——Nil → 空数组、Cons(h,t) → [0]/slice(1)
-                if (p.name in listCtorSet) {
+                if (cn in listCtorSet) {
                     if (p.args.isEmpty()) {
                         conds += "(Array.isArray($path) && $path.length === 0)"
                     } else {
@@ -1085,13 +1099,13 @@ class JsCodeGen {
                     return
                 }
                 if (p.args.isEmpty()) {
-                    if (p.name in ctorNames) when (p.name) {
-                        "true", "false" -> conds += "$path === ${p.name}"
+                    if (cn in ctorNames) when (cn) {
+                        "true", "false" -> conds += "$path === ${cn}"
                         "null" -> conds += "$path === null"
-                        else -> conds += "$path.tag === ${q(p.name)}"
-                    } else binds += p.name to path   // 绑定变量
+                        else -> conds += "$path.tag === ${q(cn)}"
+                    } else binds += cn to path   // 绑定变量
                 } else {
-                    conds += "$path.tag === ${q(p.name)}"
+                    conds += "$path.tag === ${q(cn)}"
                     p.args.forEachIndexed { i, ap -> matchJs(ap, "$path[$i]", conds, binds) }
                 }
             }

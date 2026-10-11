@@ -100,6 +100,8 @@ internal fun Checker.registerEnum(decl: EnumDecl) {
         if (syms.ctors.containsKey(c.name) && !builtinCtor)
             d.error("E-DUP-DECL", decl.pos, "构造子 ${c.name} 重复")
         else if (!syms.ctors.containsKey(c.name)) syms.ctors[c.name] = CtorInfo(decl, c.fields)
+        // v2.1（对齐 Rust 关联项）：同时注册复合键 `枚举::构造子`（E::A 成员访问用）——不覆盖裸名
+        syms.ctors.putIfAbsent("${decl.name}::${c.name}", CtorInfo(decl, c.fields))
     }
 }
 

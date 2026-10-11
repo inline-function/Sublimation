@@ -657,10 +657,20 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                     }
                     e = SafeCallExpr(e, name, args)
                 }
+                t.kind == Kind.COLON2 -> {
+                    // v2.1（对齐 Rust 关联项）：`E::A` 枚举成员访问 → 折叠为构造子复合名 "E::A"
+                    // （语义层按 syms.ctors 复合键解析构造；后随 `(` 则为构造调用）
+                    if (e !is NameRef)
+                        throw ParseFailure(fileName, cur(), ":: 前须是枚举类型名")
+                    pos++
+                    val ctor = nameToken()
+                    e = NameRef(e.name + "::" + ctor, e.pos)
+                }
                 t.kind == Kind.DOT -> { pos++; e = FieldExpr(e, nameToken()) }
                 t.kind == Kind.LPAREN -> {
                     // O3（决策 69）：大写名字 + `()`/`(IDENT = …)` 形态 → 命名字段构造；其余仍走普通调用
-                    if (e is NameRef && e.name.first().isUpperCase() && looksLikeNamedCtor())
+                    // v2.1：`E::A(...)` 枚举成员路径不走命名字段构造（复合名含 ::），保持普通调用 → codegen 归一化裸名
+                    if (e is NameRef && !e.name.contains("::") && e.name.first().isUpperCase() && looksLikeNamedCtor())
                         e = StructCtorExpr(e.name, parseStructCtorArgs())
                     else {
                         val (pa, na) = parseArgs()
@@ -890,6 +900,27 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         val p = "${t.line}:${t.col}"
         if (t.kind == Kind.IS) {
             pos++
+            // v2.1：`is E::A[(模式实参)]`—is 后跟枚举成员路径 = 构造解构分支（Kotlin 风格 is 类型分支）
+            if (peek(Kind.IDENT) && toks.getOrNull(pos + 1)?.kind == Kind.COLON2) {
+                val en = next().text
+                at(Kind.COLON2)
+                val ctor = nameToken()
+                val full = "$en::$ctor"
+                if (peek(Kind.LPAREN)) {
+                    pos++
+                    val args = ArrayList<Pattern>()
+                    if (!peek(Kind.RPAREN)) {
+                        while (true) {
+                            args += parsePattern()
+                            if (peek(Kind.COMMA)) { pos++; continue }
+                            break
+                        }
+                    }
+                    at(Kind.RPAREN)
+                    return PatCtor(full, args, p)
+                }
+                return PatCtor(full, emptyList(), p)
+            }
             val ty = parseType()
             val bind = if (peek(Kind.IDENT) && cur().text == "as") { pos++; nameToken() } else null
             return PatIs(ty, bind, p)
@@ -913,6 +944,26 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         if (t.kind == Kind.IDENT) {
             val nm = next().text
             if (nm == "_") return PatBind("_", p)
+            // v2.1（对齐 Rust 关联项）：`E::A` 枚举成员路径 → 构造子复合名（可选 (模式实参)）
+            if (peek(Kind.COLON2)) {
+                pos++
+                val ctor = nameToken()
+                val full = "$nm::$ctor"
+                if (peek(Kind.LPAREN)) {
+                    pos++
+                    val args = ArrayList<Pattern>()
+                    if (!peek(Kind.RPAREN)) {
+                        while (true) {
+                            args += parsePattern()
+                            if (peek(Kind.COMMA)) { pos++; continue }
+                            break
+                        }
+                    }
+                    at(Kind.RPAREN)
+                    return PatCtor(full, args, p)
+                }
+                return PatCtor(full, emptyList(), p)
+            }
             // 构造子模式：紧跟 `(` 且是已知大写构造子名 → 解构；否则是绑定变量
             if (peek(Kind.LPAREN)) {
                 pos++

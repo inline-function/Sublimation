@@ -192,6 +192,23 @@ class CheckerTest {
         val src = "fun die(): Nothing { return die() }\nfun main() { die()\nunchecked print(1) }"
         assertTrue(warns(src).contains("W-UNREACHABLE"))
     }
+    @Test
+    fun `枚举双冒号访问 构造与 is 解构分支`() {
+        val src = "enum Shape[T] { Circle(T) Dot }\n" +
+            "@unpure fun test(o: Shape[Nat]): Nat =\n" +
+            "    when(o) {\n" +
+            "        is Shape::Circle(_) -> 1\n" +
+            "        is Shape::Dot -> 0\n" +
+            "    }\n" +
+            "fun main() { var a: Shape[Nat] = Shape::Circle(1)\nvar b: Shape[Nat] = Shape::Dot }"
+        assertTrue(ok(src), "枚举双冒号访问 构造、is 解构分支、无 else 密封应通过")
+    }
+
+    @Test
+    fun `枚举双冒号访问 错误枚举名报错`() {
+        val src = "enum Shape[T] { Circle(T) Dot }\nfun main() { var a = Polygon::Circle(1) }"
+        assertTrue(errs(src).contains("E-UNBOUND-NAME"), "未声明枚举的成员访问应报错")
+    }
 
     @Test
     fun `命题算符中缀与归约 Unicode版`() {

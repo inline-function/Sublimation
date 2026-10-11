@@ -6,7 +6,7 @@ enum class Kind {
     FUN, CLASS, STRUCT, ENUM, VAR, IMPL, FOR, IF, ELSE, UNCHECKED, WHEN, IS, BY, TYPE, RET,
     // 标点
     LPAREN, RPAREN, LBRACKET, RBRACKET, LBRACE, RBRACE,
-    COMMA, SEMI, COLON, DOT, AT, BACKSLASH, DOLLAR,
+    COMMA, SEMI, COLON, COLON2, DOT, AT, BACKSLASH, DOLLAR,   // COLON2 = `::`（v2.1 枚举成员访问 E::A）
     // 运算/比较/赋值
     PLUS, MINUS, STAR, SLASH, PERCENT, ASSIGN, EQ, NEQ, LE, GE,
     ARROW, DARROW, IFF, AMP, PIPE, BANG,
@@ -112,6 +112,8 @@ class Lexer(private val src: String, private val fileName: String) {
         // v2.0 空安全运算符（多字符优先：`?.`/`?:` 在 `?` 前）
         if (c == '?' && peekAt(i + 1) == '.') { adv(2); return Kind.SAFECALL to "?." }
         if (c == '?' && peekAt(i + 1) == ':') { adv(2); return Kind.ELVIS to "?:" }
+        // v2.1（对齐 Rust 关联项）：`::` 枚举成员访问——粘连判定，须先于单 ':'
+        if (c == ':' && peekAt(i + 1) == ':') { adv(2); return Kind.COLON2 to "::" }
         if (c == '?') { adv(1); return Kind.QUEST to "?" }
 
         val one = when (c) {

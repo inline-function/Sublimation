@@ -190,7 +190,7 @@ private fun Checker.bindingCovered(arms: List<WhenArm>, subjT: Type): Boolean {
         //  已知构造子（如 None/Nil）是真正匹配构造子值，不能算绑定。
         if (p is PatCtor && p.args.all { a ->
                 a is PatBind || (a is PatCtor && a.args.isEmpty() && findVisibleCtor(a.name) == null)
-            }) covered += p.name
+            }) covered += p.name.substringAfterLast("::")   // v2.1：E::A 复合名归一化为裸构造子名
     }
     return ed.ctors.all { it.name in covered }
 }
