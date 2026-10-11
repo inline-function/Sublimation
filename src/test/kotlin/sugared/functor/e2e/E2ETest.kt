@@ -550,4 +550,19 @@ class E2ETest {
             "}"
         assertEquals("hi5\nhi7", run(src))
     }
+
+    @Test
+    fun `v30 完美函数类型 - 递归 lambda 与闭包`() {
+        assumeTrue(nodeAvailable())
+        // letrec：函数值初值先占位声明（体可自引用）——`var fact = {n -> ... fact(n-1) ...}`；
+        // 闭包引用外层变量 addBase(5)
+        val src = "@impure fun main() {\n" +
+            "    var base = 10\n" +
+            "    var addBase = {x -> x + base}\n" +
+            "    print(addBase(5))\n" +
+            "    var fact = {n -> if (n <= 1) {1} else {n * fact(n - 1)}}\n" +
+            "    print(fact(5))\n" +
+            "}"
+        assertEquals("15\n120", run(src))
+    }
 }

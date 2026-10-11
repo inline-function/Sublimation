@@ -390,6 +390,10 @@ class Checker(
                     }
                     return namedT("Null", emptyList())   // 解构不产值（与语句级对齐）
                 }
+                // v3.0（完美函数类型）：递归函数值（letrec）——初值是函数值（lambda/匿名函数）时
+                // **先占位声明**（体可自引用 `var fact = {n -> ... fact(n-1) ...}`），检查完再更新真实类型
+                val fnInit = s.value is LambdaExpr || s.value is AnonFunExpr
+                if (fnInit) f.declareVar(s.name, syntheticT("递归函数值${s.name}"))
                 // 有类型标注且初值是 lambda 时，把标注类型作 expect 传入——
                 // lambda 参数类型可从 `(Nat)=>Nat` 反推（T2 双向推导，决策 55/57）
                 val t0 = if (s.type != null && s.value is LambdaExpr)
@@ -805,6 +809,10 @@ class Checker(
         is StructCtorExpr -> checkStructCtor(e, f, pure)   // O3（决策 69）：命名字段构造
         is VarExpr -> {
             // 声明即表达式（A3）：值为初值类型，同时把绑定与命题注入当前帧
+            // v3.0（完美函数类型）：递归函数值（letrec）——初值是函数值（lambda/匿名函数）时
+            // **先占位声明**（体可自引用 `var fact = {n -> ... fact(n-1) ...}`），检查完再更新真实类型
+            val fnInit = e.value is LambdaExpr || e.value is AnonFunExpr
+            if (fnInit) f.declareVar(e.name, syntheticT("递归函数值$e.name"))
             val t0 = checkExpr(e.value, f, pure)
             var t = t0
             if (e.type != null) {
