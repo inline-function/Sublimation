@@ -24,7 +24,7 @@ class E2ETest {
         val chk = Checker(ast)
         val bag = chk.run()
         assertEquals(false, bag.hasError, "语义检查应通过，实际:\n${bag.report()}")
-        val js = JsCodeGen().generate(ast, chk.dictHits, chk.moduleHits, chk.consHits, chk.dictSubHits, chk.namedArgOrder, chk.methodSugarArgs)
+        val js = JsCodeGen().generate(ast, chk.dictHits, chk.moduleHits, chk.consHits, chk.dictSubHits, chk.namedArgOrder, chk.methodSugarArgs, chk.asyncAwaitHits, chk.channelUsed, chk.receiveSmartHits, chk.hktKindPosHits, chk.funRefTargets, chk.funRefFree.keys, chk.lambdaDestructKeys)
         val f = File.createTempFile("subl-e2e-", ".js")
         f.writeText(js)
         return try {
@@ -495,5 +495,18 @@ class E2ETest {
             "    print(compose(inc, inc)(9))\n" +
             "}"
         assertEquals("7\n5\n11", run(src))
+    }
+
+    @Test
+    fun `v30 完美函数类型 - 泛型方法引用解锁实例化调用`() {
+        assumeTrue(nodeAvailable())
+        // E-FUTURE-FUN 解锁：泛型函数 o::f 引用得多态 FunType，f(a, b) 实参反推实例化
+        val src = "fun pair[T](x: T, y: T): (T, T) = (x, y)\n" +
+            "@impure fun main() {\n" +
+            "    var f = \"s\"::pair\n" +
+            "    var g = f(1, 2)\n" +
+            "    print(g)\n" +
+            "}"
+        assertEquals("[ 1, 2 ]", run(src))
     }
 }

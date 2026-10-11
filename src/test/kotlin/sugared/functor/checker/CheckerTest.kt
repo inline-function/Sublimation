@@ -290,10 +290,11 @@ class CheckerTest {
     }
 
     @Test
-    fun `P6 函数引用 泛型函数报请期待未来`() {
+    fun `P6 函数引用 泛型函数得完美函数类型`() {
+        // v3.0（完美函数类型）：泛型函数引用（o::f）解锁——返回带理论参数的多态 FunType，可实例化调用
         val src = "fun pair[T](x: T, y: T): (T, T) = (x, y)\n" +
-            "fun main() { var f = \"s\"::pair }"
-        assertTrue(errs(src).contains("E-FUTURE-FUN"), "泛型函数引用应报 E-FUTURE-FUN")
+            "fun main() { var f = \"s\"::pair\nvar g = f(1, 2) }"
+        assertTrue(ok(src), "泛型函数引用应得完美函数类型（多态 FunType 可实例化）")
     }
 
     @Test

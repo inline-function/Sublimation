@@ -87,6 +87,8 @@ class Checker(
     internal val moduleHits = java.util.IdentityHashMap<Expr, String>()
     /** P6（决策 95）：函数引用 `o::f` → 方法 JS 名（codegen 生成闭包引用） */
     internal val funRefTargets = java.util.IdentityHashMap<Expr, String>()
+    /** v3.0（完美函数类型）：自由函数引用（o::f 中 f 是全局函数，o 仅作语法载体）——codegen 不注入接收者 */
+    internal val funRefFree = java.util.IdentityHashMap<Expr, Boolean>()
     /** P4（v2.1）：lambda 解构参数的字段名键（按参数下标；null=元组走索引）——codegen 解绑用 */
     internal val lambdaDestructKeys = java.util.IdentityHashMap<Expr, MutableList<List<String>?>>()
     /** I-20：当前模块的完整可见路径集合（目录模式计算；单文件模式空集不用过滤） */
@@ -586,15 +588,26 @@ class Checker(
             if (fn == null) {
                 d.error("E-NO-METHOD", e.pos, "类型 ${tt.render()} 无方法 ${e.name}")
                 syntheticT("函数引用")
-            } else if (fn.theory.isNotEmpty() || (method != null && method.trait.isNotEmpty())) {
-                // 泛型或字典方法（impl trait 需 dict 实参）无完美函数类型可供引用
-                d.error("E-FUTURE-FUN", e.pos, "请期待未来的完美函数类型")
+            } else if (method != null && method.trait.isNotEmpty()) {
+                // 字典方法（impl trait 需 dict 实参）仍无完美函数类型可供引用
+                d.error("E-FUTURE-FUN", e.pos, "trait 方法引用请期待未来的完美函数类型")
                 syntheticT("函数引用")
             } else {
                 val jsName = method?.let { moduleJsName(it.modulePath, it.fn.name) }
                     ?: moduleJsName(modulePath, fn.name)
                 funRefTargets[e] = jsName
-                FunType(fn.params.map { it.type }, fn.retType ?: namedT("Null", emptyList()))
+                // v3.0（完美函数类型）：自由函数引用不注入接收者（o::f 里 o 仅语法载体）
+                val isBound = method != null || run {
+                    val b = builtinPure(e.name) ?: builtinimpure(e.name)
+                    b != null && b.params.isNotEmpty() && typeLooseEq(b.params[0].type, tt)
+                }
+                if (!isBound) funRefFree[e] = true
+                // v3.0（完美函数类型）：泛型函数引用解锁——理论参数随函数类型携带
+                FunType(
+                    fn.params.map { it.type },
+                    fn.retType ?: namedT("Null", emptyList()),
+                    theory = fn.theory.filterIsInstance<TypeParam>(),
+                )
             }
         }
         is InstExpr -> { checkExpr(e.target, f, pure); e.terms.forEach { checkExpr(it, f, pure) }; namedT("Bool", emptyList()) }
