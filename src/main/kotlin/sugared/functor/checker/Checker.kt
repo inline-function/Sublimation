@@ -504,7 +504,15 @@ class Checker(
                         // P0：只对**本模块声明**的函数记录前缀（syms.funs 不含内建——内建是全局的，不 mangle，
                         // 否则非根模块里 `var f = concat` 会被当成 core__concat 产生 JS ReferenceError）
                         moduleHits[e] = moduleJsName(modulePath, e.name)
-                        syntheticT("函数${e.name}")
+                        val fn = syms.funs[e.name]
+                        if (fn != null)
+                            // v3.0（完美函数类型）：函数名引用作值 = 其**函数类型**（含多态理论参数）
+                            FunType(
+                                fn.params.map { it.type },
+                                fn.retType ?: syms.inferredRets[fn.name] ?: namedT("Null", emptyList()),
+                                theory = fn.theory.filterIsInstance<TypeParam>(),
+                            )
+                        else syntheticT("函数${e.name}")
                     }
                     else -> { d.error("E-UNBOUND-NAME", e.pos, "未定义名字 ${e.name}"); syntheticT("未定义") }
                 }

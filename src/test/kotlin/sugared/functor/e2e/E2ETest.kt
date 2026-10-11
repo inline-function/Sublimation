@@ -461,4 +461,22 @@ class E2ETest {
             "}"
         assertEquals("3\na\n7\n3", run(src))
     }
+
+    @Test
+    fun `v30 完美函数类型 - 泛型函数名值引用与多态实参`() {
+        assumeTrue(nodeAvailable())
+        // 第三刀：`var f = id` 拿到真实多态函数类型 [T](T)=>T（非 synthetic）；
+        // 多态函数作实参传 `(A)=>B` 槽（typeVarForm 宽松）；多态匿名函数体内调用泛型函数
+        val src = "fun id[T](x: T): T = x\n" +
+            "fun apply[A, B](fn: (A) => B, x: A): B = fn(x)\n" +
+            "@impure fun main() {\n" +
+            "    var f = id\n" +
+            "    print(f(3))\n" +
+            "    print(f(\"a\"))\n" +
+            "    print(apply(f, 7))\n" +
+            "    var g = fun[T](x: T): T = id(x)\n" +
+            "    print(g(5))\n" +
+            "}"
+        assertEquals("3\na\n7\n5", run(src))
+    }
 }

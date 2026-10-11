@@ -166,8 +166,8 @@ class CheckerTest {
 
     @Test
     fun `Nothing 底类型可作形参类型`() {
-        val src = "fun bottom(x: Nothing): Str = \"b\"\nfun main() { var s: Str = bottom }"
-        assertTrue(ok(src), "Nothing 类型应与任何类型相容")
+        val src = "fun bottom(x: Nothing): Str = \"b\"\nfun main() { var s: (Nothing) => Str = bottom }"
+        assertTrue(ok(src), "Nothing 类型应与任何类型相容（函数名值引用 = 真实函数类型）")
     }
 
     @Test

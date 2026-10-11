@@ -617,8 +617,13 @@ internal fun Checker.checkFnCall(
         val want = syms.expand(p.type).substT(tsub)
         // v2.0 和类型：联合形参（name=(union) 以 ( 开头）也要核对——实参须命中某个变体（成员匹配）。
         if (want !is FunType && !effTypes[i].isSynthetic() && (!p.type.name.startsWith("(") || p.type is UnionType)) {
+            // 形参在 substT(tsub) 后仍是**裸类型变量**（泛型形参位，未解出）→ 实参任意放行（与 checkBin 的 isTypeVarForm 一致）
+            val wantIsTv = want is NamedType && want.args.isEmpty() &&
+                want.name !in BASE_TYPES && want.name !in syms.enums &&
+                want.name !in syms.structs && !want.isSynthetic()
             val wantOk = if (want is UnionType)
                 effTypes[i].isSynthetic() || want.variants.any { typeLooseEq(it, effTypes[i]) }
+            else if (wantIsTv) true
             else typeLooseEq(want, effTypes[i])
             if ((want.isNominal() || want is UnionType) && !wantOk) {
                 // 决策 59：Any 形参接受任意实参（受限顶类型）；其余仍须名义相等
