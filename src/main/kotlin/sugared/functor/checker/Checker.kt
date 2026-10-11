@@ -636,7 +636,17 @@ class Checker(
                 )
             }
         }
-        is InstExpr -> { checkExpr(e.target, f, pure); e.terms.forEach { checkExpr(it, f, pure) }; namedT("Bool", emptyList()) }
+        is InstExpr -> {
+            // v3.0（完美函数类型）：实例化表达式**作值**（`id<Nat>` 传参/赋值）——返回实例化的函数类型，
+            // 不再是旧占位 Bool；调用形态（`id<Nat>(7)`）走 CallExpr 的 checkCall，不经过本分支
+            val tt = checkExpr(e.target, f, pure)
+            e.terms.forEach { typeOfTerm(it) }   // terms 是类型实参（Nat / List[Nat]），类型名非值
+            if (tt is FunType && tt.theory.size == e.terms.size) {
+                val sub = LinkedHashMap<String, Type>()
+                tt.theory.zip(e.terms).forEach { (tp, term) -> typeOfTerm(term)?.let { sub[tp.name] = it } }
+                FunType(tt.params.map { it.substT(sub) }, tt.ret.substT(sub))
+            } else tt
+        }
         is CallExpr -> { if (uncheckedDepth > 0) checkCall(e, f, pure = false) else checkCall(e, f, pure) }
         is LambdaExpr -> {
             // T2 双向推导（决策 55/57）：期望 (A)=>B 时参数按 A 绑定、体核对 B；无期望则宽松 synthetic

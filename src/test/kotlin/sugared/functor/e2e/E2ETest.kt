@@ -565,4 +565,18 @@ class E2ETest {
             "}"
         assertEquals("15\n120", run(src))
     }
+
+    @Test
+    fun `v30 完美函数类型 - 实例化表达式作值`() {
+        assumeTrue(nodeAvailable())
+        // `id<Nat>` 单独作值（赋值/实参）→ 实例化函数类型 (Nat)=>Nat（原 Bool 占位已修）
+        val src = "fun id[T](x: T): T = x\n" +
+            "fun take(f: (Nat) => Nat, x: Nat): Nat = f(x)\n" +
+            "@impure fun main() {\n" +
+            "    var g = id<Nat>\n" +
+            "    print(g(7))\n" +
+            "    print(take(id<Nat>, 5))\n" +
+            "}"
+        assertEquals("7\n5", run(src))
+    }
 }

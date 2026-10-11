@@ -321,7 +321,7 @@ private fun Checker.checkInlineFunCall(
 }
 
 /** 类型实参表达式 → 类型（V1：具名类型与实例化应用，如 `Nat` / `List[Nat]`；`(T)=>U` 形态后续） */
-private fun Checker.typeOfTerm(e: Expr): Type? = when (e) {
+internal fun Checker.typeOfTerm(e: Expr): Type? = when (e) {
     is NameRef -> namedT(e.name, emptyList())
     is InstExpr -> {
         val tn = (e.target as? NameRef)?.name ?: return null
