@@ -135,6 +135,13 @@ data class TupleType(val items: List<Type>) : Type {
     override fun substT(sub: Map<String, Type>): Type = TupleType(items.map { it.substT(sub) })
 }
 
+data class UnionType(val variants: List<Type>) : Type {
+    override val name: String get() = "(union)"
+    override val args: List<Type> get() = variants
+    override fun render(): String = variants.joinToString(" | ") { it.render() }
+    override fun substT(sub: Map<String, Type>): Type = UnionType(variants.map { it.substT(sub) })
+}
+
 /**
  * 跨模块限定类型 `core.Point`（P0 模块系统）：`module` 为模块路径段（不含末段符号名），
  * `name` 是简单名（与 NamedType 同口径参与名字相等）。校验/解析由 checker 完成

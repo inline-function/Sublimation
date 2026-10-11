@@ -238,6 +238,27 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         // v2.0 空安全（决策 88-89）：`T?` 后缀 = `Optional[T]` 语法糖；`T??` 嵌套 = Optional[Optional[T]]。
         // `?` 紧贴类型名（无空格）才是后缀；带空格的 `?` 是运行时类型测中缀（由表达式层处理）。
         var t = base
+        // 变体级 Optional 后缀先绑（`A | B?` = A | (B?)）
+        while (peek(Kind.QUEST) && !cur().precededBySpace) {
+            pos++
+            t = namedT("Optional", listOf(t))
+        }
+        // v2.0 和类型：`A | B | C` 联合（枚举=和类型，此为内联无 tag 形式，变体同款 `T?` 后缀）
+        if (peek(Kind.PIPE)) {
+            val variants = ArrayList<Type>()
+            variants += t
+            while (peek(Kind.PIPE)) {
+                pos++
+                var v = if (peek(Kind.LPAREN)) parseFunOrTupleType() else parseNamedType()
+                while (peek(Kind.QUEST) && !cur().precededBySpace) {
+                    pos++
+                    v = namedT("Optional", listOf(v))
+                }
+                variants += v
+            }
+            t = UnionType(variants)
+        }
+        // 整体 `?` 后缀：(A|B)? = Optional[A|B]
         while (peek(Kind.QUEST) && !cur().precededBySpace) {
             pos++
             t = namedT("Optional", listOf(t))

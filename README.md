@@ -9,7 +9,7 @@
 
 语言名取自物理现象「凝华」——气态不经液态直接成固态。正如本文的命题不经运行时、直接在编译期析出为程序的静态保证。
 
-> ✅ v2.0 完成：空安全 / 可变性控制 / 异步 + HKT 高阶类型，370 项测试全绿
+> ✅ v2.0 完成：空安全 / 可变性控制 / 异步 + HKT 高阶类型，376 项测试全绿
 
 ---
 
@@ -116,7 +116,7 @@ impl Show for Grade {
 │   ├── sugared/functor/checker/   M3 语义（弥散/合一/模块树/类型类）
 │   ├── sugared/functor/codegen/   M4 JS 代码生成
 │   └── sugared/functor/ast/       AST 定义
-├── src/test/kotlin/          370 项测试（8 个测试类）
+├── src/test/kotlin/          376 项测试（8 个测试类）
 ├── stdlib/                   标准库（.subl 自举：List/Set/Map/Result）
 ├── examples/                 示例集（按特性拆分的单文件示例，中文文件名 + 头部注预期输出，见 examples/说明.md；含 模块系统/ 多模块）
 ├── show/                     v2.0 应用示例：读 students.json → 统计成绩（自包含，双击 run.bat）
@@ -147,7 +147,7 @@ show\run.bat run      # 仅运行现有的 show.js
 gradlew.bat test --rerun-tasks
 ```
 
-当前 **370 项全绿**（8 个测试类）：词法 / 语法 / 语义 / 类型推理 / 模块树 / 端到端 / 诊断码覆盖面体检。
+当前 **376 项全绿**（8 个测试类）：词法 / 语法 / 语义 / 类型推理 / 模块树 / 端到端 / 诊断码覆盖面体检。
 
 ## 文档
 

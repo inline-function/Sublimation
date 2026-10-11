@@ -877,4 +877,49 @@ class CheckerTest {
             "@unpure fun dieB(): Nat = dieB()"
         assertTrue(ok(src), "unchecked 与 @unpure 应放行非结构递归")
     }
+
+    // ============ v2.0 和类型（联合类型 A | B + 类型测收窄） ============
+
+    @Test
+    fun `和类型 用户代码跑通`() {
+        // 用户验收：Str | Nat 联合 + `o ? Str` 类型测 + then 收窄为 Str / else 反收窄为 Nat
+        val src = "@unpure\nfun test(o: Str | Nat) =\n    if(o ? Str)\n        print(o)\n    else\n        print(\"\${o + 1}\")"
+        assertTrue(ok(src), "联合类型 + else 反收窄应通过类型检查")
+    }
+
+    @Test
+    fun `和类型 联合之外的实参报错`() {
+        val src = "fun test(o: Str | Nat): Null = o ? Str\n" +
+            "fun main() { test(true) }"
+        assertTrue(errs(src).contains("E-TYPE-MISMATCH"), "Bool 不在 Str|Nat 中，应报 E-TYPE-MISMATCH")
+    }
+
+    @Test
+    fun `和类型 then 分支智能收窄`() {
+        // then 分支 o: Str，直接调 Str 专用内建（strUpper）；else 分支 o: Nat 数值运算
+        val src = "@unpure\nfun test(o: Str | Nat) =\n    if(o ? Str)\n        print(strUpper(o))\n    else\n        print(o + 1)"
+        assertTrue(ok(src), "then/else 分支收窄后应各按收窄类型检查")
+    }
+
+    @Test
+    fun `和类型 when is 分支密封穷尽`() {
+        // Kotlin 风格 when(o) { is Str -> ..; is Nat -> .. }：无 else、is 覆盖全部变体 → 密封，
+        // 作为表达式返回分支类型（: Str 注解要求 when 值类型不是 Null）
+        val src = "@unpure\nfun test(o: Str | Nat): Str =\n    when(o) {\n        is Str -> strUpper(o)\n        is Nat -> \"\${o + 1}\"\n    }"
+        assertTrue(ok(src), "is 分支覆盖联合全部变体应判密封，且分支内收窄生效")
+    }
+
+    @Test
+    fun `和类型 when else 分支反收窄`() {
+        // else 分支联合主题排除已测 is 变体：o 收窄为 Nat，数值运算通过
+        val src = "@unpure\nfun probe2(o: Str | Nat): Nat =\n    when(o) {\n        is Str -> 0\n        else   -> o + 1\n    }"
+        assertTrue(ok(src), "else 分支应反收窄为剩余变体 Nat")
+    }
+
+    @Test
+    fun `和类型 when is 分支必须命中联合变体`() {
+        // is Bool 不在 Str|Nat 中 → E-TYPE-MISMATCH（联合成员校验）
+        val src = "@unpure\nfun test(o: Str | Nat) =\n    when(o) {\n        is Bool -> print(o)\n        else -> print(0)\n    }"
+        assertTrue(errs(src).contains("E-TYPE-MISMATCH"), "is 非联合成员应报 E-TYPE-MISMATCH")
+    }
 }

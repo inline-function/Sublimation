@@ -120,10 +120,18 @@ internal fun Checker.checkWhen(e: WhenExpr, f: Frame, pure: Boolean): Type {
     val branchProps = ArrayList<Prop>()
     var lastT: Type? = null
     var sawCatchAll = false
+    val testedTypes = ArrayList<Type>()
     for (arm in e.arms) {
         val nf = Frame(f)
         branchProps.forEach { nf.inject(PNot(it)) }     // 顺序否定累积
         val bp0 = bindPattern(arm.pattern, subjRef, subjT, nf)
+        // v2.0 和类型（Kotlin 风格 else 反收窄）：else 分支把联合主题收窄为剩余变体
+        if (arm.pattern is PatElse && subjT is UnionType && testedTypes.isNotEmpty()) {
+            val rest = subjT.variants.filterNot { v -> testedTypes.any { typeLooseEq(it, v) } }
+            if (rest.size < subjT.variants.size)
+                (subjRef as? NameRef)?.name?.let { nf.declareVar(it, if (rest.size == 1) rest[0] else UnionType(rest)) }
+        }
+        if (arm.pattern is PatIs) testedTypes += (arm.pattern as PatIs).type
         val g = arm.guard
         val bp = if (g != null) {
             nf.inject(bp0)                              // 守卫内可见分支命题
@@ -147,6 +155,11 @@ internal fun Checker.checkWhen(e: WhenExpr, f: Frame, pure: Boolean): Type {
         proveOrDeep(premises, goal)
     }
     if (!exhaustive && cov != null && bindingCovered(e.arms, subjT)) exhaustive = true
+    // v2.0 和类型：联合主题的 is 分支覆盖全部变体 → 密封（Kotlin when(is T) 穷尽）
+    if (!exhaustive && subjT is UnionType) {
+        val tested = e.arms.filter { it.guard == null && it.pattern is PatIs }.map { (it.pattern as PatIs).type }
+        if (subjT.variants.all { v -> tested.any { typeLooseEq(it, v) } }) exhaustive = true
+    }
     if (!exhaustive) {
         if (cov != null)
             d.warn("W-NON-EXHAUSTIVE", e.pos, "when 非穷尽（缺 else 或覆盖不全），作为表达式时值类型退化为 Null")
@@ -215,7 +228,12 @@ internal fun Checker.bindPattern(p: Pattern, subj: Expr, subjT: Type, nf: Frame)
         checkTypeResolvable(p.type, emptyList())
         if (subjT.isNominal() && !typeLooseEq(subjT, p.type))
             d.error("E-TYPE-MISMATCH", p.pos, "is ${p.type.render()} 与主题类型 ${subjT.render()} 冲突")
-        p.bind?.let { nf.declareVar(it, p.type) }
+        // v2.0 和类型：联合主题下被测类型必须是某变体（否则 is 分支无意义），并做 Kotlin 风格收窄——
+        // 分支内主题/绑定变量按被测类型用（无 as 绑定也收窄主题本身）。
+        if (subjT is UnionType && !subjT.variants.any { typeLooseEq(it, p.type) })
+            d.error("E-TYPE-MISMATCH", p.pos, "is ${p.type.render()} 不在联合 ${subjT.render()} 中")
+        if (p.bind != null) nf.declareVar(p.bind, p.type)
+        else (subj as? NameRef)?.name?.let { nf.declareVar(it, p.type) }
         PAtom(":", listOf(subj, typeToExpr(p.type)))
     }
     is PatTuple -> {

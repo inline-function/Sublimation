@@ -538,8 +538,12 @@ internal fun Checker.checkFnCall(
     fn.params.forEachIndexed { i, p ->
         if (i >= effTypes.size) return@forEachIndexed
         val want = syms.expand(p.type).substT(tsub)
-        if (want !is FunType && !effTypes[i].isSynthetic() && !p.type.name.startsWith("(")) {
-            if (want.isNominal() && !typeLooseEq(want, effTypes[i])) {
+        // v2.0 和类型：联合形参（name=(union) 以 ( 开头）也要核对——实参须命中某个变体（成员匹配）。
+        if (want !is FunType && !effTypes[i].isSynthetic() && (!p.type.name.startsWith("(") || p.type is UnionType)) {
+            val wantOk = if (want is UnionType)
+                effTypes[i].isSynthetic() || want.variants.any { typeLooseEq(it, effTypes[i]) }
+            else typeLooseEq(want, effTypes[i])
+            if ((want.isNominal() || want is UnionType) && !wantOk) {
                 // 决策 59：Any 形参接受任意实参（受限顶类型）；其余仍须名义相等
                 if (!(want.name == "Any" && want.args.isEmpty())) {
                     // v2.0 空安全自动解构（AD-1..4）：类型检查**失败**时，若实参是**单字段构造子应用**

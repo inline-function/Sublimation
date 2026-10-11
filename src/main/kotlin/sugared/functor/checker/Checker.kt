@@ -629,7 +629,21 @@ class Checker(
                 try { checkExpr(e.thenBlock, thenF, up, flow = flow) }
                 finally { if (!wasOpen) openChannels -= openCn }
             } else checkExpr(e.thenBlock, thenF, up, flow = flow)
-            val b = e.elseBlock?.let { checkExpr(it, f, up, flow = flow) }
+            // v2.0 和类型（联合类型反收窄）：`if(x ? A)` 的 else 分支 x 收窄为「联合减 A」——
+            // 仅当条件为类型测、目标为名字、原名称为联合且被测类型确为变体时成立；否则不收窄（保持原行为）。
+            val elseF: Frame? = if (e.cond is TypeTestExpr) {
+                val tt = e.cond
+                val src = (tt.target as? NameRef)?.name?.let { f.lookupVar(it) }
+                if (src is UnionType) {
+                    val rest = src.variants.filterNot { typeEq(it, tt.type) }
+                    if (rest.size != src.variants.size) {
+                        val nf = Frame(f)
+                        nf.declareVar((tt.target as NameRef).name, if (rest.size == 1) rest[0] else UnionType(rest))
+                        nf
+                    } else null
+                } else null
+            } else null
+            val b = e.elseBlock?.let { checkExpr(it, elseF ?: f, up, flow = flow) }
             // 分支以 return 收尾＝发散（Kotlin 的 Nothing 协变）：不参与类型 join，
             // 否则 `if c { return 1 } else { n }` 会误报"分支不一致"
             val aD = diverges(e.thenBlock)
