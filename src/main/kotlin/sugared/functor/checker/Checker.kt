@@ -58,6 +58,10 @@ class Checker(
     internal var curFunParams: List<String> = emptyList()
     /** v3.0（完美函数类型）：当前函数的类型形参名集——供匿名函数体重用（`fun(x: A)` 里 A 是外层 compose 的形参） */
     internal var curFunTps: Set<String> = emptySet()
+    /** v3.0（完美函数类型）：lambda/匿名函数纯度跟踪——体内发生 impure 调用（放行态）时标记，
+     *  使函数值类型 FunType.purity = "impure"，纯上下文调用该函数值报 E-IMPURE-CALL */
+    internal var lambdaDepth = 0
+    internal var curLambdaImpure = false
     /** v2.0 异步（决策 93）：当前函数是否 @async 上下文——checkFun 设置；@async 函数体内可自由调用挂起函数 */
     internal var curFunAsync = false
     /** v2.0 异步：@async 函数体内对 @async 函数的**挂起点**调用留痕（调用点 → true），codegen 处生成 await */
@@ -614,6 +618,10 @@ class Checker(
         is CallExpr -> { if (uncheckedDepth > 0) checkCall(e, f, pure = false) else checkCall(e, f, pure) }
         is LambdaExpr -> {
             // T2 双向推导（决策 55/57）：期望 (A)=>B 时参数按 A 绑定、体核对 B；无期望则宽松 synthetic
+            // v3.0（完美函数类型）：纯度跟踪——体内 impure 调用 → FunType.purity="impure"
+            val savedImpure = curLambdaImpure
+            curLambdaImpure = false
+            lambdaDepth++
             val nf = Frame(f)
             val ft = expect as? FunType
             if (ft != null && ft.params.size != e.params.size)
@@ -660,8 +668,12 @@ class Checker(
             // v3.0（完美函数类型 统一刀）：lambda 满足多态函数类型位（如 `[T](T)=>T`）时
             // **继承期望类型的理论参数**——lambda 字面量保持多态、可实例化调用；
             // 泛型槽位（map 的 (T)=>U，T 是外围形参）expect.theory 为空，不受影响。
-            if (ft != null) FunType(ft.params, bt, theory = ft.theory)
-            else FunType(e.params.map { syntheticT("参数") }, bt)
+            val bodyImpure = curLambdaImpure
+            lambdaDepth--
+            curLambdaImpure = savedImpure
+            val purity = if (bodyImpure) "impure" else ""
+            if (ft != null) FunType(ft.params, bt, purity = purity, theory = ft.theory)
+            else FunType(e.params.map { syntheticT("参数") }, bt, purity = purity)
         }
         is BlockExpr -> {
             val nf = Frame(f)
@@ -799,6 +811,10 @@ class Checker(
             // v3.0（完美函数类型）：返回**真函数类型**——带理论参数（theory）的多态函数类型 `[T](T)=>T`，
             // 不再是 synthetic；值可存入局部变量、参与类型检查与实例化调用。
             val nf = Frame(f)
+            // v3.0（完美函数类型）：纯度跟踪——体内 impure 调用 → FunType.purity="impure"
+            val savedImpure = curLambdaImpure
+            curLambdaImpure = false
+            lambdaDepth++
             // v3.0（完美函数类型）：类型形参可解析集 = 自身 theory + 外层函数（compose 等）的类型形参
             val tps = e.theory.filterIsInstance<TypeParam>().map { it.name } + curFunTps.toList()
             e.params.forEach { p ->
@@ -821,7 +837,15 @@ class Checker(
                 bt0
             } else null
             val ptypes = e.params.map { it.type }
-            FunType(ptypes, bt ?: syntheticT("匿名函数返回"), theory = e.theory.filterIsInstance<TypeParam>())
+            val bodyImpure = curLambdaImpure
+            lambdaDepth--
+            curLambdaImpure = savedImpure
+            FunType(
+                ptypes,
+                bt ?: syntheticT("匿名函数返回"),
+                purity = if (bodyImpure) "impure" else "",
+                theory = e.theory.filterIsInstance<TypeParam>(),
+            )
         }
     }
 

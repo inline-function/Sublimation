@@ -312,6 +312,14 @@ class CheckerTest {
     }
 
     @Test
+    fun `v30 完美函数类型 - 纯上下文调用 impure 函数值报错`() {
+        // lambda 构造（体含 impure 调用）与函数值调用都在纯上下文 → 双重 E-IMPURE-CALL
+        val src = "@impure fun log(x: Nat): Nat = x\n" +
+            "fun main() { var f = {x -> log(x)}\nvar g = f(1) }"
+        assertTrue(errs(src).contains("E-IMPURE-CALL"), "纯上下文调用非纯函数值应报 E-IMPURE-CALL")
+    }
+
+    @Test
     fun `枚举双冒号访问 错误枚举名报错`() {
         val src = "enum Shape[T] { Circle(T) Dot }\nfun main() { var a = Polygon::Circle(1) }"
         assertTrue(errs(src).contains("E-UNBOUND-NAME"), "未声明枚举的成员访问应报错")

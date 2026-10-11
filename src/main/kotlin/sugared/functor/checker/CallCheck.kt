@@ -311,6 +311,12 @@ private fun Checker.checkInlineFunCall(
     }
     // V1（本轮第一刀）不做 arity/参数核对——保留 v2 对变量函数调用的宽容（`f(v)` 单元组实参形态等）；
     // 参数配对与诊断后续轮次收紧（与 checkFnCall 的宽严对齐另行设计）。
+    // v3.0（完美函数类型）：函数值纯度随类型传递——体内含 impure 调用的 lambda 作值，纯上下文调用报 E-IMPURE-CALL
+    if (ft.purity == "impure") {
+        if (lambdaDepth > 0) curLambdaImpure = true
+        if (pure && uncheckedDepth == 0)
+            d.error("E-IMPURE-CALL", c.pos, "纯作用域内调用非纯函数值 ${ft.render()}（该函数体含 impure 调用）")
+    }
     return ft.ret.substT(tsub)
 }
 
@@ -537,6 +543,8 @@ internal fun Checker.checkFnCall(
         }
     }
 
+    // v3.0（完美函数类型）：impure 函数被调用（无论是否放行）——若发生在 lambda/匿名函数体内则标记其纯度
+    if ("impure" in fn.annotations && lambdaDepth > 0) curLambdaImpure = true
     if ("impure" in fn.annotations && pure) {
         // 决策 54：pure 是上下文的单参命题，可改变代码行为——
         // 上下文持有 pure<被调函数> 时，编译器视该调用为纯，无需 unchecked 逃逸

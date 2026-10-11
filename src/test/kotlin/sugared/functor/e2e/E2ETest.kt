@@ -522,4 +522,18 @@ class E2ETest {
             "}"
         assertEquals("3\na", run(src))
     }
+
+    @Test
+    fun `v30 完美函数类型 - 函数值 purity 随类型传递`() {
+        assumeTrue(nodeAvailable())
+        // lambda 体内 impure 调用 → FunType.purity="impure"；impure 上下文调用函数值放行；纯 lambda 正常
+        val src = "@impure fun log(x: Nat): Nat = x\n" +
+            "@impure fun main() {\n" +
+            "    var f = {x -> log(x)}\n" +
+            "    print(f(1))\n" +
+            "    var g = {x -> x + 1}\n" +
+            "    print(g(2))\n" +
+            "}"
+        assertEquals("1\n3", run(src))
+    }
 }
