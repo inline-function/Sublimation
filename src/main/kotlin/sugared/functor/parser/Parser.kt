@@ -1098,6 +1098,7 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         // v3.0：无主题 when——`when { cond -> ... }`（布尔条件分支）；主题可选 `when(x) { ... }`
         var binding: String? = null
         var subject: Expr? = null
+        var templateBase: Expr? = null
         if (peek(Kind.LPAREN)) {
             pos++
             subject = if (peek(Kind.VAR)) {
@@ -1107,6 +1108,12 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                 parseExpr(angle = false)
             } else parseExpr(angle = false)
             at(Kind.RPAREN)
+            // v3.0 第三批 4.1 模板模式匹配：`when(t in _)` —— 主题为 `in _` 时脱糖为无主题 when，
+            // 每个分支模式 p 自动包成条件 `t in p`（`_` 内联到判别表达式右操作数）。
+            (subject as? BinExpr)?.let { be ->
+                val r = be.right
+                if (be.op == "in" && r is NameRef && r.name == "_") { templateBase = be.left; subject = null }
+            }
         }
         at(Kind.LBRACE)
         val arms = ArrayList<WhenArm>()
@@ -1115,7 +1122,16 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
             if (peek(Kind.RBRACE)) break
             val al = cur().line; val ac = cur().col
             val pat: Pattern; var guard: Expr? = null; var cond: Expr? = null
-            if (subject == null && peek(Kind.ELSE)) {
+            if (templateBase != null) {
+                // 模板 when 分支：表达式模式 p（范围/字面量/…），`else`/`_` 兜底
+                if (peek(Kind.ELSE)) { pos++; pat = PatElse("$al:$ac") }
+                else {
+                    val pe = parseExpr(angle = false, stopArrow = true)
+                    if (pe is NameRef && pe.name == "_") pat = PatElse("$al:$ac")
+                    else { pat = PatCond; cond = BinExpr("in", templateBase, pe, "$al:$ac") }
+                }
+                guard = if (peek(Kind.IF)) { pos++; parseExpr(angle = false, stopArrow = true) } else null
+            } else if (subject == null && peek(Kind.ELSE)) {
                 pos++
                 pat = PatElse("$al:$ac")
             } else if (subject == null) {
