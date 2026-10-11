@@ -3,6 +3,10 @@ package sugared.functor.checker
 import sugared.functor.ast.*
 
 /** 基本类型集（prelude 内建；决策 45：单值类型=Null，None 专属 Optional[T]；决策 52：Any 受限顶类型；决策 62：元组具名形态；P2：Array[T]） */
+/** v3.0 特性 4（受限版）：预定义**自动类型类**集合——对每个类型自动按需实例化（用户不可自定义，防消歧义/字典爆炸）。
+ *  当前仅 Any：恒满足、零方法无字典（原硬编码 v2.1 语义，机制化为 autoTraits 一员）。 */
+val autoTraits = setOf("Any")
+
 val BASE_TYPES = setOf("Nat", "Int", "Rat", "Str", "Bool", "Null", "Nothing", "Any",
     "EmptyTuple", "SingleTuple", "Array",
     "Task", "Channel",   // v2.0 异步（决策 93）：内建泛类型类型（无用户声明，形如 Array）

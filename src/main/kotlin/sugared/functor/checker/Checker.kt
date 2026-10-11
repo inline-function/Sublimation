@@ -184,9 +184,8 @@ class Checker(
         when (decl) {
             is FunDecl -> if (decl.body != null) checkFun(decl)
             is ClassDecl -> decl.members.forEach {
-                // O2（决策 68）：类型类成员 v1 只允许无体签名——self 类型在声明期未定
-                if (it.body != null)
-                    d.error("E-SELF-UNKNOWN", it.pos, "类型类 ${decl.name} 的成员 ${it.name} 不能有函数体，体属于 impl")
+                // v3.0 特性 4：类型类成员允许带函数体——作为**默认实现**（impl 缺方法时补齐，见 ImplCheck）；
+                // 默认实现的 body 不在此检查（self 声明期未定），补齐进具体 impl 后随 impl 一起过 checkFun。
             }
             // O2：impl 成员带隐式 self（决策 68，用户样本形态），方法体内可裸用自类型字段
             is ImplDecl -> {

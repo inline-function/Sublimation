@@ -34,13 +34,19 @@ internal fun Checker.checkImplsFrom(files: List<FileAst>) {
             if (impl.delegate != null) {
                 expanded = expandDelegate(impl, cls)
                 if (expanded === impl.members && impl.members.isEmpty()) continue   // 委托字段无效（已报 E-BY-UNBOUND）不再级联
-                syms.delegatedImpls[impl] = expanded
             }
             val classMethods = cls.members.associateBy { it.name }
-            val implNames = expanded.map { it.name }.toSet()
+            val implNames = expanded.map { it.name }.toMutableSet()
             for ((mname, msig) in classMethods) {
                 if (mname !in implNames) {
-                    d.error("E-IMPL-INCOMPLETE", impl.pos, "impl ${impl.trait.render()} for ${impl.self.render()} 缺方法 $mname")
+                    // v3.0 特性 4：缺方法且类声明该方法有默认实现（body 非空）→ 用默认实现补齐，不报 E-IMPL-INCOMPLETE
+                    val dft = classMethods[mname]
+                    if (dft?.body != null) {
+                        expanded = expanded + dft
+                        implNames += mname
+                        continue
+                    }
+                    d.error("E-IMPL-INCOMPLETE", impl.pos, "impl ${impl.trait.render()} for ${impl.self.render()} 缺方法 $mname（类无默认实现）")
                     continue
                 }
                 val mfn = expanded.first { it.name == mname }
@@ -56,6 +62,8 @@ internal fun Checker.checkImplsFrom(files: List<FileAst>) {
             // P6（决策 82）：登记「类型类 → impl 条目」（约束解析用；含声明模块供跨模块可见性过滤）
             syms.implsByTrait.getOrPut(cls.name) { ArrayList() }
                 .add(ImplEntry(cls.name, impl.self, impl.trait.name, modulePath))
+            // v3.0 特性 2/4：委托展开或默认实现补齐后的成员集持久化，供 codegen 编码字典（genDecl 取 delegatedImpls ?: members）
+            if (expanded !== impl.members) syms.delegatedImpls[impl] = expanded
         }
     }
 }
@@ -121,9 +129,9 @@ internal fun Checker.resolveDict(name: String, argT: Type, visible: Set<String>?
  *  HKT（HKT-D2）：匹配走 doesSelfMatch——约束 t 若是构造子名（`[F[_]: Functor]` 解出 List），
  *  `List[a]` 占位 self 通配命中（typeLooseEq 逐实参比较会让 a vs 空失败）。 */
 internal fun Checker.resolveConstraint(trait: String, t: Type, visible: Set<String>?): String? {
-    // v2.1（对齐 Rust）：Any 是所有结构体/枚举/基本类型的**默认类型类**——恒满足、零方法无字典；
+    // v2.1（对齐 Rust）/v3.0 特性 4：自动类型类（当前 Any）对所有结构体/枚举/基本类型**自动实例化**——恒满足、零方法无字典；
     // Nothing 是底类型——任何约束对它都跳过字典（发散值不会真正执行调用）。
-    if (trait == "Any") return null
+    if (trait in autoTraits) return null
     if (t.isNothing()) return null
     val entries = if (visible == null) syms.implsByTrait[trait].orEmpty()
         else visible.mapNotNull { allSymbols[it]?.implsByTrait?.get(trait) }.flatten()

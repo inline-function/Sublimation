@@ -644,4 +644,20 @@ class E2ETest {
             "}"
         assertEquals("4\n[ 0, 1, 2, 3 ]\ntrue\nfalse\n[ 1, 4, 9, 16 ]\n10", run(src))
     }
+
+    @Test
+    fun `默认实现端到端 v3 特性四`() {
+        val src = "class Vec {\n" +
+            "    fun len(): Nat = 3\n" +
+            "    fun empty(): Bool = true\n" +
+            "}\n" +
+            "struct Box\n" +
+            "impl Vec for Box { }\n" +
+            "@impure fun main() {\n" +
+            "    var b = Box()\n" +
+            "    print(b.len())\n" +
+            "    print(b.empty())\n" +
+            "}"
+        assertEquals("3\ntrue", run(src))
+    }
 }

@@ -1187,4 +1187,16 @@ class CheckerTest {
     fun `Range 区间端点须数值`() {
         assertTrue(errs("@impure fun main() { var s = \"a\"..\"b\" }").contains("E-TYPE-MISMATCH"))
     }
+
+    @Test
+    fun `默认实现 缺方法补齐`() {
+        val src = "class M { fun f(): Nat = 1 }\nstruct S\nimpl M for S { }\n@impure fun main() { var s = S()\nprint(s.f()) }"
+        assertTrue(ok(src), "impl 缺方法且类有默认实现应补齐，不报 E-IMPL-INCOMPLETE")
+    }
+
+    @Test
+    fun `默认实现 类无默认实现缺方法仍报`() {
+        val src = "class M { fun f(): Nat }\nstruct S\nimpl M for S { }"
+        assertTrue(errs(src).contains("E-IMPL-INCOMPLETE"), "类方法无 body 时缺方法仍应报 E-IMPL-INCOMPLETE")
+    }
 }
