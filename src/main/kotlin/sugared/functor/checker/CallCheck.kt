@@ -72,7 +72,8 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
     if (freeName != null && f.lookupVar(freeName) != null) f.markUsed(freeName)
     val isFreeFormMethod = fieldCallee == null && freeName != null &&
         isMethodName(freeName) &&
-        syms.findFun(freeName) == null && !syms.ctors.containsKey(freeName) && !syms.structs.containsKey(freeName)
+        syms.findFun(freeName) == null && !syms.ctors.containsKey(freeName) && !syms.structs.containsKey(freeName) &&
+        findCallable(freeName, argTypes) == null   // 扩展调用法规则：普通调用法 f(x,..) 有可见自由函数时优先自由函数（类型类方法仅兜底）
     // HKT（《高阶类型.md》§7.1，方案 A）：带参类型类方法（`map(f, fa)`）的字典键是 **kind 应用位**（fa，含
     // arity>0 形参应用的那一参），不是首实参；且 fn 需要全部实参（self 即 fa 位，不 drop）。
     val hktKindPos = when {

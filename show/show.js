@@ -713,5 +713,87 @@
   return null;
 })();
   }
+  const dict_stdlib_Collection_List = {
+    contains: (d, __self, element) => (() => {
+  const __s67 = __self;
+  if (((Array.isArray(__s67) && __s67.length === 0))) {  return false; }
+  if (((Array.isArray(__s67) && __s67.length >= 1))) { const h = __s67[0]; const t = __s67.slice(1);  return (__eq(h, element) ? (() => {
+  return true;
+})() : (() => {
+  return dict_stdlib_Collection_List.contains(dict_stdlib_Collection_List, t, element);
+})()); }
+  return null;
+})(),
+    size: (d, __self) => (() => {
+  const __s68 = __self;
+  if (((Array.isArray(__s68) && __s68.length === 0))) {  return 0; }
+  if (((Array.isArray(__s68) && __s68.length >= 1))) { const t = __s68.slice(1);  return (1 + dict_stdlib_Collection_List.size(dict_stdlib_Collection_List, t)); }
+  return null;
+})()
+  };
+  const dict_stdlib_Collection_Set = {
+    contains: (d, __self, element) => (() => {
+  const __s69 = __self;
+  if ((__s69.tag === "SetNil")) {  return false; }
+  if ((__s69.tag === "SetCons")) { const h = __s69[0]; const t = __s69[1];  return (__eq(h, element) ? (() => {
+  return true;
+})() : (() => {
+  return dict_stdlib_Collection_Set.contains(dict_stdlib_Collection_Set, t, element);
+})()); }
+  return null;
+})(),
+    size: (d, __self) => (() => {
+  const __s70 = __self;
+  if ((__s70.tag === "SetNil")) {  return 0; }
+  if ((__s70.tag === "SetCons")) { const t = __s70[1];  return (1 + dict_stdlib_Collection_Set.size(dict_stdlib_Collection_Set, t)); }
+  return null;
+})()
+  };
+  const dict_stdlib_Collection_Map = {
+    contains: (d, __self, element) => (() => {
+  const __s71 = __self;
+  if ((__s71.tag === "MapNil")) {  return false; }
+  if ((__s71.tag === "MapCons")) { const k0 = __s71[0]; const v0 = __s71[1]; const t = __s71[2];  return (__eq(k0, element) ? (() => {
+  return true;
+})() : (() => {
+  return dict_stdlib_Collection_Map.contains(dict_stdlib_Collection_Map, t, element);
+})()); }
+  return null;
+})(),
+    size: (d, __self) => (() => {
+  const __s72 = __self;
+  if ((__s72.tag === "MapNil")) {  return 0; }
+  if ((__s72.tag === "MapCons")) { const t = __s72[2];  return (1 + dict_stdlib_Collection_Map.size(dict_stdlib_Collection_Map, t)); }
+  return null;
+})()
+  };
+  const dict_stdlib_Collection_Optional = {
+    contains: (d, __self, element) => (() => {
+  const __s73 = __self;
+  if ((__s73.tag === "Some")) { const x = __s73[0];  return __eq(x, element); }
+  if ((__s73.tag === "None")) {  return false; }
+  return null;
+})(),
+    size: (d, __self) => (() => {
+  const __s74 = __self;
+  if ((__s74.tag === "Some")) {  return 1; }
+  if ((__s74.tag === "None")) {  return 0; }
+  return null;
+})()
+  };
+  const dict_stdlib_Collection_Result = {
+    contains: (d, __self, element) => (() => {
+  const __s75 = __self;
+  if ((__s75.tag === "Ok")) { const x = __s75[0];  return __eq(x, element); }
+  if ((__s75.tag === "Err")) {  return false; }
+  return null;
+})(),
+    size: (d, __self) => (() => {
+  const __s76 = __self;
+  if ((__s76.tag === "Ok")) {  return 1; }
+  if ((__s76.tag === "Err")) {  return 0; }
+  return null;
+})()
+  };
   main();
 })();

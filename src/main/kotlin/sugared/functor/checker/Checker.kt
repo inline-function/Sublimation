@@ -710,7 +710,7 @@ class Checker(
                             ?: (syms.methods[e.name]?.firstOrNull { doesSelfMatch(it.self, t) }?.let { it.fn to it.modulePath })
                         if (m != null) {
                             val (fn, mmod) = m
-                            funRefTargets[e] = moduleJsName(mmod, fn.name)
+                            funRefTargets[e] = jsOverloadName(mmod, fn)   // 重载组带首参标签（stdlib__map$List）
                             // 绑定 self：函数值形参 = 声明的**非首参**（首参即接收者，已在 target 上）；
                             // 多态方法糖函数保留理论参数（如 map[T,U] → [T,U](...)）
                             FunType(
@@ -743,8 +743,8 @@ class Checker(
                 d.error("E-FUTURE-FUN", e.pos, "trait 方法引用请期待未来的完美函数类型")
                 syntheticT("函数引用")
             } else {
-                val jsName = method?.let { moduleJsName(it.modulePath, it.fn.name) }
-                    ?: moduleJsName(modulePath, fn.name)
+                val jsName = method?.let { jsOverloadName(it.modulePath, it.fn) }
+                    ?: jsOverloadName(modulePath, fn)   // 重载组带首参标签
                 funRefTargets[e] = jsName
                 // v3.0（完美函数类型）：自由函数引用不注入接收者（o::f 里 o 仅语法载体）
                 val isBound = method != null || run {

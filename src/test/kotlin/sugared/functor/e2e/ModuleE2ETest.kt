@@ -134,9 +134,9 @@ class ModuleE2ETest {
     @Test
     fun `P2 range 走 listLength 得 3`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/list.subl").readText()
+        val std = File("stdlib/collection.subl").readText()
         assertEquals("3", runTree(mapOf(
-            "stdlib/list.subl" to std,
+            "stdlib/collection.subl" to std,
             "main.subl" to "@impure fun main() {\nprint(stdlib.listLength(stdlib.range(0, 3)))\n}",
         )))
     }
@@ -144,32 +144,32 @@ class ModuleE2ETest {
     @Test
     fun `P2 map 加一后长度 2 求和 5`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/list.subl").readText()
+        val std = File("stdlib/collection.subl").readText()
         val main = "@impure fun main() {\n" +
             "var xs = stdlib.Cons(1, stdlib.Cons(2, stdlib.Nil()))\n" +
             "print(xs.map({ x -> x + 1 }).listLength())\n" +
             "print(xs.map({ x -> x + 1 }).fold(0) { x, acc -> acc + x })\n" +
             "}"
-        assertEquals("2\n5", runTree(mapOf("stdlib/list.subl" to std, "main.subl" to main)))
+        assertEquals("2\n5", runTree(mapOf("stdlib/collection.subl" to std, "main.subl" to main)))
     }
 
     @Test
     fun `P2 打印 1 到 10 的平方 - 平方和为 385`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/list.subl").readText()
+        val std = File("stdlib/collection.subl").readText()
         val main = "@impure fun main() {\n" +
             "var xs = stdlib.range(1, 11)\n" +
             "print(xs.map({ x -> x * x }).fold(0) { x, acc -> acc + x })\n" +
             "}"
-        assertEquals("385", runTree(mapOf("stdlib/list.subl" to std, "main.subl" to main)))
+        assertEquals("385", runTree(mapOf("stdlib/collection.subl" to std, "main.subl" to main)))
     }
 
     @Test
     fun `P2 隐式挂载 - 深处子模块也能引用 stdlib`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/list.subl").readText()
+        val std = File("stdlib/collection.subl").readText()
         assertEquals("3", runTree(mapOf(
-            "stdlib/list.subl" to std,
+            "stdlib/collection.subl" to std,
             "a/b/c/main.subl" to "@impure fun main() {\nprint(stdlib.listLength(stdlib.range(0, 3)))\n}",
         )))
     }
@@ -179,31 +179,31 @@ class ModuleE2ETest {
     @Test
     fun `v2 标准库 - strSplit 返回数组化 List`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/list.subl").readText()
+        val std = File("stdlib/collection.subl").readText()
         val main = "@impure fun main() {\n" +
             "var parts = strSplit(\"a,b,c\", \",\")\n" +
             "print(parts.size())\n" +
             "print(parts.joinToString(\"-\"))\n" +
             "}"
-        assertEquals("3\na-b-c", runTree(mapOf("stdlib/list.subl" to std, "main.subl" to main)))
+        assertEquals("3\na-b-c", runTree(mapOf("stdlib/collection.subl" to std, "main.subl" to main)))
     }
 
     @Test
     fun `v2 标准库 - List 补全 any 找不到返回 false`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/list.subl").readText()
+        val std = File("stdlib/collection.subl").readText()
         val main = "@impure fun main() {\n" +
             "var xs = stdlib.range(1, 4)\n" +
             "print(xs.any({ x -> x > 5 }))\n" +
             "print(xs.all({ x -> x > 0 }))\n" +
             "}"
-        assertEquals("false\ntrue", runTree(mapOf("stdlib/list.subl" to std, "main.subl" to main)))
+        assertEquals("false\ntrue", runTree(mapOf("stdlib/collection.subl" to std, "main.subl" to main)))
     }
 
     @Test
     fun `v2 标准库 - List indexOf slice sortBy`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/list.subl").readText()
+        val std = File("stdlib/collection.subl").readText()
         val main = "@impure fun main() {\n" +
             "var xs = stdlib.range(1, 5)\n" +
             "when(xs.indexOf(2)) { Some(i) -> print(i); None -> print(\"x\") }\n" +
@@ -211,14 +211,14 @@ class ModuleE2ETest {
             "print(xs.sortBy({ a, b -> a > b }).joinToString(\",\"))\n" +
             "print(xs.sortBy({ a, b -> a < b }).joinToString(\",\"))\n" +
             "}"
-        assertEquals("1\n2,3\n4,3,2,1\n1,2,3,4", runTree(mapOf("stdlib/list.subl" to std, "main.subl" to main)))
+        assertEquals("1\n2,3\n4,3,2,1\n1,2,3,4", runTree(mapOf("stdlib/collection.subl" to std, "main.subl" to main)))
     }
 
     @Test
     fun `v2 标准库 - IO 扩展 appendFile fileExists readDir`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/list.subl").readText()
-        val res = File("stdlib/result.subl").readText()
+        val std = File("stdlib/collection.subl").readText()
+        val res = File("stdlib/collection.subl").readText()
         val dir = Files.createTempDirectory("subl-v2-io").toFile()
         try {
             val p1 = File(dir, "a.txt").absolutePath.replace("\\", "\\\\")
@@ -233,7 +233,7 @@ class ModuleE2ETest {
                 "when(rd) { Ok(xs) -> print(xs.size()); Err(e) -> print(e) }\n" +
                 "}"
             assertEquals("xy\ntrue\n1", runTree(mapOf(
-                "stdlib/list.subl" to std, "stdlib/result.subl" to res, "main.subl" to main)))
+                "stdlib/collection.subl" to std, "stdlib/collection.subl" to res, "main.subl" to main)))
         } finally { dir.deleteRecursively() }
     }
 
@@ -242,9 +242,9 @@ class ModuleE2ETest {
     @Test
     fun `P3 getArgs 无参数 - listLength 0`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/list.subl").readText()
+        val std = File("stdlib/collection.subl").readText()
         assertEquals("0", runTree(mapOf(
-            "stdlib/list.subl" to std,
+            "stdlib/collection.subl" to std,
             "main.subl" to "@impure fun main() {\nprint(stdlib.listLength(getArgs()))\n}",
         )))
     }
@@ -252,8 +252,8 @@ class ModuleE2ETest {
     @Test
     fun `P3 writeFile 写文件后 readFile 读回`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/list.subl").readText()
-        val res = File("stdlib/result.subl").readText()
+        val std = File("stdlib/collection.subl").readText()
+        val res = File("stdlib/collection.subl").readText()
         val f = File.createTempFile("subl-p3-wf", ".txt")
         val p = f.absolutePath.replace("\\", "\\\\")
         // P5：readFile 返回 Result<Str,Str>，解构 Ok/Err 取内容
@@ -261,20 +261,20 @@ class ModuleE2ETest {
             "when(r) {\n    Ok(s) -> print(s)\n    Err(e) -> print(e)\n}\n}"
         try {
             assertEquals("hi", runTree(mapOf(
-                "stdlib/list.subl" to std, "stdlib/result.subl" to res, "main.subl" to main)))
+                "stdlib/collection.subl" to std, "stdlib/collection.subl" to res, "main.subl" to main)))
         } finally { f.delete() }
     }
 
     @Test
     fun `P3 readLine 读 stdin 该行`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/list.subl").readText()
-        val res = File("stdlib/result.subl").readText()
+        val std = File("stdlib/collection.subl").readText()
+        val res = File("stdlib/collection.subl").readText()
         // P5：readLine 返回 Result<Str,Str>，解构 Ok/Err 取该行
         val main = "@impure fun main() {\nvar r = readLine()\n" +
             "when(r) {\n    Ok(s) -> print(s)\n    Err(e) -> print(e)\n}\n}"
         assertEquals("hello", runTreeIn(mapOf(
-            "stdlib/list.subl" to std, "stdlib/result.subl" to res, "main.subl" to main), "hello\n"))
+            "stdlib/collection.subl" to std, "stdlib/collection.subl" to res, "main.subl" to main), "hello\n"))
     }
 
     // ============ P5 错误处理 Result（v1.0 计划 §7.4 验收；决策 81，用户拍板候选 A） ============
@@ -282,42 +282,42 @@ class ModuleE2ETest {
     @Test
     fun `P5 readFile 读不存在返回 Err 分支`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/list.subl").readText()
-        val res = File("stdlib/result.subl").readText()
+        val std = File("stdlib/collection.subl").readText()
+        val res = File("stdlib/collection.subl").readText()
         // 读不存在的文件 → Err 分支（平台无关，只断言命中 Err 分支）
         val main = "@impure fun main() {\nvar r = readFile(\"C:/no/such/subl-file.txt\")\n" +
             "when(r) {\n    Ok(_) -> print(\"ok\")\n    Err(e) -> print(\"err\")\n}\n}"
         assertEquals("err", runTree(mapOf(
-            "stdlib/list.subl" to std, "stdlib/result.subl" to res, "main.subl" to main)))
+            "stdlib/collection.subl" to std, "stdlib/collection.subl" to res, "main.subl" to main)))
     }
 
     @Test
     fun `P5 readFile 写后读回返回 Ok 分支`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/list.subl").readText()
-        val res = File("stdlib/result.subl").readText()
+        val std = File("stdlib/collection.subl").readText()
+        val res = File("stdlib/collection.subl").readText()
         val f = File.createTempFile("subl-p5-rf", ".txt")
         val p = f.absolutePath.replace("\\", "\\\\")
         val main = "@impure fun main() {\nwriteFile(\"$p\", \"ok content\")\nvar r = readFile(\"$p\")\n" +
             "when(r) {\n    Ok(s) -> print(s)\n    Err(e) -> print(\"err \" + e)\n}\n}"
         try {
             assertEquals("ok content", runTree(mapOf(
-                "stdlib/list.subl" to std, "stdlib/result.subl" to res, "main.subl" to main)))
+                "stdlib/collection.subl" to std, "stdlib/collection.subl" to res, "main.subl" to main)))
         } finally { f.delete() }
     }
 
     @Test
     fun `P5 unwrapOr 和 mapResult 链式组合`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/list.subl").readText()
-        val res = File("stdlib/result.subl").readText()
+        val std = File("stdlib/collection.subl").readText()
+        val res = File("stdlib/collection.subl").readText()
         // mapResult 的 U 由 lambda 反推（点号方法 x.length），unwrapOr 消费——嵌套泛型调用即 §7.3 用法
         val main = "@impure fun main() {\nwriteFile(\"p5-mr.txt\", \"hello!\")\n" +
             "var r = stdlib.mapResult(readFile(\"p5-mr.txt\"), { x -> x.length })\n" +
             "print(stdlib.unwrapOr(r, 0))\n}"
         try {
             assertEquals("6", runTree(mapOf(
-                "stdlib/list.subl" to std, "stdlib/result.subl" to res, "main.subl" to main)))
+                "stdlib/collection.subl" to std, "stdlib/collection.subl" to res, "main.subl" to main)))
         } finally { File("p5-mr.txt").delete() }
     }
 
@@ -326,26 +326,26 @@ class ModuleE2ETest {
     @Test
     fun `P6 showAll 整数列表输出 12`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/list.subl").readText()
+        val std = File("stdlib/collection.subl").readText()
         // 约束 T: Show——类型参数约束经字典槽透传（§8.2：f 的 JS 签名带 d_Show_T 隐藏首参）
         val main = "class Show[T] { fun show(): Str }\n" +
             "impl Show for Nat { fun show(): Str = toStr(self) }\n" +
             "fun showAll[T: Show](xs: List[T]): Str = xs.fold(\"\") { x, acc -> acc + x.show() }\n" +
             "@impure fun main() {\n" +
             "print(showAll(stdlib.Cons(1, stdlib.Cons(2, stdlib.Nil()))))\n}"
-        assertEquals("12", runTree(mapOf("stdlib/list.subl" to std, "main.subl" to main)))
+        assertEquals("12", runTree(mapOf("stdlib/collection.subl" to std, "main.subl" to main)))
     }
 
     @Test
     fun `P6 printAll 字符串列表输出 x`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/list.subl").readText()
+        val std = File("stdlib/collection.subl").readText()
         val main = "class Show[T] { fun show(): Str }\n" +
             "impl Show for Str { fun show(): Str = self }\n" +
             "fun printAll[T: Show](xs: List[T]): Str = xs.fold(\"\") { x, acc -> acc + x.show() }\n" +
             "@impure fun main() {\n" +
             "print(printAll(stdlib.Cons(\"x\", stdlib.Nil())))\n}"
-        assertEquals("x", runTree(mapOf("stdlib/list.subl" to std, "main.subl" to main)))
+        assertEquals("x", runTree(mapOf("stdlib/collection.subl" to std, "main.subl" to main)))
     }
 
     // ============ v2.0 同名方法重载（决策 92 配套：跨容器共用方法名，按接收者路由） ============
@@ -353,8 +353,8 @@ class ModuleE2ETest {
     @Test
     fun `v2 同名重载 - List Set Map Optional 的 size map contains get 各归各桶`() {
         assumeTrue(nodeAvailable())
-        val list = File("stdlib/list.subl").readText()
-        val res = File("stdlib/result.subl").readText()
+        val list = File("stdlib/collection.subl").readText()
+        val res = File("stdlib/collection.subl").readText()
         val col = File("stdlib/collection.subl").readText()
         val main = "@impure fun main() {\n" +
             "var xs = stdlib.Cons(1, stdlib.Cons(2, stdlib.Nil()))\n" +
@@ -377,8 +377,8 @@ class ModuleE2ETest {
         assertEquals(
             "listSize=2\nsetSize=1\nmapSize=2\nmapLen=2\nsetHas=true\nlistHas=true\nmapGet=1\noptMap=6",
             runTree(mapOf(
-                "stdlib/list.subl" to list,
-                "stdlib/result.subl" to res,
+                "stdlib/collection.subl" to list,
+                "stdlib/collection.subl" to res,
                 "stdlib/collection.subl" to col,
                 "main.subl" to main,
             )),
@@ -388,8 +388,8 @@ class ModuleE2ETest {
     @Test
     fun `v2 跨模块限定自由函数重载 - stdlib filter map 路由到 List 版`() {
         assumeTrue(nodeAvailable())
-        val list = File("stdlib/list.subl").readText()
-        val res = File("stdlib/result.subl").readText()
+        val list = File("stdlib/collection.subl").readText()
+        val res = File("stdlib/collection.subl").readText()
         val col = File("stdlib/collection.subl").readText()
         val main = "@impure fun main() {\n" +
             "var xs = stdlib.range(1, 6)\n" +
@@ -403,8 +403,8 @@ class ModuleE2ETest {
         assertEquals(
             "evens=20, 40\nsum=60\nsize=2",
             runTree(mapOf(
-                "stdlib/list.subl" to list,
-                "stdlib/result.subl" to res,
+                "stdlib/collection.subl" to list,
+                "stdlib/collection.subl" to res,
                 "stdlib/collection.subl" to col,
                 "main.subl" to main,
             )),
@@ -414,7 +414,7 @@ class ModuleE2ETest {
     @Test
     fun `v2 新集合 API - sum maxNat minNat union intersect keys values`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/list.subl").readText()
+        val std = File("stdlib/collection.subl").readText()
         val col = File("stdlib/collection.subl").readText()
         val main = "@impure fun main() {\n" +
             "var xs = stdlib.Cons(4, stdlib.Cons(1, stdlib.Cons(3, stdlib.Nil())))\n" +
@@ -438,8 +438,8 @@ class ModuleE2ETest {
         assertEquals(
             "sum=8\nmax=4\nmin=1\nuni=3\ninter=1\nkeys=2\nvals=2",
             runTree(mapOf(
-                "stdlib/list.subl" to File("stdlib/list.subl").readText(),
-                "stdlib/result.subl" to File("stdlib/result.subl").readText(),
+                "stdlib/collection.subl" to File("stdlib/collection.subl").readText(),
+                "stdlib/collection.subl" to File("stdlib/collection.subl").readText(),
                 "stdlib/collection.subl" to col,
                 "main.subl" to main,
             )),
@@ -451,7 +451,7 @@ class ModuleE2ETest {
     @Test
     fun `v2 空安全 - elvis 空替代`() {
         assumeTrue(nodeAvailable())
-        val res = File("stdlib/result.subl").readText()
+        val res = File("stdlib/collection.subl").readText()
         val main = "@impure fun main() {\n" +
             "var a: Optional[Nat] = Some(5)\n" +
             "var b: Optional[Nat] = None()\n" +
@@ -462,14 +462,14 @@ class ModuleE2ETest {
             "}"
         assertEquals(
             "e1=5\ne2=0",
-            runTree(mapOf("stdlib/result.subl" to res, "main.subl" to main)),
+            runTree(mapOf("stdlib/collection.subl" to res, "main.subl" to main)),
         )
     }
 
     @Test
     fun `v2 空安全 - safecall 安全调用`() {
         assumeTrue(nodeAvailable())
-        val res = File("stdlib/result.subl").readText()
+        val res = File("stdlib/collection.subl").readText()
         val main = "@impure fun main() {\n" +
             "var s: Optional[Str] = Some(\"ab\")\n" +
             "var n: Optional[Str] = None()\n" +
@@ -480,14 +480,14 @@ class ModuleE2ETest {
             "}"
         assertEquals(
             "sl=2\nnl=0",
-            runTree(mapOf("stdlib/result.subl" to res, "main.subl" to main)),
+            runTree(mapOf("stdlib/collection.subl" to res, "main.subl" to main)),
         )
     }
 
     @Test
     fun `v2 空安全 - cast 安全转换`() {
         assumeTrue(nodeAvailable())
-        val res = File("stdlib/result.subl").readText()
+        val res = File("stdlib/collection.subl").readText()
         val main = "@impure fun main() {\n" +
             "var r = 5 >: Rat\n" +
             "var w = \"x\" >: Rat\n" +
@@ -496,7 +496,7 @@ class ModuleE2ETest {
             "}"
         assertEquals(
             "r=true\nw=false",
-            runTree(mapOf("stdlib/result.subl" to res, "main.subl" to main)),
+            runTree(mapOf("stdlib/collection.subl" to res, "main.subl" to main)),
         )
     }
 
@@ -519,7 +519,7 @@ class ModuleE2ETest {
     @Test
     fun `v2 空安全 - 自动解构 Some 传基层形参`() {
         assumeTrue(nodeAvailable())
-        val res = File("stdlib/result.subl").readText()
+        val res = File("stdlib/collection.subl").readText()
         val main = "fun takeRat(n: Rat): Nat = 1\n" +
             "@impure fun main() {\n" +
             "var x = takeRat(Some(5))\n" +
@@ -527,7 +527,7 @@ class ModuleE2ETest {
             "}"
         assertEquals(
             "x=1",
-            runTree(mapOf("stdlib/result.subl" to res, "main.subl" to main)),
+            runTree(mapOf("stdlib/collection.subl" to res, "main.subl" to main)),
         )
     }
 
@@ -831,8 +831,8 @@ class ModuleE2ETest {
             "  print(\"zip ok\")\n" +
             "}\n"
         // 内联 stdlib/list.subl（含 range + zip）——runTree 不自动挂载真实 stdlib
-        val list = File("stdlib/list.subl").readText()
-        assertEquals("zip ok", runTree(mapOf("main.subl" to src, "stdlib/list.subl" to list)))
+        val list = File("stdlib/collection.subl").readText()
+        assertEquals("zip ok", runTree(mapOf("main.subl" to src, "stdlib/collection.subl" to list)))
     }
 
     @Test
@@ -847,11 +847,11 @@ class ModuleE2ETest {
             "  print(\"s=\${s.size()} m=\${m.size()} d=\${d.size()}\")\n" +
             "}\n"
         // toSet/toMap 在 collection.subl，distinct/zip 在 list.subl——两者都内联
-        val list = File("stdlib/list.subl").readText()
+        val list = File("stdlib/collection.subl").readText()
         val coll = File("stdlib/collection.subl").readText()
         assertEquals("s=3 m=3 d=3", runTree(mapOf(
             "main.subl" to src,
-            "stdlib/list.subl" to list,
+            "stdlib/collection.subl" to list,
             "stdlib/collection.subl" to coll)))
     }
 
@@ -868,18 +868,18 @@ class ModuleE2ETest {
             "  var s = stdlib.setOf(54, 75, 100)\n" +
             "  stdlib.forEach(stdlib.map(s) { grade(_) }) { x => print(x) }\n" +
             "}\n"
-        val list = File("stdlib/list.subl").readText()
+        val list = File("stdlib/collection.subl").readText()
         val coll = File("stdlib/collection.subl").readText()
         assertEquals("D\nC\nA", runTree(mapOf(
             "main.subl" to src,
-            "stdlib/list.subl" to list,
+            "stdlib/collection.subl" to list,
             "stdlib/collection.subl" to coll)))
     }
 
     @Test
     fun `v30b - 裸名 setOf map forEach 方法糖链路`() {
         assumeTrue(nodeAvailable())
-        val list = File("stdlib/list.subl").readText()
+        val list = File("stdlib/collection.subl").readText()
         val coll = File("stdlib/collection.subl").readText()
         val src = "@impure fun main() {\n" +
             "  var s = setOf(1, 2, 3)\n" +
@@ -887,7 +887,7 @@ class ModuleE2ETest {
             "}\n"
         assertEquals("1\n2\n3", runTree(mapOf(
             "main.subl" to src,
-            "stdlib/list.subl" to list,
+            "stdlib/collection.subl" to list,
             "stdlib/collection.subl" to coll)))
     }
 
@@ -920,11 +920,11 @@ class ModuleE2ETest {
             "        .map { (_.name, _.score, _.grade()) }\n" +
             "        .forEach { (name, score, grade) => print(\"\$name:\$score:\$grade\") }\n" +
             "}\n"
-        val list = File("stdlib/list.subl").readText()
+        val list = File("stdlib/collection.subl").readText()
         val coll = File("stdlib/collection.subl").readText()
         assertEquals("孙笑川:54:D\n丰川祥子:75:C\n37:100:A\n函子酱:91:A", runTree(mapOf(
             "main.subl" to src,
-            "stdlib/list.subl" to list,
+            "stdlib/collection.subl" to list,
             "stdlib/collection.subl" to coll)))
     }
 
@@ -941,10 +941,10 @@ class ModuleE2ETest {
             "  var zs = xs.map(fun[T](x: T): T = x)\n" +
             "  print(zs)\n" +
             "}"
-        val list = File("stdlib/list.subl").readText()
+        val list = File("stdlib/collection.subl").readText()
         assertEquals("[ 6, 8 ]\n10\n[ 1, 2, 3, 4 ]", runTree(mapOf(
             "main.subl" to src,
-            "stdlib/list.subl" to list)))
+            "stdlib/collection.subl" to list)))
     }
 
     @Test
@@ -956,9 +956,9 @@ class ModuleE2ETest {
             "  var m = xs.map\n" +
             "  print(m({x -> x * 2}))\n" +
             "}"
-        val list = File("stdlib/list.subl").readText()
+        val list = File("stdlib/collection.subl").readText()
         assertEquals("[ 2, 4 ]", runTree(mapOf(
             "main.subl" to src,
-            "stdlib/list.subl" to list)))
+            "stdlib/collection.subl" to list)))
     }
 }
