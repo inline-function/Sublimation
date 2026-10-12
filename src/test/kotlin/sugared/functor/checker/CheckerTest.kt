@@ -1039,10 +1039,17 @@ class CheckerTest {
     // ============ P9 递归停机判定（v1.0 计划 §11.4 验收；决策 44/85，用户授权 Max 倾向：报错 + 含 when 解构） ============
 
     @Test
-    fun `P9 非结构递归报 E-NON-STRUCTURAL-REC`() {
-        // 验收①：fact(n - 1) 的实参不是形参的语法子项（BinExpr），须报错
+    fun `P9 数值递归（n-1 递减）放行`() {
+        // root doc《副作用与可变性控制》「停机」第二法：参数向某数值靠拢（n-1 → 0）是合法递归
         val src = "fun fact(n: Nat): Nat = when(n) { 0 -> 1\n_ -> n * fact(n - 1) }"
-        assertTrue(errs(src).contains("E-NON-STRUCTURAL-REC"), "数值递减（n-1）不是结构子项，应报错")
+        assertTrue(ok(src), "数值递减（n-1）应按数值递归放行")
+    }
+
+    @Test
+    fun `P9 递增递归仍报 E-NON-STRUCTURAL-REC`() {
+        // n + 1 是递增（不向 0 靠拢）——不承认数值进展，仍须报错
+        val src = "fun up(n: Nat): Nat = when(n) { 0 -> 0\n_ -> up(n + 1) }"
+        assertTrue(errs(src).contains("E-NON-STRUCTURAL-REC"), "递增（n+1）不是数值递减，应报错")
     }
 
     @Test

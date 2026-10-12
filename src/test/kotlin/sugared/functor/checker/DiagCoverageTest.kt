@@ -129,7 +129,7 @@ class DiagCoverageTest {
     // ---------- P9 递归停机（决策 44/85） ----------
 
     @Test fun `E-NON-STRUCTURAL-REC`() =
-        assertTrue(has("fun f(n: Nat): Nat = when(n) { 0 -> 0\n_ -> f(n - 1) }", "E-NON-STRUCTURAL-REC"))
+        assertTrue(has("fun f(n: Nat): Nat = when(n) { 0 -> 0\n_ -> f(n + 1) }", "E-NON-STRUCTURAL-REC"))
 
     // ---------- P8 命名参数（决策 84） ----------
 

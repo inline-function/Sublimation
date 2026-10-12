@@ -559,9 +559,9 @@ internal fun Checker.checkFnCall(
     // 多参数递归（map(f, t)）允许透传参数（f 原样）——停止性由递减者（t）保证；全参数都不递减才算违规。
     // unchecked 放行；@impure 不受约束；方法路径（字典分发）暂不查。
     if (!isMethodPath && "impure" !in fn.annotations && uncheckedDepth == 0 && name == curFunName && curFunName != null) {
-        if (effArgs.none { isStructuralArg(it) })
+        if (effArgs.none { isStructuralArg(it) || isNumericDescent(it) })
             d.error("E-NON-STRUCTURAL-REC", c.pos,
-                "函数 $name 的递归须有至少一个实参是某形参的语法子项（when 解构链）——用 unchecked 放行或改写为结构递归")
+                "函数 $name 的递归须有至少一个实参是某形参的语法子项（when 解构链）或数值严格递减（p - k）——用 unchecked 放行或改写为结构/数值递归")
     }
     fn.params.forEachIndexed { i, p ->
         if ("tuple" in p.annotations && "vararg" !in p.annotations) {
@@ -785,6 +785,18 @@ private fun Checker.typeOf(e: Expr): Type = when (e) {
  */
 private fun extractTpBinding(want: Type, got: Type, tps: Set<String>, tsub: LinkedHashMap<String, Type>, arity: Map<String, Int> = emptyMap()) {
     unifyInto(want, got, tps, tsub, arity)   // 同包顶层函数（TypeInfer.kt）
+}
+
+/** root doc《副作用与可变性控制》「停机」第二法（数值递归）：实参是否为某形参的**数值严格递减**变换。
+ *  只认 `p - k`（k>0）与 `p + k`（k<0）——参数向某个数值靠拢（Nat 向 0）并停在那里。
+ *  真实参（形参自身）、持平（p + 0）、递增（p + k, k>0）、非变量字面量（countdown(3)）都不认。 */
+private fun Checker.isNumericDescent(a: Expr): Boolean {
+    val bin = a as? BinExpr ?: return false
+    if (bin.op != "-" && bin.op != "+") return false
+    val vname = (bin.left as? NameRef)?.name ?: (bin.left as? VarExpr)?.name ?: return false
+    if (vname !in curFunParams) return false
+    val k = (bin.right as? IntLit)?.value?.toLongOrNull() ?: return false
+    return if (bin.op == "-") k > 0 else k < 0
 }
 
 /** P9（决策 44，递归停机）：实参是否为某形参的语法子项。
