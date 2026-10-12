@@ -1230,6 +1230,25 @@ class CheckerTest {
     }
 
     @Test
+    fun `根文档 自定义命题 def 等价定义`() {
+        val src = "def ≠<a, b> ↔ ¬<a = b>\nstruct A(n: Nat)<n ≠ 0>\nfun main() { A(1) }"
+        assertTrue(ok(src), "≠<1,0> 按定义展开为 ¬<1 = 0> → 常量判定成立，构造 A(1) 应过")
+    }
+
+    @Test
+    fun `根文档 自定义命题 def 原子谓词无等价定义`() {
+        // 无 ↔ 的 def 是原子谓词：∃ 引入实例/∵ 须 Γ 中有事实才成立（封存期失败降级为警告）
+        val src = "def Odd<n>\n@impure fun main() { ∃ x = 3 . Odd<3> }"
+        assertTrue(ok(src), "Odd<3> 无等价定义时 ∵/∃ 注入视为成立（封存宽容）；此处 ∵ 前件 Odd<3> 未证出但不再报错")
+    }
+
+    @Test
+    fun `根文档 自定义命题 def 等价定义驱动构造证明`() {
+        val src = "def 非零<a> ↔ ¬<a = 0>\nstruct B(n: Nat)<非零<n>>\nfun main() { B(7) }"
+        assertTrue(ok(src), "非零<7> 等价展开 ¬<7 = 0> 常量判定真")
+    }
+
+    @Test
     fun `IfProp 双支同结论特性六`() {
         val src = "@classic\n@impure fun main() { if[y = 2] { ∴ 1 = 1 } else { ∴ 1 = 1 } }"
         assertTrue(ok(src), "挂载 core.classic 后双支证明同结论应通过")

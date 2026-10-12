@@ -149,6 +149,10 @@ internal fun Checker.collectDecl(decl: Decl) {
         is EnumDecl -> {
             if (decl.name !in setOf("Bool", "Null", "Optional")) registerEnum(decl)
         }
+        is PropDefDecl -> {
+            if (syms.propDefs.putIfAbsent(decl.name, decl) != null)
+                d.error("E-DUP-DECL", decl.pos, "自定义命题 ${decl.name} 重复声明")
+        }
         is FunDecl -> {
             // 定理函数（纯 + 返回 Null，无 @theorem 注解）登记进定理空间（∴ 搜索只搜这里）
             if (isTheoremFun(decl)) syms.theorems[decl.name] = decl
@@ -178,6 +182,7 @@ internal fun Checker.collectDecl(decl: Decl) {
 /** 第二遍：符号全部就位后检查字段/构造子/别名右值的类型可解析性（别名可前向引用） */
 internal fun Checker.checkDeclTypes(decl: Decl) {
     when (decl) {
+        is PropDefDecl -> { /* 自定义命题：参数名列表无需类型检查；等价式在证明期展开 */ }
         is StructDecl -> decl.fields.forEach { fp ->
             checkTypeResolvable(fp.type, tpNamesOf(decl))
             // O3（决策 69）：字段默认值须与字段类型相符（声明期用空帧检查，引用未定义即报错）

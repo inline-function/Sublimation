@@ -77,6 +77,15 @@ data class TypeAliasDecl(
     override val pos: String = "",
 ) : Decl
 
+/** 自定义命题（根文档）：`def p<a, b>`——定义原子谓词（参数不约束类型）；`def p<a,b> ↔ <等价式>`——等价定义。
+ *  equiv 为 null 时 p 是原子谓词（须 Γ 中有事实才真）；非 null 时目标按定义展开证明。 */
+data class PropDefDecl(
+    val name: String,
+    val params: List<String>,
+    val equiv: Expr?,
+    override val pos: String = "",
+) : Decl
+
 data class Ctor(val name: String, val fields: List<Type>)
 
 sealed interface TheoryParam

@@ -3,7 +3,7 @@ package sugared.functor.lexer
 enum class Kind {
     INT, FLOAT, STR, IDENT, SYMBOL,
     // 硬关键字
-    FUN, CLASS, STRUCT, ENUM, VAR, IMPL, FOR, IF, ELSE, UNCHECKED, WHEN, IS, BY, TYPE, RET, IN,   // v3.0：in 区间成员判断
+    FUN, CLASS, STRUCT, ENUM, VAR, IMPL, FOR, IF, ELSE, UNCHECKED, WHEN, IS, BY, TYPE, RET, IN, DEF,   // v3.0：in 区间成员判断；根文档：def 自定义命题
     // 标点
     LPAREN, RPAREN, LBRACKET, RBRACKET, LBRACE, RBRACE,
     COMMA, SEMI, COLON, COLON2, DOT, AT, BACKSLASH, DOLLAR,   // COLON2 = `::`（v2.1 枚举成员访问 E::A）
@@ -47,7 +47,7 @@ class Lexer(private val src: String, private val fileName: String) {
         "enum" to Kind.ENUM, "var" to Kind.VAR, "impl" to Kind.IMPL,
         "for" to Kind.FOR, "if" to Kind.IF, "else" to Kind.ELSE,
         "unchecked" to Kind.UNCHECKED, "when" to Kind.WHEN, "is" to Kind.IS, "by" to Kind.BY,
-        "type" to Kind.TYPE, "return" to Kind.RET, "in" to Kind.IN,
+        "type" to Kind.TYPE, "return" to Kind.RET, "in" to Kind.IN, "def" to Kind.DEF,
     )
 
     companion object {

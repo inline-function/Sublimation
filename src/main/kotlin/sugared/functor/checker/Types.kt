@@ -279,6 +279,8 @@ class Symbols {
     /** 定理函数：无副作用（无 @impure/@mut 参数）且返回 Null 的函数（名 → 声明），参与 `∴` 的定理搜索。
      *  无 @theorem 注解——判据即登记；有体定理照常生成运行时代码（无法用 unchecked 逃过纯度） */
     val theorems = LinkedHashMap<String, FunDecl>()
+    /** 根文档：自定义命题 `def p<a,b> [↔ <等价式>]`（名 → 声明），求解时按名展开 */
+    val propDefs = LinkedHashMap<String, PropDefDecl>()
     /** v3.0 特性 6：core.classic 已挂载标志（文件内任一声明带 @classic 注解即挂载）——if[p] 排中律前置 */
     var classicMounted = false
     /** v2.0：同名不同**首参类型**的自由函数重载（funs 含首个声明，其余候选存此）。

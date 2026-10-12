@@ -105,7 +105,32 @@ private fun reduceGoalToConstants(gamma: List<Prop>, goal: Prop): Prop? {
     return PAtom(goal.head, newTerms)
 }
 
+/** 根文档：自定义命题展开——`def p<a,b> ↔ <等价>`：目标 PAtom(p, terms) 按定义代换展开（最多 5 层，
+ *  展开结果与目标同构即停，视为原子需 Γ 事实）。仅有签名（无 ↔）的 def 是原子谓词，不展开。 */
+private fun Checker.expandDefined(goal: Prop): Prop? {
+    var cur = goal
+    repeat(5) {
+        if (cur !is PAtom) return null
+        val def = syms.propDefs[cur.head] ?: return null
+        if (def.equiv == null) return null
+        if (def.params.size != cur.terms.size) return null
+        val sub = def.params.zip(cur.terms).toMap()
+        cur = substPropTerms(PropLogic.fromExpr(def.equiv), sub)
+        if (PropLogic.render(cur) == PropLogic.render(goal)) return null   // 自引用回环：视为原子
+        return cur     // 展开一层即可（proveOrDeep 递归自然再展开；render 比较防回环已保证终止）
+    }
+    return null
+}
+
 internal fun Checker.proveOrDeep(gamma: List<Prop>, goal: Prop): Boolean {
+    // 根文档：自定义命题按定义展开后继续证明
+    expandDefined(goal)?.let { return proveOrDeep(gamma, it) }
+    // PNot 目标：内层常量可判 → 直接取反（¬<1=0> 真 ⟺ <1=0> 假）；非常量交给 prover
+    if (goal is PNot) {
+        val iv = constAtomValue(goal.p)
+        if (iv == false) return true
+        if (iv == true) return false
+    }
     // PImp 目标：前提常量属实 → 只需证后件；前提常量假 → 蕴含恒真
     if (goal is PImp) {
         val av = constAtomValue(goal.a)

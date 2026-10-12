@@ -381,6 +381,7 @@ private var funRefFree: Set<Expr> = emptySet()
             // 决策 60（T5）：impl 成员生成字典对象，方法体收隐藏字典参数 d
             is ImplDecl -> if (decl.trait != null) genDict(decl)   // 无类型类 impl 已脱糖为自由函数（Parser 阶段），零残留
             is TypeAliasDecl -> {}   // 纯类型层，零输出（别名在 checker 展开）
+            is PropDefDecl -> {}   // 自定义命题（根文档）：编译期声明，零输出
         }
     }
 

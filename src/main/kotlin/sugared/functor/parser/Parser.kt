@@ -109,7 +109,7 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
      * 凝华脚本模式（类 kts，顶层即主序列）列为将来特性，当前语法层直接拒绝。
      */
     private fun parseEntry(): Entry = when (cur().kind) {
-        Kind.FUN, Kind.CLASS, Kind.STRUCT, Kind.ENUM, Kind.IMPL, Kind.TYPE -> DeclEntry(parseDecl())
+        Kind.FUN, Kind.CLASS, Kind.STRUCT, Kind.ENUM, Kind.IMPL, Kind.TYPE, Kind.DEF -> DeclEntry(parseDecl())
         Kind.AT -> {
             val save = pos
             val anns = parseAnnotations()
@@ -129,6 +129,7 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         Kind.ENUM -> parseEnum()
         Kind.IMPL -> parseImpl()
         Kind.TYPE -> parseTypeAlias()
+        Kind.DEF -> parsePropDef()
         else -> throw ParseFailure(fileName, cur(), "声明")
     }
 
@@ -141,6 +142,29 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         at(Kind.ASSIGN)
         val target = parseType()
         return TypeAliasDecl(name, theory, target, "$sl:$sc")
+    }
+
+    /** 自定义命题（根文档）：`def =<a,b>` / `def ≠<a,b> ↔ ¬<a = b>`。
+     *  名字为任意符号/标识符 token 的原文；`<参数>` 是名字列表（不约束类型）；`↔` 后是等价命题表达式。 */
+    private fun parsePropDef(): PropDefDecl {
+        val sl = cur().line; val sc = cur().col
+        at(Kind.DEF)
+        val name = next().text
+        val params = ArrayList<String>()
+        if (peek(Kind.LT)) {
+            next()
+            while (peek(Kind.IDENT)) {
+                params += next().text
+                if (peek(Kind.COMMA)) next() else break
+            }
+            at(Kind.GT)
+        }
+        var equiv: Expr? = null
+        if (peek(Kind.IFF) || peek(Kind.EQUIV)) {   // ↔ 词法是 EQUIV；<=> 用 IFF
+            next()
+            equiv = if (peek(Kind.LT)) parseAngleList().single() else parseExpr(angle = false)
+        }
+        return PropDefDecl(name, params, equiv, "$sl:$sc")
     }
 
     private fun parseAnnotations(): List<String> {
@@ -895,6 +919,8 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         if (t.kind == Kind.BANG) { pos++; return UniExpr("!", parseUnary(stopArrow)) }
         if (t.kind == Kind.LNOT) { pos++; return UniExpr("¬", parseUnary(stopArrow)) }
         if (t.kind == Kind.IDENT && t.text == "not") { pos++; return UniExpr("¬", parseUnary(stopArrow)) }
+        // 命题括号：`<e>`（根文档 def 等价右式/量词体的 `¬<a = b>`）——GT 由 parseAngleList 消费
+        if (t.kind == Kind.LT) { val inner = parseAngleList(); if (inner.size == 1) return inner[0] }
         return parsePostfix(stopArrow)
     }
 

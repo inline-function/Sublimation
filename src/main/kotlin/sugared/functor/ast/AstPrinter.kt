@@ -47,6 +47,7 @@ private fun Decl.toTree(): Tree = when (this) {
         ctors.map { Tree("${it.name}(${it.fields.joinToString(", ") { t -> t.toTag() }})") },
     )
     is TypeAliasDecl -> Tree("type $name${theoryTag(theory)} = ${target.toTag()}")
+    is PropDefDecl -> Tree("def $name<${params.joinToString(", ")}>${equiv?.let { " ↔ " + it.toTag() } ?: ""}")
 }
 
 private fun theoryTag(ts: List<TheoryParam>): String =
