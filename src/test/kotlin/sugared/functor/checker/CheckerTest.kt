@@ -1263,6 +1263,13 @@ class CheckerTest {
     }
 
     @Test
+    fun `根文档 伴生命题 f三角 - 调用后注入下文供后续前件`() {
+        // f() 的伴生命题 f<>，规定 f<> → 下文：调用后注入 p，后续函数前件 p 自动满足（error 语义）
+        val src = "fun f(): <1 = 1> { }\nfun g(): Null<1 = 1> { }\nfun main() { f()\ng() }"
+        assertTrue(ok(src), "调用 f() 注入后件 1 = 1，g 的调用前件应自动满足")
+    }
+
+    @Test
     fun `根文档 为命题 e阶T - 自然命题 x 属Nat 证明`() {
         val src = "@impure fun main() { var x = 1\n∴ x : Nat }"
         assertTrue(ok(src), "var x = 1 → 注入 x : Nat 自然命题，∴ x : Nat 应成立")
