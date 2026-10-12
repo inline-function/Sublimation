@@ -228,16 +228,17 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
                     val sig = syms.classes[consSlot.first]?.members?.firstOrNull { it.name == name }
                     return sig?.retType ?: syntheticT("约束方法${consSlot.first}.$name")
                 }
-                val res = resolveDict(name, selfT, if (moduleTree == null) null else visiblePaths)
-                if (res != null) {
-                    dictHits[c] = res.dictName
-                    // HKT 点号式 `xs.map(f)`：接收者 xs 在 kind 应用位（fa），codegen 按此重排（非首参位）
-                    if (hktKindPos >= 0) hktKindPosHits[c] = hktKindPos
-                    res.entry.fn
-                } else {
-                    // v1.1 集合方法糖：`o.m(args)` 且 m 是同名自由函数（首参类型匹配接收者）→ 脱糖为 m(o, args)
-                    val sugarFn = methodSugar(name, selfT, fieldCallee, c)
-                    if (sugarFn != null) sugarFn else return syntheticT("无实例$name")
+                // v3.0：优先自由函数方法糖（含 ext 扩展方法；typeclass 声明的同名成员不再劫持——只有 class 无 impl 时报 E-NO-INSTANCE），
+                // 未命中再走类型类字典（dict）。两者都无 → 报告无实例。
+                val sugarFn = methodSugar(name, selfT, fieldCallee, c)
+                if (sugarFn != null) sugarFn else run {
+                    val res = resolveDict(name, selfT, if (moduleTree == null) null else visiblePaths)
+                    if (res != null) {
+                        dictHits[c] = res.dictName
+                        // HKT 点号式 `xs.map(f)`：接收者 xs 在 kind 应用位（fa），codegen 按此重排（非首参位）
+                        if (hktKindPos >= 0) hktKindPosHits[c] = hktKindPos
+                        res.entry.fn
+                    } else return syntheticT("无实例$name")
                 }
             } else null
         }

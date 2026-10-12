@@ -377,6 +377,8 @@ fun toResult[T, E](o: Optional[T], e: E): Result[T, E] = when(o) {
 class Collection {
     fun contains[T](element: T): Bool
     fun size(): Nat
+    // isEmpty ⇔ size() = 0
+    fun isEmpty(): Bool
 }
 impl Collection for List[a] {
     fun contains[T](element: T): Bool = when (self) {
@@ -387,6 +389,7 @@ impl Collection for List[a] {
         Nil -> 0
         Cons(_, t) -> 1 + t.size()
     }
+    fun isEmpty(): Bool = self.size() == 0
 }
 impl Collection for Set[a] {
     fun contains[T](element: T): Bool = when (self) {
@@ -397,6 +400,7 @@ impl Collection for Set[a] {
         SetNil -> 0
         SetCons(_, t) -> 1 + t.size()
     }
+    fun isEmpty(): Bool = self.size() == 0
 }
 impl Collection for Map[k, v] {
     fun contains[T](element: T): Bool = when (self) {
@@ -407,6 +411,7 @@ impl Collection for Map[k, v] {
         MapNil -> 0
         MapCons(_, _, t) -> 1 + t.size()
     }
+    fun isEmpty(): Bool = self.size() == 0
 }
 impl Collection for Optional[a] {
     fun contains[T](element: T): Bool = when (self) {
@@ -417,6 +422,7 @@ impl Collection for Optional[a] {
         Some(_) -> 1
         None -> 0
     }
+    fun isEmpty(): Bool = self.size() == 0
 }
 impl Collection for Result[a, e] {
     fun contains[T](element: T): Bool = when (self) {
@@ -427,6 +433,7 @@ impl Collection for Result[a, e] {
         Ok(_) -> 1
         Err(_) -> 0
     }
+    fun isEmpty(): Bool = self.size() == 0
 }
 
 // ---------- v3.0 第三批 4.3：Tuple 类型族（决策 61/62）----------
@@ -446,8 +453,14 @@ impl Tuple for SingleTuple[a] {
 impl Tuple for (a, b) {
     fun size(): Nat = 2
     fun isEmpty(): Bool = false
+
 }
 impl Tuple for (a, b, c) {
     fun size(): Nat = 3
     fun isEmpty(): Bool = false
+}
+
+// ---------- Functor 型类（高阶类型）：map 统一入口（方法糖优先自由函数，实施理见 CallCheck sugar-first）----------
+class Functor[F[_]] {
+    fun map[A, B](fa: F[A], f: (A) => B): F[B]
 }
