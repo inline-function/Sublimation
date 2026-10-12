@@ -19,74 +19,6 @@ internal data class CoverShape(val vars: List<String>, val conjs: List<Prop>)
  * 导致 MP 触发不了（工程规范 I-3）；就地生成天然带正确类型，无需 ∀/MP。
  * 与分支命题的 ∃ 变量名不同，靠 PropLogic.alphaEq 匹配（I-5）。
  */
-/** 深化上下文系统：区间覆盖穷尽判定。goal 须为 `(n in (a..b)) ∨ …` 的纯区间析取链，
- *  前提（Γ）给出同一变量 n 的全域区间 `n ∈ (l..r)`——各分支区间按数值相邻衔接、
- *  首尾覆盖全域时判穷尽（template when：0..10 ∧ 11..20 ∧ 21..30 覆盖 0..30）。
- *  任何非数字/非 in 区间形态 → 返回 false（走通用证明器，保持既有保守行为）。 */
-internal fun Checker.rangeExhaustive(premises: List<Prop>, goal: Prop): Boolean {
-    val ranges = ArrayList<LongArray>()
-    var subjName: String? = null
-    fun rangeAtomOf(rg: Expr): LongArray? {
-        if (rg !is PAtom || rg.head != ".." || rg.terms.size != 2) return null
-        val lo = (rg.terms[0] as? IntLit)?.value?.toLongOrNull() ?: return null
-        val hi = (rg.terms[1] as? IntLit)?.value?.toLongOrNull() ?: return null
-        return longArrayOf(lo, hi)
-    }
-    fun rangeBinOf(rg: Expr): LongArray? {
-        if (rg !is BinExpr || rg.op != "..") return null
-        val lo = (rg.left as? IntLit)?.value?.toLongOrNull() ?: return null
-        val hi = (rg.right as? IntLit)?.value?.toLongOrNull() ?: return null
-        return longArrayOf(lo, hi)
-    }
-    fun rangeBounds(rg: Expr): LongArray? = rangeAtomOf(rg) ?: rangeBinOf(rg)
-    fun collect(p: Prop): Boolean { return when (p) {
-        is POr -> collect(p.a) && collect(p.b)
-        is PAtom -> {
-            if (p.head != "in" || p.terms.size != 2) return false
-            val s = p.terms[0] as? NameRef ?: return false
-            if (subjName != null && subjName != s.name) return false
-            subjName = s.name
-            val rb = rangeBounds(p.terms[1]) ?: return false
-            ranges.add(rb)
-            true
-        }
-        else -> false
-    } }
-    if (!collect(goal)) return false
-    val name = subjName ?: return false
-    val domainF = premises.firstNotNullOfOrNull { p ->
-        if (p is PAtom && p.head == "in" && p.terms.size == 2 && (p.terms[0] as? NameRef)?.name == name)
-            rangeBounds(p.terms[1]) else null
-    }
-    // 深化：无 `x in (l..r)` 事实时，从同一变量的不等式对（x ≥ l 且 x ≤ r）组合出全域域——
-    // 前提为自然命题（score ≥ 0 / score ≤ 100）的无主题 when 区间穷尽（show.grade() 案例）
-    val domain = domainF ?: run {
-        var lo: Long? = null; var hi: Long? = null
-        for (p in premises) {
-            if (p !is PAtom || p.terms.size != 2) continue
-            if ((p.terms[0] as? NameRef)?.name != name) continue
-            val v = (p.terms[1] as? IntLit)?.value?.toLongOrNull() ?: continue
-            when (p.head) {
-                ">=", "≥" -> lo = maxOf(lo ?: v, v)
-                ">" -> lo = maxOf(lo ?: v + 1, v + 1)
-                "<=", "≤" -> hi = minOf(hi ?: v, v)
-                "<" -> hi = minOf(hi ?: v - 1, v - 1)
-            }
-        }
-        if (lo != null && hi != null) longArrayOf(lo, hi) else null
-    }
-    if (domain == null) return false
-    val sorted = ranges.sortedBy { it[0] }
-    if (sorted.isEmpty() || sorted[0][0] > domain[0]) return false
-    var cur = sorted[0][0]
-    for (rg in sorted) {
-        if (rg[0] > cur) return false
-        if (rg[1] >= domain[1]) return true
-        cur = maxOf(cur, rg[1] + 1)
-    }
-    return cur > domain[1]
-}
-
 internal fun Checker.enumCoverageDisj(subj: Expr, subjT: Type): Prop? {
     if (!syms.enums.containsKey(subjT.name)) return null
     covCounter = 0
@@ -229,7 +161,7 @@ internal fun Checker.checkWhen(e: WhenExpr, f: Frame, pure: Boolean): Type {
     var exhaustive = sawCatchAll || branchProps.isEmpty() || run {
         val goal = branchProps.reduce { a, b -> POr(a, b) }
         val premises = if (cov != null) f.allFacts() + cov else f.allFacts()
-        rangeExhaustive(premises, goal) || proveOrDeep(premises, goal)
+        proveOrDeep(premises, goal)   // 通用证明器：含线性算术通道（界收紧 + 析取反证）
     }
     if (!exhaustive && cov != null && bindingCovered(e.arms, subjT!!)) exhaustive = true
     // v2.0 和类型：联合主题的 is 分支覆盖全部变体 → 密封（Kotlin when(is T) 穷尽）

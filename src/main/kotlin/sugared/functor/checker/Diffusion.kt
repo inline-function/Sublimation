@@ -226,6 +226,10 @@ internal fun Checker.proveOrDeep(gamma: List<Prop>, goal: Prop): Boolean {
     if (goal is PAtom && goal.head == ":" && goal.terms.size == 2 && typeJudgement(gamma, goal)) return true
     // v3.0 特性 1：目标含变量但等式事实可归约到常量（var m = 5 事实 → 目标 ≠<m,0> 归约为 ≠<5,0>）
     reduceGoalToConstants(gamma, goal)?.let { rg -> constAtomValue(rg)?.let { return it } }
+    // 通用线性算术通道（整数域）：不等式/等式/in 区间的蕴含与析取反证——when 穷尽、前件、∴ 一律受益。
+    // 只有判 **成立** 才短路；判不成立（false）或形态不支持（null）都继续走通用证明器，
+    // 避免掐断等式图/等量代换等其它推理（P4 链式代换回归教训）。
+    if (ArithProve.proves(gamma, goal) == true) return true
     val res = prover.proves(globalFacts + gamma, goal)
     if (prover.deepAborted) d.error("E-DEEP-SATURATION", "", "命题 ${PropLogic.render(goal)} 超出饱和深度 $maxSatDepth")
     return res
