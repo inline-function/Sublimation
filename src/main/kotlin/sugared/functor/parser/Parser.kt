@@ -116,6 +116,7 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
             when (cur().kind) {
                 Kind.FUN -> DeclEntry(parseFun(anns))
                 Kind.STRUCT -> if ("mut" in anns) DeclEntry(parseStruct(anns)) else { pos = save; throw noTopLevel() }
+                Kind.CLASS -> if ("mut" in anns) DeclEntry(parseClass(anns)) else { pos = save; throw noTopLevel() }
                 else -> { pos = save; throw noTopLevel() }
             }
         }
@@ -127,7 +128,7 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
 
     fun parseDecl(): Decl = when (cur().kind) {
         Kind.FUN -> parseFun(emptyList())
-        Kind.CLASS -> parseClass()
+        Kind.CLASS -> parseClass(emptyList())
         Kind.STRUCT -> parseStruct(emptyList())
         Kind.ENUM -> parseEnum()
         Kind.IMPL -> parseImpl()
@@ -701,7 +702,7 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         return AnonFunExpr(name, theory, params, preps, ret, posts, body)
     }
 
-    private fun parseClass(): ClassDecl {
+    private fun parseClass(anns: List<String> = emptyList()): ClassDecl {
         at(Kind.CLASS)
         val name = nameToken()
         val theory = if (peek(Kind.LBRACKET)) parseTheory() else emptyList()
@@ -720,7 +721,7 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
             }
         }
         // P3（v2.1）：无成员类型类可省略花括号 `class C`，等价 `class C {}`
-        if (!peek(Kind.LBRACE)) return ClassDecl(name, theory, emptyList(), parents)
+        if (!peek(Kind.LBRACE)) return ClassDecl(name, theory, anns, emptyList(), parents)
         at(Kind.LBRACE)
         val members = ArrayList<FunDecl>()
         while (!peek(Kind.RBRACE)) {
@@ -730,7 +731,7 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
             members += parseFun(anns)
         }
         at(Kind.RBRACE)
-        return ClassDecl(name, theory, members, parents)
+        return ClassDecl(name, theory, anns, members, parents)
     }
 
     private fun parseStruct(anns: List<String> = emptyList()): StructDecl {

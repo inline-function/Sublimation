@@ -35,6 +35,8 @@ data class FunDecl(
 data class ClassDecl(
     val name: String,
     val theory: List<TheoryParam>,
+    /** root doc《副作用与可变性控制》：@mut 类型类——允许声明可变（@mut）函数 */
+    val annotations: List<String> = emptyList(),
     val members: List<FunDecl>,
     val parents: List<Type> = emptyList(),
     override val pos: String = "",

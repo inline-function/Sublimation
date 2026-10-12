@@ -226,6 +226,7 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
                     consHits[c] = consSlot.second
                     // 返回类型取类成员签名（约束类型类方法通常返回具体类型，如 show → Str）
                     val sig = syms.classes[consSlot.first]?.members?.firstOrNull { it.name == name }
+                    checkMutMethodView(name, selfT, sig?.annotations ?: emptyList(), c)
                     return sig?.retType ?: syntheticT("约束方法${consSlot.first}.$name")
                 }
                 // v3.0：优先自由函数方法糖（含 ext 扩展方法；typeclass 声明的同名成员不再劫持——只有 class 无 impl 时报 E-NO-INSTANCE），
@@ -234,6 +235,7 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
                 if (sugarFn != null) sugarFn else run {
                     val res = resolveDict(name, selfT, if (moduleTree == null) null else visiblePaths)
                     if (res != null) {
+                        checkMutMethodView(name, selfT, res.entry.fn.annotations, c)
                         dictHits[c] = res.dictName
                         // HKT 点号式 `xs.map(f)`：接收者 xs 在 kind 应用位（fa），codegen 按此重排（非首参位）
                         if (hktKindPos >= 0) hktKindPosHits[c] = hktKindPos
@@ -262,6 +264,12 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
     // v2.1（限制解开）：非糖方法路径（类型类方法）——free 形态首实参即接收者，已在 effTypes 剔除；
     // field 形态接收者由 codegen 填 __self，显式实参（effArgs/effTypes）按 fn.params（不含 self）直接配对。
     return checkFnCall(fn, name, c, f, pure, effArgs, effTypes, isMethodPath)
+}
+
+/** root doc《副作用与可变性控制》可变类型（67-79 行）：@mut 函数只能在类型可变时调用——接收者须持有 @mut 视图。 */
+private fun Checker.checkMutMethodView(name: String, selfT: Type, fnAnnos: List<String>, c: CallExpr) {
+    if ("mut" in fnAnnos && selfT !is MutType)
+        d.error("E-NOT-MUT", c.pos, "可变方法 " + name + " 只能在类型可变时调用——接收者须持有 @mut 视图（如 var o : @mut T）")
 }
 
 // ============ v1.1 集合方法糖：`o.m(args)` → 同名自由函数 m(o, args) ============

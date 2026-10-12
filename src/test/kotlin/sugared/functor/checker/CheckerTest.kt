@@ -1137,6 +1137,14 @@ class CheckerTest {
     }
 
     @Test
+    fun `rootdoc 可变方法需@mut视图`() {
+        val bad = "@mut struct A(@mut x: Nat)\n@mut class T { @mut fun bump(n: Nat): Nat }\nimpl T for A { @mut fun bump(n: Nat): Nat { return n } }\n@impure fun main() { var a : A = A(0)\n a.bump(1) }"
+        assertTrue(errs(bad).contains("E-NOT-MUT"), "ES=" + errs(bad).joinToString(" | "))
+        val good = "@mut struct A(@mut x: Nat)\n@mut class T { @mut fun bump(n: Nat): Nat }\nimpl T for A { @mut fun bump(n: Nat): Nat { return n } }\n@impure fun main() { var a : @mut A = A(0)\n a.bump(1)\n print(a.x) }"
+        assertTrue(ok(good), "ES=" + errs(good).joinToString(" | ") + " WS=" + warns(good).joinToString(" | "))
+    }
+
+    @Test
     fun `P9 when 解构的结构递归通过`() {
         // 验收②：len(t) 的 t 由 when(xs){Cons(_, t)} 解构而来，是 xs 的语法子项 → 放行
         val src = "enum List[T] { Nil(), Cons(T, List[T]) }\n" +
