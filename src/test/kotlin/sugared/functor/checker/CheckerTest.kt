@@ -1,8 +1,6 @@
 package sugared.functor.checker
 
-import sugared.functor.ast.FunType
-import sugared.functor.ast.TupleType
-import sugared.functor.ast.namedT
+import sugared.functor.ast.*
 import sugared.functor.parser.parseSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -1343,6 +1341,50 @@ class CheckerTest {
     fun `自然命题 Nat 局部变量蕴含 n 大于等于 0`() {
         val src = "fun need()<n ≥ 0>: Null { }\n@impure fun main() { var n = 3\nneed() }"
         assertTrue(ok(src), "var n = 3（Nat）注入 n ≥ 0 自然命题，前件 n ≥ 0 自动满足（error 语义）")
+    }
+
+    @Test
+    fun `算术通道 常量表达式折叠`() {
+        val src = "@impure fun main() { ∵ 1 + 1 = 2\n∴ 2 = 1 + 1\n∴ 1 + 2 * 3 = 7\n∴ 10 / 2 = 5 }"
+        assertTrue(ok(src), "常量算术 +-*/ 折叠后判定真值")
+    }
+
+    @Test
+    fun `算术通道 移项与系数`() {
+        // 直接构造：前提 {x + 1 ≤ 5, 2y ≤ 6} → 目标 x ≤ 4 / y ≤ 3（调用内部 ArithProve）
+        val x = NameRef("x"); val y = NameRef("y")
+        val rel = { op: String, l: Expr, r: Expr -> PropLogic.fromExpr(BinExpr(op, l, r)) }
+        val gamma = listOf(
+            rel("<=", BinExpr("+", x, IntLit("1")), IntLit("5")),
+            rel("<=", BinExpr("*", IntLit("2"), y), IntLit("6")),
+        )
+        assertTrue(ArithProve.proves(gamma, rel("<=", x, IntLit("4"))) == true, "x + 1 ≤ 5 移项 → x ≤ 4")
+        assertTrue(ArithProve.proves(gamma, rel("<=", y, IntLit("3"))) == true, "2y ≤ 6 系数 → y ≤ 3")
+    }
+
+    @Test
+    fun `算术通道 差分传递`() {
+        val a = NameRef("a"); val b = NameRef("b"); val c = NameRef("c")
+        val rel = { op: String, l: Expr, r: Expr -> PropLogic.fromExpr(BinExpr(op, l, r)) }
+        val gamma = listOf(rel("<=", a, b), rel("<=", b, c))
+        assertTrue(ArithProve.proves(gamma, rel(">=", b, a)) == true, "a ≤ b 蕴含 b ≥ a（否定差分负环）")
+        assertTrue(ArithProve.proves(gamma, rel("<=", a, c)) == true, "a ≤ b ∧ b ≤ c → a ≤ c（传递）")
+        assertTrue(ArithProve.proves(gamma, rel("<=", c, a)) == false, "反例：a ≤ b ∧ b ≤ c 推不出 c ≤ a")
+    }
+
+    @Test
+    fun `算术通道 常量折叠`() {
+        val rel = { op: String, l: Expr, r: Expr -> PropLogic.fromExpr(BinExpr(op, l, r)) }
+        assertTrue(ArithProve.proves(emptyList(), rel("=", BinExpr("+", IntLit("1"), IntLit("1")), IntLit("2"))) == true, "1 + 1 = 2")
+        assertTrue(ArithProve.proves(emptyList(), rel("=", BinExpr("*", IntLit("2"), IntLit("3")), IntLit("6"))) == true, "2 * 3 = 6")
+        assertTrue(ArithProve.proves(emptyList(), rel("=", IntLit("1"), IntLit("2"))) == false, "1 ≠ 2")
+        assertTrue(ArithProve.proves(emptyList(), rel(">", IntLit("2"), IntLit("3"))) == false, "2 不大于 3")
+    }
+
+    @Test
+    fun `算术通道 ∵∴ 常量链路`() {
+        val src = "@impure fun main() { var x = 3\n∵ x + 1 ≤ 5\n∴ x ≤ 4 }"
+        assertTrue(ok(src), "var x = 3 → ∵ x+1≤5 由常量界可证 → ∴ x ≤ 4（宿主链路）")
     }
 
     @Test

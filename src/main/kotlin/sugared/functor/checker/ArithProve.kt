@@ -1,143 +1,310 @@
 package sugared.functor.checker
 
 import sugared.functor.ast.*
+import java.lang.Math.floorDiv
 
 /**
- * 通用线性算术判定（整数域）：证明器的**通用算术通道**，不是任何语法形态的特例。
+ * 通用线性算术判定（整数域）：证明器的**通用算术通道**，覆盖绝大部分算术证明需求。
  *
- * 前提（gamma）解析为「单变量线性界约束」的合取：`x ≤ c` `x < c` `x ≥ c` `x > c` `x = c`
- * `x in (a..b)`，以及这些原子的否定（`¬(x ≤ c)` ⟺ `x ≥ c+1` 等，整数语义）。
- * 目标为单个线性原子，或它们的析取链（when 穷尽的分支条件、if[p] 不可能分支、守卫蕴含、
- * 前件/∵∴ 的算术目标）时，用**界收紧（arc consistency）**判定蕴含：
+ * 把约束（前提与目标）归一化为线性形式 `Σ cᵢ·vᵢ ≤ C`（移项、常数折叠、系数提取）：
+ *  - 常量折叠：`1 + 2 * 3`、`x + 1` 的常数部分一律折叠；
+ *  - 单变量（含系数）：`2x ≤ 6 → x ≤ 3`、`x + 1 ≤ 5 → x ≤ 4`、`-x ≥ 5 → x ≤ -5`
+ *    收紧绝对界 [lo, hi]（整数上/下取整，两端安全）；
+ *  - 双变量 ±1（差分）：`x ≤ y`、`x ≤ y + 2` 建相对界边，Bellman–Ford 传播
+ *    （`x ≤ y ∧ y ≤ 5 → x ≤ 5` 即传递链）；
+ *  - 否定蕴含：单原子目标 G 判「Γ ∧ ¬G」不可满足——¬G 为单变量界时用界判、
+ *    差分时并入图判负环；等式的双向界（`x = y` 双向差分边、`x = c` 夹定）；
+ *  - 析取目标（when 穷尽）：单变量叶子域差集反证（原子否定为区间补）。
  *
- *  - 单原子目标：前提收紧出 x 的域 [lo, hi]，检查域是否蕴含目标界；
- *  - 析取目标：反证「前提 ∧ ¬p₁ ∧ … ∧ ¬pₙ」——每个变量域为空即不可满足 → 前提 ⊨ ∨pᵢ。
- *
- * 全部是整数上的有序域推理，与具体语法（in 区间还是不等式）无关。
- * 返回三态：true=蕴含成立；false=判定为不蕴含；null=形态不在本片段内（由既有证明器接管）。
+ * 健全性：无法表达的约束**跳过**（少用前提只会更保守）；片段内前提矛盾（负环/界空）
+ * → 蕴含一切（爆炸原则）。返回三态：true=成立；false=判定不成立；null=形态不在片段内。
  */
 internal object ArithProve {
 
     private const val POS_INF = Long.MAX_VALUE
     private const val NEG_INF = Long.MIN_VALUE
 
-    fun proves(gamma: List<Prop>, goal: Prop): Boolean? {
-        val lo = HashMap<String, Long>()
-        val hi = HashMap<String, Long>()
-        if (!collectBounds(gamma, lo, hi)) return null
-        return when (goal) {
-            is PAtom -> atomImplied(goal, lo, hi)
-            is POr -> disjRefute(goal, lo, hi)
-            else -> null
+    /** 线性项：Σ coefs·var + c（系数右操作数在 minus 中取负——单边键也要反号） */
+    private data class Lin(val coefs: Map<String, Long>, val c: Long) {
+        operator fun plus(o: Lin): Lin {
+            val m = LinkedHashMap(coefs)
+            o.coefs.forEach { (k, v) -> m[k] = (m[k] ?: 0L) + v }
+            return Lin(m, c + o.c)
         }
+        operator fun minus(o: Lin): Lin {
+            val m = LinkedHashMap(coefs)
+            o.coefs.forEach { (k, v) -> m[k] = (m[k] ?: 0L) - v }
+            return Lin(m, c - o.c)
+        }
+        fun neg() = Lin(coefs.mapValues { -it.value }, -c)
     }
 
-    /** 收集前提界约束；无法表达的前提原子（x = self.x、x : T、复合命题等）**跳过**而非放弃——
-     *  少用前提只会更保守（可能少证、不会假证），算术通道应尽量可用。 */
-    private fun collectBounds(gamma: List<Prop>, lo: MutableMap<String, Long>, hi: MutableMap<String, Long>): Boolean {
-        fun walk(body: Prop) {
-            when (body) {
-                is PAnd -> { walk(body.a); walk(body.b) }
-                is PAtom -> applyBound(body, lo, hi, negate = false)
-                is PNot -> (body.p as? PAtom)?.let { applyBound(it, lo, hi, negate = true) }
+    private fun Lin.scale(k: Long): Lin = Lin(if (coefs.isEmpty()) coefs else coefs.mapValues { it.value * k }, c * k)
+
+    internal fun proves(gamma: List<Prop>, goal: Prop): Boolean? {
+        val ctx = Ctx()
+        // 无法表达的前提（x = self.x、x : T 等）**跳过**：少用前提只更保守，绝不因无关事实放弃通道
+        fun walk(p: Prop) {
+            when (p) {
+                is PAnd -> { walk(p.a); walk(p.b) }
+                is PAtom -> ctx.consume(p)
+                is PNot -> (p.p as? PAtom)?.let { ctx.consumeNeg(it) }
                 else -> {}
             }
         }
         gamma.forEach { walk(it) }
-        return true
-    }
-
-    /** 应用一条界约束（negate=true 取反）。无法单界表达 → false（整体放弃本通道）。 */
-    private fun applyBound(p: PAtom, lo: MutableMap<String, Long>, hi: MutableMap<String, Long>, negate: Boolean): Boolean {
-        if (p.terms.size != 2) return false
-        val v = (p.terms[0] as? NameRef)?.name ?: return false
-        if (p.head == "in") {
-            if (negate) return false   // ¬(x ∈ (a..b)) 是两析取，超出单界片段
-            val r = rangeOf(p.terms[1]) ?: return false
-            if (!tight(lo, hi, v, ">=", r[0], negate = false)) return false
-            return tight(lo, hi, v, "<=", r[1], negate = false)
-        }
-        val c = (p.terms[1] as? IntLit)?.value?.toLongOrNull() ?: return false
-        return tight(lo, hi, v, p.head, c, negate)
-    }
-
-    /** 收紧界；已空（lo > hi）返回 false（本通道不可用，走旧证明器更安全——但 bound 应用冲突即前提本身矛盾，
-     *  多数场景表示我们的片段判定不了，返回 false 放弃）。 */
-    private fun tight(lo: MutableMap<String, Long>, hi: MutableMap<String, Long>, v: String, op: String, c: Long, negate: Boolean): Boolean {
-        val (fop, fc) = when {
-            !negate -> op to c
-            op == "<=" -> ">=" to c + 1
-            op == "<" -> ">=" to c
-            op == ">=" -> "<=" to c - 1
-            op == ">" -> "<=" to c
-            op == "=" -> {
-                // ¬(x = c)：c 已在前提域内则无法单界表达（要分两支）；域外恒真无约束力
-                val loV = lo[v]; val hiV = hi[v]
-                val inside = (loV == null || loV <= c) && (hiV == null || c <= hiV)
-                return !inside
-            }
-            else -> return false
-        }
-        if ((fop == "<" || fop == "<=") && fc == NEG_INF) return false
-        if ((fop == ">" || fop == ">=") && fc == POS_INF) return false
-        val curLo = lo[v] ?: NEG_INF
-        val curHi = hi[v] ?: POS_INF
-        return when (fop) {
-            "<=", "≤", "<" -> {
-                val h = if (fop == "<") fc - 1 else fc
-                if (h < curLo) return false
-                val nh = if (h < curHi) h else curHi
-                hi[v] = nh; true
-            }
-            ">=", "≥", ">" -> {
-                val l = if (fop == ">") fc + 1 else fc
-                if (l > curHi) return false
-                val nl = if (l > curLo) l else curLo
-                lo[v] = nl; true
-            }
-            else -> false
-        }
-    }
-
-    private fun rangeOf(e: Expr): LongArray? = when (e) {
-        is PAtom -> if (e.head == ".." && e.terms.size == 2) consts(e.terms[0], e.terms[1]) else null
-        is BinExpr -> if (e.op == "..") consts(e.left, e.right) else null
-        else -> null
-    }
-
-    private fun consts(a: Expr, b: Expr): LongArray? {
-        val av = (a as? IntLit)?.value?.toLongOrNull() ?: return null
-        val bv = (b as? IntLit)?.value?.toLongOrNull() ?: return null
-        return longArrayOf(av, bv)
-    }
-
-    /** 单原子目标蕴含：前提域 ⊆ 目标约束。null=目标形态超片段（走旧证明器）。 */
-    private fun atomImplied(g: PAtom, lo: Map<String, Long>, hi: Map<String, Long>): Boolean? {
-        if (g.terms.size != 2) return null
-        val v = (g.terms[0] as? NameRef)?.name ?: return null
-        val loV = lo[v] ?: NEG_INF
-        val hiV = hi[v] ?: POS_INF
-        if (g.head == "in") {
-            val r = rangeOf(g.terms[1]) ?: return null
-            return loV >= r[0] && hiV <= r[1]
-        }
-        val c = (g.terms[1] as? IntLit)?.value?.toLongOrNull() ?: return null
-        return when (g.head) {
-            "<=", "≤", "<" -> hi.containsKey(v) && hiV <= (if (g.head == "<") c - 1 else c)
-            ">=", "≥", ">" -> lo.containsKey(v) && loV >= (if (g.head == ">") c + 1 else c)
-            "=", "==" -> lo.containsKey(v) && hi.containsKey(v) && loV <= c && c <= hiV
+        if (ctx.contradicted) return true
+        if (bfHasNegCycle(ctx.edges)) return true
+        return when (goal) {
+            is PAtom -> atomImplied(goal, ctx)
+            is POr -> disjRefute(goal, ctx)
             else -> null
         }
     }
 
-    /** 析取目标域差集反证：前提之域（各变量界收紧）减去每个叶子分支区间，剩余为空 ⇒ 前提 ⊨ ∨pᵢ。
-     *  任意单变量「区间/不等式/相等」叶子均可参与（in 只是其中一种写法）——通用算术，非区间特例。 */
-    private fun disjRefute(goal: POr, lo: Map<String, Long>, hi: Map<String, Long>): Boolean? {
+    // ============ 前提收集 ============
+
+    private class Ctx {
+        val lo = HashMap<String, Long>()
+        val hi = HashMap<String, Long>()
+        val edges = ArrayList<LongArray>()   // [from, to, w]：to ≤ from + w
+        var contradicted = false
+    }
+
+    private fun Ctx.consume(p: PAtom): Boolean {
+        if (p.terms.size != 2) return false
+        if (p.head == "in") {
+            val r = rangeOf(p.terms[1]) ?: return false
+            return applyRel(">=", linOf(p.terms[0]) ?: return false, constLin(r[0]), this) &&
+                applyRel("<=", linOf(p.terms[0]) ?: return false, constLin(r[1]), this)
+        }
+        val l = linOf(p.terms[0]) ?: return false
+        val r = linOf(p.terms[1]) ?: return false
+        return applyRel(p.head, l, r, this)
+    }
+
+    private fun Ctx.consumeNeg(p: PAtom): Boolean {
+        if (p.terms.size != 2) return false
+        val l = linOf(p.terms[0]) ?: return false
+        val r = linOf(p.terms[1]) ?: return false
+        val rel = when (p.head) {
+            "<=", "≤" -> ">"
+            "<" -> ">="
+            ">=", "≥" -> "<"
+            ">" -> "<="
+            else -> return false
+        }
+        return applyRel(rel, l, r, this)
+    }
+
+    /** 应用 G：L op R（整数域）。返回 false=不可表达（跳过）；矛盾置 ctx.contradicted。 */
+    private fun applyRel(op: String, l: Lin, r: Lin, ctx: Ctx): Boolean {
+        val d = l.minus(r)
+        val (coefs, base) = when (op) {
+            "<=", "≤" -> d.coefs to d.c
+            "<" -> d.coefs to d.c + 1
+            ">=", "≥" -> d.neg().coefs to -d.c
+            ">" -> d.neg().coefs to -d.c + 1
+            "=", "==" -> {
+                if (!applyRel("<=", l, r, ctx)) return false
+                return applyRel(">=", l, r, ctx)
+            }
+            else -> return false
+        }
+        if (base == NEG_INF || base == POS_INF) return false
+        val C = -base
+        if (coefs.isEmpty()) {
+            if (C < 0) { ctx.contradicted = true }
+            return true
+        }
+        if (coefs.size == 1) {
+            val (v, a) = coefs.entries.first()
+            if (a > 0) {
+                val b = floorDivSafe(C, a) ?: return false
+                val cur = ctx.hi[v] ?: POS_INF
+                ctx.hi[v] = minOf(cur, b)
+            } else {
+                val b = ceilDivSafe(C, a) ?: return false
+                val cur = ctx.lo[v] ?: NEG_INF
+                ctx.lo[v] = maxOf(cur, b)
+            }
+            val loV = ctx.lo[v] ?: NEG_INF; val hiV = ctx.hi[v] ?: POS_INF
+            if (loV > hiV) ctx.contradicted = true
+            return true
+        }
+        if (coefs.size == 2) {
+            val es = coefs.entries.toList()
+            val (v1, a1) = es[0]; val (v2, a2) = es[1]
+            ctx.edges += when {
+                a1 == 1L && a2 == -1L -> longArrayOf(v2idx(v2).toLong(), v2idx(v1).toLong(), C)
+                a1 == -1L && a2 == 1L -> longArrayOf(v2idx(v1).toLong(), v2idx(v2).toLong(), C)
+                else -> return false
+            }
+            return true
+        }
+        return false
+    }
+
+    private fun constLin(c: Long) = Lin(emptyMap(), c)
+
+    private fun linOf(e: Expr): Lin? {
+        return when (e) {
+            is IntLit -> constLin(e.value.toLongOrNull() ?: return null)
+            is NameRef -> Lin(mapOf(e.name to 1L), 0)
+            is UniExpr -> if (e.op == "-" || e.op == "−") linOf(e.operand)?.neg() else null
+            is BinExpr -> when (e.op) {
+                "+" -> (linOf(e.left) ?: return null) + (linOf(e.right) ?: return null)
+                "-", "−" -> (linOf(e.left) ?: return null) - (linOf(e.right) ?: return null)
+                "*" -> {
+                    val a = linOf(e.left) ?: return null; val b = linOf(e.right) ?: return null
+                    val ka = constOf(a); val kb = constOf(b)
+                    when {
+                        ka != null -> b.scale(ka)
+                        kb != null -> a.scale(kb)
+                        else -> null
+                    }
+                }
+                "/" -> {
+                    val a = constOf(linOf(e.left) ?: return null) ?: return null
+                    val b = constOf(linOf(e.right) ?: return null)
+                    if (b == null || b == 0L) return null
+                    if (a % b != 0L) return null
+                    constLin(a / b)
+                }
+                else -> null
+            }
+            else -> null
+        }
+    }
+
+    private fun constOf(l: Lin): Long? = if (l.coefs.isEmpty()) l.c else null
+
+    private fun evalConst(e: Expr): Long? {
+        return when (e) {
+            is IntLit -> e.value.toLongOrNull()
+            is UniExpr -> if (e.op == "-" || e.op == "−") -(evalConst(e.operand) ?: return null) else null
+            is BinExpr -> {
+                val a = evalConst(e.left) ?: return null; val b = evalConst(e.right) ?: return null
+                when (e.op) {
+                    "+" -> a + b; "-", "−" -> a - b
+                    "*" -> a * b
+                    "/" -> if (b == 0L) null else a / b
+                    else -> null
+                }
+            }
+            else -> null
+        }
+    }
+
+    private fun floorDivSafe(a: Long, b: Long): Long? {
+        if (b == 0L) return null
+        if (a == NEG_INF && b == -1L) return null
+        return floorDiv(a, b)
+    }
+
+    private fun ceilDivSafe(a: Long, b: Long): Long? {
+        if (b == 0L) return null
+        if (a == NEG_INF) return null
+        return -floorDiv(-a, b)
+    }
+
+    // ============ Bellman–Ford（差分图负环检测） ============
+
+    private var nameIndex = HashMap<String, Int>()
+    private var nameList = ArrayList<String>()
+    private fun v2idx(name: String): Int {
+        if (name !in nameIndex) { nameIndex[name] = nameList.size; nameList.add(name) }
+        return nameIndex[name]!!
+    }
+
+    private fun bfHasNegCycle(edges: List<LongArray>): Boolean {
+        if (edges.isEmpty()) return false
+        val n = nameIndex.size
+        val dist = LongArray(n)
+        repeat(n) {
+            var changed = false
+            for (e in edges) {
+                val u = e[0].toInt(); val v = e[1].toInt(); val w = e[2]
+                val nd = if (dist[u] == POS_INF) POS_INF else dist[u] + w
+                if (nd < dist[v]) { dist[v] = nd; changed = true }
+            }
+            if (!changed) return false
+        }
+        return true
+    }
+
+    // ============ 目标判定 ============
+
+    private fun atomImplied(g: PAtom, ctx: Ctx): Boolean? {
+        if (g.terms.size != 2) return null
+        if (g.head == "in") {
+            val r = rangeOf(g.terms[1]) ?: return null
+            val v = (g.terms[0] as? NameRef)?.name ?: return null
+            val loV = ctx.lo[v] ?: NEG_INF; val hiV = ctx.hi[v] ?: POS_INF
+            return (loV == NEG_INF || loV >= r[0]) && (hiV == POS_INF || hiV <= r[1])
+        }
+        val ca = evalConst(g.terms[0]); val cb = evalConst(g.terms[1])
+        if (ca != null && cb != null) return when (g.head) {
+            "=", "==" -> ca == cb; "!=", "≠" -> ca != cb
+            "<" -> ca < cb; ">" -> ca > cb
+            "<=", "≤" -> ca <= cb; ">=", "≥" -> ca >= cb
+            else -> null
+        }
+        if (g.head == "=" || g.head == "==") {
+            val v = (g.terms[0] as? NameRef)?.name ?: return null
+            val c = (g.terms[1] as? IntLit)?.value?.toLongOrNull() ?: return null
+            val loV = ctx.lo[v] ?: return null; val hiV = ctx.hi[v] ?: return null
+            return loV <= c && c <= hiV
+        }
+        val l = linOf(g.terms[0]) ?: return null
+        val r = linOf(g.terms[1]) ?: return null
+        val negCtx = Ctx().apply { lo.putAll(ctx.lo); hi.putAll(ctx.hi); edges.addAll(ctx.edges) }
+        return negateAndApply(g.head, l, r, negCtx)
+    }
+
+    private fun negateAndApply(op: String, l: Lin, r: Lin, ctx: Ctx): Boolean? {
+        // ¬(L op R) 直接归一为一条 coefs·v ≤ C（C 即约束右手边，不再取负）：
+        //   ¬(Σ+c≤0) = -Σ ≤ c-1； ¬(Σ+c≤-1) = -Σ ≤ c； ¬(Σ+c≥0) = Σ ≤ -c-1； ¬(Σ+c≥1) = Σ ≤ -c
+        val d = l.minus(r)
+        val (coefs, C) = when (op) {
+            "<=", "≤" -> d.neg().coefs to d.c - 1
+            "<" -> d.neg().coefs to d.c
+            ">=", "≥" -> d.coefs to -d.c - 1
+            ">" -> d.coefs to -d.c
+            else -> return null
+        }
+        if (coefs.isEmpty()) return C >= 0
+        if (coefs.size == 1) {
+            val (v, a) = coefs.entries.first()
+            if (a > 0) {
+                val b = floorDivSafe(C, a) ?: return null
+                val loV = ctx.lo[v] ?: NEG_INF
+                return loV != NEG_INF && loV > b
+            } else {
+                val b = ceilDivSafe(C, a) ?: return null
+                val hiV = ctx.hi[v] ?: POS_INF
+                return hiV != POS_INF && hiV < b
+            }
+        }
+        if (coefs.size == 2) {
+            val es = coefs.entries.toList()
+            val (v1, a1) = es[0]; val (v2, a2) = es[1]
+            when {
+                a1 == 1L && a2 == -1L -> { ctx.edges += longArrayOf(v2idx(v2).toLong(), v2idx(v1).toLong(), C); }
+                a1 == -1L && a2 == 1L -> { ctx.edges += longArrayOf(v2idx(v1).toLong(), v2idx(v2).toLong(), C); }
+                else -> return null
+            }
+            return bfHasNegCycle(ctx.edges)
+        }
+        return null
+    }
+
+    private fun disjRefute(goal: POr, ctx: Ctx): Boolean? {
         val leaves = flattenOr(goal)
         if (leaves.isEmpty()) return null
         val v = (leaves[0] as? PAtom)?.terms?.firstOrNull() as? NameRef ?: return null
-        if (leaves.any { p -> (p as? PAtom)?.terms?.firstOrNull() != v }) return null   // 多变量/空项析取：非本片段
-        var segs: MutableList<LongArray> = mutableListOf(longArrayOf(lo[v.name] ?: NEG_INF, hi[v.name] ?: POS_INF))
+        if (leaves.any { p -> (p as? PAtom)?.terms?.firstOrNull() != v }) return null
+        var segs: MutableList<LongArray> = mutableListOf(longArrayOf(ctx.lo[v.name] ?: NEG_INF, ctx.hi[v.name] ?: POS_INF))
         for (p in leaves) {
             val r = leafRange(p) ?: return null
             val out = ArrayList<LongArray>()
@@ -152,18 +319,36 @@ internal object ArithProve {
         return false
     }
 
-    /** 叶子原子 → 该变量的一个区间 [l, r]（含 ±∞ 端）；无法表达返回 null。in 只是其中一种写法。 */
     private fun leafRange(p: Prop): LongArray? {
         val pa = p as? PAtom ?: return null
         if (pa.terms.size != 2) return null
         if (pa.head == "in") return rangeOf(pa.terms[1])
-        val c = (pa.terms[1] as? IntLit)?.value?.toLongOrNull() ?: return null
+        val l = linOf(pa.terms[0]) ?: return null
+        val r = linOf(pa.terms[1]) ?: return null
+        val d = l.minus(r)
+        if (d.coefs.size != 1) return null
+        val (_, a) = d.coefs.entries.first()
+        val c = constOf(d) ?: return null
         return when (pa.head) {
-            "<=", "<" -> if (c == NEG_INF) null else longArrayOf(NEG_INF, if (pa.head == "<") c - 1 else c)
-            ">=", ">" -> if (c == POS_INF) null else longArrayOf(if (pa.head == ">") c + 1 else c, POS_INF)
+            "<=", "≤" -> if (a == 1L) longArrayOf(NEG_INF, c) else longArrayOf(ceilDivSafe(c, a) ?: return null, POS_INF)
+            "<" -> if (a == 1L) longArrayOf(NEG_INF, c - 1) else longArrayOf(ceilDivSafe(c + 1, a) ?: return null, POS_INF)
+            ">=", "≥" -> if (a == 1L) longArrayOf(c, POS_INF) else longArrayOf(NEG_INF, floorDivSafe(c, a) ?: return null)
+            ">" -> if (a == 1L) longArrayOf(c + 1, POS_INF) else longArrayOf(NEG_INF, floorDivSafe(c - 1, a) ?: return null)
             "=", "==" -> longArrayOf(c, c)
             else -> null
         }
+    }
+
+    private fun rangeOf(e: Expr): LongArray? = when (e) {
+        is PAtom -> if (e.head == ".." && e.terms.size == 2) consts(e.terms[0], e.terms[1]) else null
+        is BinExpr -> if (e.op == "..") consts(e.left, e.right) else null
+        else -> null
+    }
+
+    private fun consts(a: Expr, b: Expr): LongArray? {
+        val av = (a as? IntLit)?.value?.toLongOrNull() ?: return null
+        val bv = (b as? IntLit)?.value?.toLongOrNull() ?: return null
+        return longArrayOf(av, bv)
     }
 
     private fun flattenOr(p: Prop): List<Prop> = when (p) {
