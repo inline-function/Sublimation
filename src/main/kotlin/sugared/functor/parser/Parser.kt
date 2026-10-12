@@ -813,7 +813,7 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
     // ---------- 表达式 ----------
 
     private fun parseExpr(angle: Boolean, stopArrow: Boolean = false): Expr {
-        var left = parseUnary(stopArrow)
+        var left = parseUnary(stopArrow, angle)
         while (true) {
             val t = cur()
             // when 守卫在首个顶层 `->` 处停（`->` 既是蕴含中缀又是分支箭头，蕴含需加括号）
@@ -913,19 +913,19 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         return e
     }
 
-    private fun parseUnary(stopArrow: Boolean = false): Expr {
+    private fun parseUnary(stopArrow: Boolean = false, angle: Boolean = false): Expr {
         val t = cur()
-        if (t.kind == Kind.MINUS) { pos++; return UniExpr("-", parseUnary(stopArrow)) }
-        if (t.kind == Kind.BANG) { pos++; return UniExpr("!", parseUnary(stopArrow)) }
-        if (t.kind == Kind.LNOT) { pos++; return UniExpr("¬", parseUnary(stopArrow)) }
-        if (t.kind == Kind.IDENT && t.text == "not") { pos++; return UniExpr("¬", parseUnary(stopArrow)) }
+        if (t.kind == Kind.MINUS) { pos++; return UniExpr("-", parseUnary(stopArrow, angle)) }
+        if (t.kind == Kind.BANG) { pos++; return UniExpr("!", parseUnary(stopArrow, angle)) }
+        if (t.kind == Kind.LNOT) { pos++; return UniExpr("¬", parseUnary(stopArrow, angle)) }
+        if (t.kind == Kind.IDENT && t.text == "not") { pos++; return UniExpr("¬", parseUnary(stopArrow, angle)) }
         // 命题括号：`<e>`（根文档 def 等价右式/量词体的 `¬<a = b>`）——GT 由 parseAngleList 消费
         if (t.kind == Kind.LT) { val inner = parseAngleList(); if (inner.size == 1) return inner[0] }
-        return parsePostfix(stopArrow)
+        return parsePostfix(stopArrow, angle)
     }
 
-    private fun parsePostfix(stopArrow: Boolean = false): Expr {
-        var e = parsePrimary()
+    private fun parsePostfix(stopArrow: Boolean = false, angle: Boolean = false): Expr {
+        var e = parsePrimary(angle)
         while (true) {
             val t = cur()
             when {
@@ -1078,7 +1078,7 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         return -1
     }
 
-    private fun parsePrimary(): Expr {
+    private fun parsePrimary(angle: Boolean = false): Expr {
         val t = cur()
         return when {
             t.kind == Kind.INT -> { pos++; IntLit(t.text) }
@@ -1111,10 +1111,10 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
             t.kind == Kind.IF -> parseIf()
             t.kind == Kind.WHEN -> parseWhen()
             t.kind == Kind.FORALL || t.kind == Kind.EXISTS || t.kind == Kind.EXISTS1 ->
-                parseQuant(next().text)
+                parseQuant(next().text, angle)
             t.kind == Kind.IDENT && t.text in asciiQuant &&
                 toks.getOrNull(pos + 1)?.kind == Kind.IDENT ->
-                parseQuant(asciiQuant.getValue(next().text))
+                parseQuant(asciiQuant.getValue(next().text), angle)
             t.kind == Kind.IDENT || t.kind == Kind.SYMBOL -> { pos++; NameRef(t.text) }
             t.kind in symbolCallStart && toks.getOrNull(pos + 1)?.kind == Kind.LPAREN -> {
                 val op = next().text
@@ -1131,19 +1131,18 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         }
     }
 
-    private fun parseQuant(q: String): Expr {
+    private fun parseQuant(q: String, angle: Boolean): Expr {
+        // 根文档：多变量量词 `∀ a b c . body`（DOT 前都是名字；逗号分隔兼容 `∀ a, b .`）
         val names = ArrayList<String>()
-        while (true) {
+        while (cur().kind != Kind.DOT) {
             names += nameToken()
             if (peek(Kind.COMMA)) {
-                    pos++
-                    if (peek(Kind.RPAREN) || peek(Kind.RBRACKET) || peek(Kind.RBRACE)) break   // v3.0：尾随逗号
-                    continue
-                }
-            break
+                pos++
+                if (peek(Kind.RPAREN) || peek(Kind.RBRACKET) || peek(Kind.RBRACE)) break   // v3.0：尾随逗号
+            }
         }
         at(Kind.DOT)
-        return QuantExpr(q, names, parseExpr(angle = false))
+        return QuantExpr(q, names, parseExpr(angle = angle))
     }
 
     private fun parseIf(): Expr {

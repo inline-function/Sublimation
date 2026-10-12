@@ -1301,6 +1301,15 @@ class CheckerTest {
     }
 
     @Test
+    fun `根文档 自动证明矩阵 - 多变量定理笛卡尔实例化`() {
+        // 自动证明：∀ a b . a + b = b + a 与关键表达式 {1,2,1+2,2+1} 组合出 1+2=2+1，供 need 前件
+        val src = "@theorem fun t(): <∀ a b . a + b = b + a>\n" +
+            "fun need()<1 + 2 = 2 + 1>: Null { }\n" +
+            "@impure fun main() { t()\nneed() }"
+        assertTrue(ok(src), "公理 t 注入 ∀ab 定理，矩阵实例化 a=1,b=2 → 1+2=2+1，need 前件自动满足")
+    }
+
+    @Test
     fun `根文档 为命题 e阶T - 自然命题 x 属Nat 证明`() {
         val src = "@impure fun main() { var x = 1\n∴ x : Nat }"
         assertTrue(ok(src), "var x = 1 → 注入 x : Nat 自然命题，∴ x : Nat 应成立")

@@ -320,12 +320,26 @@ class Prover(private val maxRounds: Int = 3, private val maxDepth: Int = 4) {
         val facts = PropLogic.normalizeFacts(gamma).toMutableSet()
         val extraTerms = extraGoals.flatMap { PropLogic.groundTerms(listOf(it)) }
         repeat(maxRounds) {
-            val terms = (PropLogic.groundTerms(facts.toList()) + extraTerms).distinctBy { PropLogic.termTag(it) }
+            val termsAll = (PropLogic.groundTerms(facts.toList()) + extraTerms).distinctBy { PropLogic.termTag(it) }
+            // 根文档·自动证明矩阵：多变量定理与关键表达式排列组合（p<a,a> p<a,b> p<b,a> p<b,b>）
+            // 防爆炸：笛卡尔候选截断到 24、定理参数量 ≤ 3；单变量保留全量（原行为）
+            val terms = termsAll   // 单变量实例化候选：全量不动（截断会漏掉 tagged<7> 这类目标项）
+            val termsMatrix = if (termsAll.size <= 24) termsAll else termsAll.take(24)
             var changed = false
             for (fa in facts.filterIsInstance<PForall>().toList()) {
-                if (fa.names.size != 1) continue
-                for (t in terms) {
-                    PropLogic.normalizeFacts(listOf(PropLogic.substProp(fa.body, mapOf(fa.names[0] to t))))
+                if (fa.names.size > 3) continue
+                val pool = if (fa.names.size == 1) terms else termsMatrix
+                val subs: List<Map<String, Expr>> = when {
+                    fa.names.isEmpty() -> emptyList()
+                    fa.names.size == 1 -> pool.map { mapOf(fa.names[0] to it) }
+                    else -> {
+                        var acc: List<List<Expr>> = listOf(emptyList())
+                        repeat(fa.names.size) { acc = acc.flatMap { comb -> pool.map { comb + it } } }
+                        acc.map { comb -> fa.names.zip(comb).toMap() }
+                    }
+                }
+                for (sub in subs) {
+                    PropLogic.normalizeFacts(listOf(PropLogic.substProp(fa.body, sub)))
                         .forEach { if (facts.add(it)) changed = true }
                 }
             }
