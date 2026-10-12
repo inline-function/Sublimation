@@ -145,6 +145,8 @@ internal object ArithProve {
         return false
     }
 
+    private fun cloneCtx(ctx: Ctx) = Ctx().apply { lo.putAll(ctx.lo); hi.putAll(ctx.hi); edges.addAll(ctx.edges) }
+
     private fun constLin(c: Long) = Lin(emptyMap(), c)
 
     private fun linOf(e: Expr): Lin? {
@@ -213,13 +215,14 @@ internal object ArithProve {
     private var nameIndex = HashMap<String, Int>()
     private var nameList = ArrayList<String>()
     private fun v2idx(name: String): Int {
-        if (name !in nameIndex) { nameIndex[name] = nameList.size; nameList.add(name) }
+        if (name !in nameIndex) { nameIndex[name] = nameList.size + 1; nameList.add(name) }
         return nameIndex[name]!!
     }
+    private const val ZERO = 0
 
     private fun bfHasNegCycle(edges: List<LongArray>): Boolean {
         if (edges.isEmpty()) return false
-        val n = nameIndex.size
+        val n = nameIndex.size + 1
         val dist = LongArray(n)
         repeat(n) {
             var changed = false
@@ -231,6 +234,32 @@ internal object ArithProve {
             if (!changed) return false
         }
         return true
+    }
+
+    /** 绝对上界：把单变量界转为 ZERO 边（v ≤ h → ZERO→v 权 h；v ≥ l → v→ZERO 权 -l），
+     *  与差分边一起从 ZERO 出发求最短路——x = y = z ≤ 7 时 upper(x) = 7（等式链传播）。 */
+    private fun upperBound(ctx: Ctx): Map<String, Long> {
+        val edges = ArrayList<LongArray>(ctx.edges.size + ctx.lo.size + ctx.hi.size + 1)
+        edges.addAll(ctx.edges)
+        ctx.hi.forEach { (v, h) -> if (h != POS_INF) edges += longArrayOf(ZERO.toLong(), v2idx(v).toLong(), h) }
+        ctx.lo.forEach { (v, l) -> if (l != NEG_INF) edges += longArrayOf(v2idx(v).toLong(), ZERO.toLong(), -l) }
+        if (edges.isEmpty()) return emptyMap()
+        val n = nameIndex.size + 1
+        val dist = LongArray(n) { POS_INF }
+        dist[ZERO] = 0L
+        for (k in 0 until n - 1) {   // 前提无负环（已由 bfHasNegCycle 排除），BF 收敛
+            var changed = false
+            for (e in edges) {
+                val u = e[0].toInt(); val v = e[1].toInt(); val w = e[2]
+                if (dist[u] == POS_INF) continue
+                val nd = dist[u] + w
+                if (nd < dist[v]) { dist[v] = nd; changed = true }
+            }
+            if (!changed) break
+        }
+        val out = HashMap<String, Long>()
+        nameList.forEachIndexed { i, nm -> val d = dist[i + 1]; if (d != POS_INF) out[nm] = d }
+        return out
     }
 
     // ============ 目标判定 ============
@@ -251,10 +280,18 @@ internal object ArithProve {
             else -> null
         }
         if (g.head == "=" || g.head == "==") {
-            val v = (g.terms[0] as? NameRef)?.name ?: return null
-            val c = (g.terms[1] as? IntLit)?.value?.toLongOrNull() ?: return null
-            val loV = ctx.lo[v] ?: return null; val hiV = ctx.hi[v] ?: return null
-            return loV <= c && c <= hiV
+            val lc = evalConst(g.terms[0]); val rc = evalConst(g.terms[1])
+            if (lc != null && rc != null) return lc == rc
+            val l = linOf(g.terms[0]) ?: return null
+            val r = linOf(g.terms[1]) ?: return null
+            // 两变量（或含系数）等式：判 ≤ 与 ≥ 两向蕴含都成立 ⟺ 相等
+            val okLe = negateAndApply("<=", l, r, cloneCtx(ctx))
+            val okGe = negateAndApply(">=", l, r, cloneCtx(ctx))
+            return when {
+                okLe == true && okGe == true -> true
+                okLe == null || okGe == null -> null
+                else -> false
+            }
         }
         val l = linOf(g.terms[0]) ?: return null
         val r = linOf(g.terms[1]) ?: return null
@@ -282,8 +319,8 @@ internal object ArithProve {
                 return loV != NEG_INF && loV > b
             } else {
                 val b = ceilDivSafe(C, a) ?: return null
-                val hiV = ctx.hi[v] ?: POS_INF
-                return hiV != POS_INF && hiV < b
+                val up = upperBound(ctx)[v] ?: POS_INF
+                return up != POS_INF && up < b
             }
         }
         if (coefs.size == 2) {

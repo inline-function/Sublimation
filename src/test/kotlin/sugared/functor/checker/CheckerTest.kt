@@ -1388,6 +1388,30 @@ class CheckerTest {
     }
 
     @Test
+    fun `算术通道 等式链代换`() {
+        val x = NameRef("x"); val y = NameRef("y"); val z = NameRef("z")
+        val rel = { op: String, l: Expr, r: Expr -> PropLogic.fromExpr(BinExpr(op, l, r)) }
+        val gamma = listOf(
+            rel("=", x, y), rel("=", y, z),
+            rel("<=", z, IntLit("7")),
+        )
+        assertTrue(ArithProve.proves(gamma, rel("<=", x, IntLit("7"))) == true, "x = y = z ≤ 7 → x ≤ 7（等式双向差分边 + 传递）")
+        assertTrue(ArithProve.proves(gamma, rel("=", x, z)) == true, "x = y ∧ y = z → x = z")
+        assertTrue(ArithProve.proves(gamma, rel("<=", IntLit("8"), x)) == false, "反例：推不出 x ≥ 8")
+    }
+
+    @Test
+    fun `算术通道 in 区间目标`() {
+        val x = NameRef("x")
+        val rel = { op: String, l: Expr, r: Expr -> PropLogic.fromExpr(BinExpr(op, l, r)) }
+        val gamma = listOf(rel("=", x, IntLit("2")), rel(">=", x, IntLit("0")), rel("<=", x, IntLit("5")))
+        val inGoal = BinExpr("in", x, BinExpr("..", IntLit("1"), IntLit("3")))
+        assertTrue(ArithProve.proves(gamma, PropLogic.fromExpr(inGoal)) == true, "x = 2 且 0 ≤ x ≤ 5 → x ∈ (1..3)")
+        val outGoal = BinExpr("in", x, BinExpr("..", IntLit("3"), IntLit("9")))
+        assertTrue(ArithProve.proves(gamma, PropLogic.fromExpr(outGoal)) == false, "反例：x = 2 ∉ (3..9)")
+    }
+
+    @Test
     fun `IfProp 双支同结论特性六`() {
         val src = "@classic\n@impure fun main() { if[y = 2] { ∴ 1 = 1 } else { ∴ 1 = 1 } }"
         assertTrue(ok(src), "挂载 core.classic 后双支证明同结论应通过")
