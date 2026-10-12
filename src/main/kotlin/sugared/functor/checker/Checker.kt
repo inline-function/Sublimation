@@ -239,6 +239,22 @@ class Checker(
         else -> e
     }
 
+    /** 根文档·this：上下文中 `this` 指代函数本体——内联替换为函数名（`p<this>` → `p<f>`）。 */
+    private fun substThisExpr(e: Expr, fnName: String): Expr = when (e) {
+        is NameRef -> if (e.name == "this") NameRef(fnName) else e
+        is BinExpr -> e.copy(left = substThisExpr(e.left, fnName), right = substThisExpr(e.right, fnName))
+        is UniExpr -> e.copy(operand = substThisExpr(e.operand, fnName))
+        is CallExpr -> e.copy(callee = substThisExpr(e.callee, fnName), args = e.args.map { substThisExpr(it, fnName) })
+        is InstExpr -> e.copy(target = substThisExpr(e.target, fnName), terms = e.terms.map { substThisExpr(it, fnName) })
+        is TupleExpr -> e.copy(items = e.items.map { substThisExpr(it, fnName) })
+        is FieldExpr -> e.copy(target = substThisExpr(e.target, fnName))
+        is ElvisExpr -> e.copy(left = substThisExpr(e.left, fnName), right = substThisExpr(e.right, fnName))
+        is SafeCallExpr -> e.copy(target = substThisExpr(e.target, fnName), args = e.args.map { substThisExpr(it, fnName) })
+        is StructCtorExpr -> e.copy(assigns = e.assigns.map { it.first to substThisExpr(it.second, fnName) })
+        is LambdaExpr -> e.copy(body = substThisExpr(e.body, fnName))
+        else -> e
+    }
+
     internal fun checkFun(fn: FunDecl, selfT: Type? = null) {
         val pure = "impure" !in fn.annotations
         val f = Frame(null)
@@ -310,8 +326,9 @@ class Checker(
             }
         }
         // 决策 65（T6）：上/下文里的 $n 替换为参数名，并发提示级诊断；越界报错。
-        val preRewritten = fn.preps.map { rewriteDollarN(it, fn.params, "前件") }
-        val postRewritten = fn.posts.map { rewriteDollarN(it, fn.params, "后件") }
+        // 根文档·this：`p<this>` 中 this 指代函数本体（内联为函数名）；随后继 $n 重写
+        val preRewritten = fn.preps.map { substThisExpr(rewriteDollarN(it, fn.params, "前件"), fn.name) }
+        val postRewritten = fn.posts.map { substThisExpr(rewriteDollarN(it, fn.params, "后件"), fn.name) }
         preRewritten.forEach { f.inject(PropLogic.fromExpr(it)) }
         if (fn.body == null) { paramTypes = savedParamTypes; return }
         // v1.1 返回类型：显式标注取之；省略时——块体 = Null（Kotlin Unit 语义），表达式体 = 推导。

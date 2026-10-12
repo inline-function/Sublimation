@@ -134,6 +134,37 @@ private fun Checker.expandDefined(goal: Prop): Prop? {
     return null
 }
 
+/** 根文档·纯度结构相等：表达式是否含 @impure 函数调用（值不确定，不参与结构相等/自反）。
+ *  方法/字典分发（FieldExpr 上无法定符号）保守视为不纯——匹配根文档「不上价值的调用不参与」。 */
+private fun Checker.containsImpureCall(e: Expr): Boolean = when (e) {
+    is CallExpr -> {
+        val calleeImpure = when (val c = e.callee) {
+            is NameRef -> syms.findFun(c.name)?.annotations?.contains("impure") == true
+            is FieldExpr -> syms.findFun(c.name)?.annotations?.contains("impure") == true   // x.f() 方法下沉为自由函数
+            else -> true   // 动态计算 callee（λ 槽位等）：无法静态判定 → 保守不纯
+        }
+        calleeImpure || e.args.any { containsImpureCall(it) } || e.namedArgs.values.any { containsImpureCall(it) }
+    }
+    is BinExpr -> containsImpureCall(e.left) || containsImpureCall(e.right)
+    is UniExpr -> containsImpureCall(e.operand)
+    is ElvisExpr -> containsImpureCall(e.left) || containsImpureCall(e.right)
+    is SafeCallExpr -> containsImpureCall(e.target) || e.args.any { containsImpureCall(it) }
+    is FieldExpr -> containsImpureCall(e.target)
+    is InstExpr -> containsImpureCall(e.target) || e.terms.any { containsImpureCall(it) }
+    is TupleExpr -> e.items.any { containsImpureCall(it) }
+    is StructCtorExpr -> e.assigns.any { containsImpureCall(it.second) }
+    is ByExpr -> containsImpureCall(e.target) || e.props.any { containsImpureCall(it) }
+    is VarExpr -> containsImpureCall(e.value)
+    is LambdaExpr -> containsImpureCall(e.body)
+    is AnonFunExpr -> e.body?.let { containsImpureCall(it) } == true
+    is BlockExpr -> e.stmts.any { s -> (s as? ExprStmt)?.let { containsImpureCall(it.expr) } == true }
+    is IfExpr -> containsImpureCall(e.cond) || containsImpureCall(e.thenBlock) || e.elseBlock?.let { containsImpureCall(it) } == true
+    is WhenExpr -> e.subject?.let { containsImpureCall(it) } == true ||
+        e.arms.any { a -> a.guard?.let { containsImpureCall(it) } == true || containsImpureCall(a.body) }
+    is QuantExpr -> containsImpureCall(e.body)
+    else -> false
+}
+
 /** `e : T` 类型归属判定（根文档·为命题）：
  *  ① gamma 有同结构 `x : T` 事实（变量/参数注入）；② 构造表达式 → 其结构体类型与 T 同名义。 */
 private fun Checker.typeJudgement(gamma: List<Prop>, goal: PAtom): Boolean {
@@ -186,6 +217,11 @@ internal fun Checker.proveOrDeep(gamma: List<Prop>, goal: Prop): Boolean {
     constAtomValue(goal)?.let { return it }
     // 根文档·为命题 `e : T`：字面量类型判定
     constTypeAtom(goal)?.let { return it }
+    // 根文档·纯度结构相等：不纯表达式（含 @impure 调用）不参与结构相等/自反——仅显式注入的事实可证
+    if (goal is PAtom && (goal.head == "=" || goal.head == "==") && goal.terms.size == 2 &&
+        (containsImpureCall(goal.terms[0]) || containsImpureCall(goal.terms[1]))) {
+        return gamma.any { it == goal }
+    }
     // 根文档·为命题 `e : T`：变量/参数注入的 `x : T` 事实匹配，或构造表达式结果类型归属
     if (goal is PAtom && goal.head == ":" && goal.terms.size == 2 && typeJudgement(gamma, goal)) return true
     // v3.0 特性 1：目标含变量但等式事实可归约到常量（var m = 5 事实 → 目标 ≠<m,0> 归约为 ≠<5,0>）

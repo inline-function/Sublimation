@@ -1287,6 +1287,20 @@ class CheckerTest {
     }
 
     @Test
+    fun `根文档 不纯表达式不参与结构相等`() {
+        // 纯度结构相等：@impure 调用结果不确定——print("ok") = print("ok") 不自动为真（∵ 证不出 → 封存警告）
+        val src = "@impure fun log(n: Nat): Nat = n\n@impure fun main() { ∵ log(1) = log(1) }"
+        assertTrue(warns(src).any { it.contains("E-CANNOT-PROVE") }, "log(1) = log(1) 含不纯调用，不得凭结构相等成立，∵ 证不出(warn)")
+    }
+
+    @Test
+    fun `根文档 this 指代函数本体`() {
+        // this 在上下文中指代函数本体：后件 this = f 内联为 f = f 自反成立（error 语义：body 后件需自证）
+        val src = "fun f(): <this = f> { }"
+        assertTrue(ok(src), "this 内联为函数名 f，后件 f = f 自反成立")
+    }
+
+    @Test
     fun `根文档 为命题 e阶T - 自然命题 x 属Nat 证明`() {
         val src = "@impure fun main() { var x = 1\n∴ x : Nat }"
         assertTrue(ok(src), "var x = 1 → 注入 x : Nat 自然命题，∴ x : Nat 应成立")
