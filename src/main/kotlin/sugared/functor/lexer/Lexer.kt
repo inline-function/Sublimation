@@ -137,6 +137,8 @@ class Lexer(private val src: String, private val fileName: String) {
             '∧' -> Kind.LAND; '∨' -> Kind.LOR; '¬' -> Kind.LNOT
             '→' -> Kind.IMPLIES; '↔' -> Kind.EQUIV; '≠' -> Kind.NEQ
             '⊤' -> Kind.TOP; '⊥' -> Kind.BOT
+            // 深化上下文系统：∈/≥/≤ 与 ascii 同为两参/比较命题符号（∈ 归一 in，见 Parser 831）
+            '∈' -> Kind.IN; '≥' -> Kind.GE; '≤' -> Kind.LE
             '∵' -> Kind.BECAUSE; '∴' -> Kind.THEREFORE
             else -> throw LexFailure(fileName, line, col, "非法字符 '$c'")
         }

@@ -38,7 +38,7 @@ object PropLogic {
             "<->", "↔" -> PIff(fromExpr(e.left), fromExpr(e.right))
             "&", "∧" -> PAnd(fromExpr(e.left), fromExpr(e.right))
             "|", "∨" -> POr(fromExpr(e.left), fromExpr(e.right))
-            else -> PAtom(e.op, listOf(e.left, e.right))  // 比较、两参解糖 `q ○ p`=`○<q,p>`
+            else -> PAtom(if (e.op == "∈") "in" else e.op, listOf(e.left, e.right))  // 比较、两参解糖 `q ○ p`=`○<q,p>`；∈ 归一 in
         }
         is NameRef -> PAtom(e.name, emptyList())
         is InstExpr -> {

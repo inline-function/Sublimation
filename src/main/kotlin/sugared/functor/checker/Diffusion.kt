@@ -106,6 +106,12 @@ private fun reduceGoalToConstants(gamma: List<Prop>, goal: Prop): Prop? {
 }
 
 internal fun Checker.proveOrDeep(gamma: List<Prop>, goal: Prop): Boolean {
+    // PImp 目标：前提常量属实 → 只需证后件；前提常量假 → 蕴含恒真
+    if (goal is PImp) {
+        val av = constAtomValue(goal.a)
+        if (av == false) return true
+        if (av == true) return proveOrDeep(gamma, goal.b)
+    }
     // v3.0 特性 1：常量原子真值直接判定（不动推理规则；构造位伴生命题字面量场景）
     constAtomValue(goal)?.let { return it }
     // v3.0 特性 1：目标含变量但等式事实可归约到常量（var m = 5 事实 → 目标 ≠<m,0> 归约为 ≠<5,0>）
@@ -133,7 +139,9 @@ internal fun Checker.searchTheorems(q: Prop, depth: Int, local: Map<String, FunD
         d.error("E-THEOREM-SEARCH-DEPTH", "", "定理搜索深度超限（默认两跳）：目标 " + PropLogic.render(q))
         return false
     }
-    for (t in (local.values + syms.theorems.values)) {
+    val cross = if (moduleTree == null) emptyList() else
+        visiblePaths.mapNotNull { allSymbols[it] }.flatMap { it.theorems.values }
+    for (t in (local.values + syms.theorems.values + cross)) {
         // v3.0 特性 7：局部函数（∀ 引入）的形参是绑定变元——并入 theory 参数一起做合一
         val vars = (t.theory.mapNotNull { when (it) { is TypeParam -> it.name; is PropParam -> it.name; else -> null } } + t.params.map { it.name }).toSet()
         for (post in t.posts) {

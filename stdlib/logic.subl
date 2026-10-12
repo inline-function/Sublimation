@@ -1,0 +1,25 @@
+// core.logic —— 常用定理库
+// 定理 = 无副作用(无 @impure/@mut) + 返回 Null 的函数：由判据自动登记进定理空间（∴ 搜索），无需 @theorem 注解。
+// 无体声明 = 公理(签名即定理)；有体定理照常生成运行时代码(无法用 unchecked 逃过纯度检查)。
+// 区间伴生命题形态（.. 的语义）：∀n. n ∈ (l..r) → n ≥ l 与 n ≤ r
+
+fun rangeLowerBound[x, l, r]: Null <x ∈ (l..r) -> x >= l>
+fun rangeUpperBound[x, l, r]: Null <x ∈ (l..r) -> x <= r>
+
+// 序关系
+fun leqRefl[a]: Null <a <= a>
+fun leqTrans[a, b, c]: Null <a <= b & b <= c -> a <= c>
+
+// 合取分解 / 合取引入
+fun andLeft[p, q]: Null <p & q -> p>
+fun andRight[p, q]: Null <p & q -> q>
+fun andIntro[p, q]: Null <p -> (q -> (p & q))>
+
+// 蕴含 / 三段论
+fun modusPonens[p, q]: Null <p & (p -> q) -> q>
+
+// 区间再划分（when 区间穷尽的模块化证明块）：x ∈ (l..r) 且 x ≤ m，则 x ∈ (l..m)
+fun rangeSplitRight[x, l, m, r]: Null <x ∈ (l..r) & x <= m -> x ∈ (l..m)>
+
+// 自然数
+fun natNonNeg[n]: Null <n >= 0>
