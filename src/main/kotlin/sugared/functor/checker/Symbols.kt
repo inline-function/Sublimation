@@ -30,8 +30,9 @@ internal fun Checker.registerPureFacts() {
     }
 }
 
+@Deprecated("已废弃（2026-10-12 用户拍板）：不再调用生成 immutable<T> 事实；待 MutType 维度按《副作用与可变性控制.md》恢复")
 internal fun Checker.registerImmutableFacts() {
-    // v2.0 可变性（副作用 §4.2，I-1..I-7）：immutable<T> 自动注入——不动点传播。
+    // ⚠️ 废弃保留：v2.0 可变性（副作用 §4.2，I-1..I-7）：immutable<T> 自动注入——不动点传播。
     // 基础类型天然 immutable（I-1）；基本类型名之外的 Bool/Null/Optional…由 prelude 注册，此处只算结构/枚举。
     // 规则：
     //  - I-2/I-3：struct/enum 无 @mut 字段 且 所有字段类型 immutable → 该类型 immutable
@@ -77,7 +78,9 @@ internal fun Checker.registerImmutableFacts() {
 
 /** v2.0 可变性（副作用 §6.2）：非 @mut 形参自动获得 untouch<param>——函数不修改该参数。
  *  与 pure<f> 同机制，注册到 globalFacts 供调用点/函数体推理引用。 */
+@Deprecated("已废弃（2026-10-12 用户拍板）：不再调用生成 untouch<param> 事实；待 MutType 维度按《副作用与可变性控制.md》恢复")
 internal fun Checker.registerUntouchFacts() {
+    // ⚠️ 废弃保留：v2.0 可变性（副作用 §6.2）：非 @mut 形参自动 untouch<param>。恢复条件同 immutable。
     for ((name, fn) in syms.funs) {
         fn.params.forEach { p ->
             // 非 @mut 参数 → untouch<p.name>；@mut 参数默认不获得（§6.2：调用者保守假设"会被改"）

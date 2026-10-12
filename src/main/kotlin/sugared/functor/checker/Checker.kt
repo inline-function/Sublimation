@@ -167,8 +167,8 @@ class Checker(
         checkImplsFrom(files)
         checkSubTraitParents()          // v2.1 子类型类：父类型类强制（须先实现父类）
         registerPureFacts()
-        registerImmutableFacts()   // v2.0 可变性（§4.2）：immutable<T> 自动判定
-        registerUntouchFacts()     // v2.0 可变性（§6.2）：非 @mut 形参自动 untouch<param>
+        // ⚠️ 2026-10-12 用户拍板：untouch<param> / immutable<T> 两个自然命题**先废弃**（不再生成事实），
+        // 实现保留在 Symbols.kt（标注废弃），待 MutType 类型维度落地后按《副作用与可变性控制.md》再启用。
     }
 
     /** 阶段 C：全部声明体 + 顶层语句（多文件=本模块合并后的一份 FileAst） */
