@@ -1217,6 +1217,17 @@ class CheckerTest {
         val src = "fun LawOfExcludedMiddle[@q]: Null <q ∨ ¬q>\n@impure fun main() { ∴ q ∨ ¬q }"
         assertTrue(ok(src), "定理函数（纯+Null）后件与目标合一应证明")
     }
+    @Test
+    fun `@theorem 标注+擦除+证明位特性五`() {
+        val src = "@theorem fun Triv[p]: Null <p> { unchecked.axiom[p] }\n@impure fun main() { ∴ p }"
+        assertTrue(ok(src), "@theorem 显式标注登记定理；∴ 榜前/合一应证明")
+    }
+
+    @Test
+    fun `@theorem 值级调用禁特性五`() {
+        val src = "@theorem fun Triv[p]: Null <p> { unchecked.axiom[p] }\n@impure fun main() { Triv() }"
+        assertTrue(errs(src).contains("E-THEOREM-VALUE-CALL"), "@theorem 擦除代码，值级调用应报 E-THEOREM-VALUE-CALL")
+    }
 
     @Test
     fun `IfProp 双支同结论特性六`() {

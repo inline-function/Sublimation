@@ -17,7 +17,7 @@ impl Gradable for Student {
             score in (90..100) -> Grade::A
             score in (80..89 ) -> Grade::B
             score in (60..79 ) -> Grade::C
-            else -> Grade::D
+            score in (0 ..59 ) -> Grade::D
         }
 }
 

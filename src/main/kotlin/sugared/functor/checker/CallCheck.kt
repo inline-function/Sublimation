@@ -546,6 +546,10 @@ internal fun Checker.checkFnCall(
         }
     }
 
+    // @theorem 定理函数：编译期擦除，只能用于证明位（∴ 合一/前件供给），值级调用禁止
+    if ("theorem" in fn.annotations)
+        d.error("E-THEOREM-VALUE-CALL", c.pos, "定理函数 $name 编译器擦除其代码，仅供证明使用（∴ 合一/前件），不能值级调用")
+
     // 决策 59：Any 严苛准入——实参含 Any 则调用受限；@tuple 形参只收元组字面量（裸名实参拒）
     if (fn.params.any { syms.expand(it.type).containsAny() } && effTypes.any { it.containsAny() }) {
         d.error("E-ANY-CALL", c.pos, "函数 $name 的调用涉及 Any，推导失效，请手动标注或改用具体类型（决策 59）")

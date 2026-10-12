@@ -351,7 +351,7 @@ private var funRefFree: Set<Expr> = emptySet()
 
     private fun genDecl(decl: Decl) {
         when (decl) {
-            is FunDecl -> genFun(decl)
+            is FunDecl -> if ("theorem" !in decl.annotations) genFun(decl)   // @theorem 定理函数编译期擦除（仅供证明位）
             is StructDecl -> {
                 // O3（决策 69）：字段带声明默认值时，JS 工厂用参数默认值补齐——省略实参即取默认
                 val ps = decl.fields.joinToString(", ") { f ->

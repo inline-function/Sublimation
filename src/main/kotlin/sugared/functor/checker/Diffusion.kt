@@ -121,9 +121,9 @@ internal fun Checker.proveOrDeep(gamma: List<Prop>, goal: Prop): Boolean {
     return res
 }
 
-/** 定理判据：无 @impure、无 @mut 参数、返回 Null（缺省返回类型即 Null）——自动登记进 theorems，无需 @theorem 注解。
- *  有体定理照常生成运行时代码（无法用 unchecked 逃过纯度检查）。 */
+/** 定理判据：`@theorem` 显式标注（强制登记，编译器擦除其代码）或 无 @impure、无 @mut 参数、返回 Null（自动登记，代码照常生成）。 */
 internal fun isTheoremFun(d: FunDecl): Boolean {
+    if ("theorem" in d.annotations) return true
     if ("impure" in d.annotations) return false
     if (d.params.any { "mut" in it.annotations }) return false
     val rt = d.retType
