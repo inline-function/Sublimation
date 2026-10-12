@@ -257,6 +257,9 @@ class Checker(
 
     internal fun checkFun(fn: FunDecl, selfT: Type? = null) {
         val pure = "impure" !in fn.annotations
+        // root doc《副作用与可变性控制》第 39 行：函数参数类型可变（@mut T）时必须标注 @impure
+        if (pure && fn.params.any { syms.expand(it.type) is MutType })
+            d.error("E-IMPURE-REQUIRED", fn.pos, "函数 " + fn.name + " 的参数类型可变（@mut T），必须标注 @impure 才能接受可变视图") 
         val f = Frame(null)
         val tps = tpNamesOf(fn)
         // P9（决策 44）：设置递归停机上下文（函数名/形参/解构血缘按函数隔离）
@@ -491,7 +494,7 @@ class Checker(
                 // 指导§42：var n = 0 注入 n = 0 与 n : T；
                 // 决策35：@mut 变量仅保有自反相等，非自反相等论据（n = 初值）忽略不注入；
                 // root doc 第 9 行：初值引用 @mut 变量时绑定等式不可靠（会变）——同样不注入
-                if (isPureValue(s.value) && !mut && !refsMut(s.value, f)) {
+                if (isPureValue(s.value) && !mut && !refsMut(s.value, f) && !isMutStructType(t)) {
                     f.inject(PAtom("=", listOf(NameRef(s.name), s.value)))
                 }
                 if (isPureValue(s.value) || mut) {
@@ -700,6 +703,13 @@ class Checker(
         if ("mut" !in fld.annotations) { d.error("E-NOT-MUT", tgt.pos, "字段 " + tgt.name + " 不可变（非 @mut 字段），不能赋值——把它标 @mut 或改用局部变量"); return }
         val hasView = rcvType is MutType || f.isMut(rcvName!!)
         if (!hasView) d.error("E-NOT-MUT", tgt.pos, "@mut 字段 " + tgt.name + " 赋值须持有 @mut 视图（变量类型 @mut " + stName + " 或 @mut 变量）")
+    }
+
+    /** root doc 43/65：可变结构体/可变类型不承认与其他表达式的相等命题——其绑定事实不注入上下文。 */
+    private fun isMutStructType(t: Type): Boolean {
+        val nt = if (t is MutType) t.inner else t
+        val n = (nt as? NamedType)?.name ?: return false
+        return syms.structs[n]?.let { "mut" in it.annotations || it.fields.any { "mut" in it.annotations } } == true
     }
 
     private fun Checker.refsMut(e: Expr, f: Frame): Boolean = when (e) {
@@ -1065,7 +1075,7 @@ class Checker(
             f.declareVar(e.name, t, e.pos)
             val mut = "mut" in e.annotations
             if (mut) f.declareMut(e.name)
-            if (isPureValue(e.value) && !mut && !refsMut(e.value, f)) f.inject(PAtom("=", listOf(NameRef(e.name), e.value)))
+            if (isPureValue(e.value) && !mut && !refsMut(e.value, f) && !isMutStructType(t)) f.inject(PAtom("=", listOf(NameRef(e.name), e.value)))
             if (isPureValue(e.value) || mut) f.inject(PAtom(":", listOf(NameRef(e.name), typeToExpr(t))))
             t
         }

@@ -1111,6 +1111,32 @@ class CheckerTest {
     }
 
     @Test
+    fun `rootdoc 可变参数函数必须@impure`() {
+        val bad = "@mut struct T(@mut n: Nat)\nfun f(a: @mut T): Null {}"
+        assertTrue(errs(bad).contains("E-IMPURE-REQUIRED"), "ES=" + errs(bad).joinToString(" | "))
+        val good = "@mut struct T(@mut n: Nat)\n@impure fun f(a: @mut T): Null {}"
+        assertTrue(ok(good), "ES=" + errs(good).joinToString(" | "))
+    }
+
+    @Test
+    fun `rootdoc 可变结构体不承认相等`() {
+        val src = "@mut struct T(@mut n: Nat)\n@impure fun main() { var a = T(0)\n var b = T(0)\n ∵ a = b }"
+        assertTrue(warns(src).any { it.contains("E-CANNOT-PROVE") }, "可变结构体 a=b 不应可证，WS=" + warns(src).joinToString(" | "))
+    }
+
+    @Test
+    fun `rootdoc 可变结构体自反可证`() {
+        val src = "@mut struct T(@mut n: Nat)\n@impure fun main() { var a = T(0)\n ∵ a = a }"
+        assertTrue(ok(src) && warns(src).none { it.contains("E-CANNOT-PROVE") }, "可变结构体 a=a 自反应可证，WS=" + warns(src).joinToString(" | "))
+    }
+
+    @Test
+    fun `rootdoc 不可变结构体相等不受影响`() {
+        val src = "struct S(n: Nat)\n@impure fun main() { var x = S(1)\n var y = x\n ∵ y = x }"
+        assertTrue(ok(src) && warns(src).none { it.contains("E-CANNOT-PROVE") }, "不可变结构体 y=x 应可证，WS=" + warns(src).joinToString(" | "))
+    }
+
+    @Test
     fun `P9 when 解构的结构递归通过`() {
         // 验收②：len(t) 的 t 由 when(xs){Cons(_, t)} 解构而来，是 xs 的语法子项 → 放行
         val src = "enum List[T] { Nil(), Cons(T, List[T]) }\n" +
