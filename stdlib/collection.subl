@@ -464,7 +464,8 @@ impl Tuple for (a, b, c) {
     fun isEmpty(): Bool = false
 }
 
-// ---------- Functor 型类（高阶类型）：map 统一入口（方法糖优先自由函数，实施理见 CallCheck sugar-first）----------
+// ---------- Functor 型类（高阶类型）：map/lift 统一入口（方法糖优先自由函数，实施理见 CallCheck sugar-first）----------
+// 注：HKT 点号式（receiver 在 kind 应用位）的字典调用实参装配仍需完善；容器 map 由同名自由函数承载。
 class Functor[F[_]] {
     fun map[A, B](fa: F[A], f: (A) => B): F[B]
 }
