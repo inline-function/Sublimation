@@ -222,8 +222,8 @@ internal fun Checker.checkDeclTypes(decl: Decl) {
             decl.members.forEach { m -> m.params.forEach { p ->
                 if (p.default != null) d.error("E-DEFAULT-PARAM", m.pos, "impl 方法 ${m.name} 形参 ${p.name} 不允许默认值（决策 69）")
             } }
-            // P0：impl 的 trait/self 若为限定类型，按模块可见性校验
-            checkTypeResolvable(decl.trait, emptyList())
+            // P0：impl 的 trait/self 若为限定类型，按模块可见性校验（无类型类扩展 impl 的 trait 为 null）
+            decl.trait?.let { checkTypeResolvable(it, emptyList()) }
             // HKT（《高阶类型.md》HKT-S6）：impl self 的 kind 占位变量（`List[a]` 的 a）是隐式绑定，
             // 属合法名字——并入 tps 放行（self 其余实参仍按普通类型检查）
             val selfTps = decl.self.args.filterIsInstance<NamedType>().filter { it.args.isEmpty() }.map { it.name }

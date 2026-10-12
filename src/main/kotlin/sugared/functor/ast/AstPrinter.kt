@@ -40,7 +40,7 @@ private fun Decl.toTree(): Tree = when (this) {
         listOfNotNull(body?.toTree()),
     )
     is ClassDecl -> Tree("class $name${theoryTag(theory)}", members.map { it.toTree() })
-    is ImplDecl -> Tree("impl ${trait.toTag()} for ${self.toTag()}", members.map { it.toTree() })
+    is ImplDecl -> Tree("impl ${trait?.toTag() ?: "(无类型类扩展)"} for ${self.toTag()}", members.map { it.toTree() })
     is StructDecl -> Tree("struct $name${theoryTag(theory)}(${fields.joinToString(", ") { it.toTag() }})")
     is EnumDecl -> Tree(
         "enum $name${theoryTag(theory)}",

@@ -12,9 +12,11 @@ internal fun Checker.checkImplsFrom(files: List<FileAst>) {
         for (e in fa.entries) {
             if (e !is DeclEntry) continue
             val impl = e.decl as? ImplDecl ?: continue
-            val cls = syms.classes[impl.trait.name]
+            // 无类型类 impl（`impl T { }`，承担重载职责）已在 Parser 阶段脱糖为自由函数声明，此处防御性跳过
+            val tr = impl.trait ?: continue
+            val cls = syms.classes[tr.name]
             if (cls == null) {
-                d.error("E-UNBOUND-NAME", impl.pos, "impl 类型类 ${impl.trait.render()} 未声明")
+                d.error("E-UNBOUND-NAME", impl.pos, "impl 类型类 ${tr.render()} 未声明")
                 continue
             }
             // 登记类型类的候选方法名（即使尚无实例）；实例匹配仍只认 impl 里的条目
@@ -46,7 +48,7 @@ internal fun Checker.checkImplsFrom(files: List<FileAst>) {
                         implNames += mname
                         continue
                     }
-                    d.error("E-IMPL-INCOMPLETE", impl.pos, "impl ${impl.trait.render()} for ${impl.self.render()} 缺方法 $mname（类无默认实现）")
+                    d.error("E-IMPL-INCOMPLETE", impl.pos, "impl ${tr.render()} for ${impl.self.render()} 缺方法 $mname（类无默认实现）")
                     continue
                 }
                 val mfn = expanded.first { it.name == mname }
@@ -57,11 +59,11 @@ internal fun Checker.checkImplsFrom(files: List<FileAst>) {
                 if (mfn.name !in classMethods && "new" !in mfn.annotations)
                     d.error("E-IMPL-EXTRA", mfn.pos, "方法 ${mfn.name} 不属于类 ${cls.name}，需标 @new")
                 syms.methods.getOrPut(mfn.name) { ArrayList() }
-                    .add(MethodEntry(impl.self, mfn, mfn.annotations, impl.trait.name, modulePath))
+                    .add(MethodEntry(impl.self, mfn, mfn.annotations, tr.name, modulePath))
             }
             // P6（决策 82）：登记「类型类 → impl 条目」（约束解析用；含声明模块供跨模块可见性过滤）
             syms.implsByTrait.getOrPut(cls.name) { ArrayList() }
-                .add(ImplEntry(cls.name, impl.self, impl.trait.name, modulePath))
+                .add(ImplEntry(cls.name, impl.self, tr.name, modulePath))
             // v3.0 特性 2/4：委托展开或默认实现补齐后的成员集持久化，供 codegen 编码字典（genDecl 取 delegatedImpls ?: members）
             if (expanded !== impl.members) syms.delegatedImpls[impl] = expanded
         }
@@ -252,7 +254,7 @@ internal fun Checker.expandDelegate(impl: ImplDecl, cls: ClassDecl): List<FunDec
     val struct = (impl.self as? NamedType)?.let { st -> syms.structs[st.name] }
     val fields = struct?.fields ?: emptyList()
     if (fields.none { it.name == byName }) {
-        d.error("E-BY-UNBOUND", impl.pos, "impl " + impl.trait.render() + " for " + impl.self.render() + " 委托字段 " + byName + " 不存在（" + (struct?.name ?: impl.self.render()) + " 非结构体或无此字段）")
+        d.error("E-BY-UNBOUND", impl.pos, "impl " + (impl.trait?.render() ?: "") + " for " + impl.self.render() + " 委托字段 " + byName + " 不存在（" + (struct?.name ?: impl.self.render()) + " 非结构体或无此字段）")
         return impl.members
     }
     val have = impl.members.map { it.name }.toSet()

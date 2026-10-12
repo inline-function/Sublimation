@@ -65,6 +65,18 @@ internal fun constAtomValue(p: Prop): Boolean? {
         ">" -> a > b
         "<=", "≤" -> a <= b
         ">=", "≥" -> a >= b
+        "in", "∈" -> {
+            val rg = p.terms[1]
+            val lo: Long; val hi: Long
+            if (rg is PAtom && rg.head == ".." && rg.terms.size == 2 && rg.terms[0] is IntLit && rg.terms[1] is IntLit) {
+                lo = (rg.terms[0] as IntLit).value.toLongOrNull() ?: return null
+                hi = (rg.terms[1] as IntLit).value.toLongOrNull() ?: return null
+            } else if (rg is BinExpr && rg.op == ".." && rg.left is IntLit && rg.right is IntLit) {
+                lo = (rg.left as IntLit).value.toLongOrNull() ?: return null
+                hi = (rg.right as IntLit).value.toLongOrNull() ?: return null
+            } else return null
+            a >= lo && a <= hi
+        }
         else -> null
     }
 }

@@ -64,12 +64,45 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         while (true) {
             skipSemis()
             if (peek(Kind.EOF)) break
-            entries += parseEntry()
+            val e = parseEntry()
+            // 无类型类 impl（扩展方法，承担重载职责）：成员脱糖为带 self 首参的自由函数声明（AST 级展开，后续全链路零感知）
+            if (e is DeclEntry && e.decl is ImplDecl) {
+                val impl = e.decl as ImplDecl
+                if (impl.trait == null) {
+                    // self 里的 kind 占位（`List[a]` 的 a）提升为成员的自由函数类型参数注（尾部追加，保留成员自带理论参数）
+                    val phs = collectImplPlaceholders(impl.self)
+                    entries += impl.members.map { m ->
+                        DeclEntry(m.copy(
+                            theory = m.theory + phs.map { TypeParam(it, null) },
+                            params = listOf(Param("self", impl.self)) + m.params))
+                    }
+                    continue
+                }
+            }
+            entries += e
         }
         return FileAst(entries)
     }
 
     private fun skipSemis() { while (peek(Kind.SEMI)) pos++ }
+
+    /** 无类型类 impl 脱糖：收集 self 类型里的 kind 占位（零实参小写裸名，如 `List[a]` 的 a），按出现序去重 */
+    private fun collectImplPlaceholders(t: Type): List<String> {
+        val out = LinkedHashSet<String>()
+        fun walk(tp: Type) {
+            when (tp) {
+                is NamedType ->
+                    if (tp.args.isEmpty() && tp.name.firstOrNull()?.isLowerCase() == true) out.add(tp.name)
+                    else tp.args.forEach { walk(it) }
+                is TupleType -> tp.items.forEach { walk(it) }
+                is FunType -> { tp.params.forEach { walk(it) }; walk(tp.ret) }
+                is UnionType -> tp.variants.forEach { walk(it) }
+                else -> {}
+            }
+        }
+        walk(t)
+        return out.toList()
+    }
 
     /**
      * 决策 74（Kotlin 化收口）：**顶层只允许声明**，执行代码必须写进 `fun main()`。
@@ -720,8 +753,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
 
     private fun parseImpl(): ImplDecl {
         at(Kind.IMPL)
-        val trait = parseType()
-        val self = if (peek(Kind.FOR)) { pos++; parseType() } else trait
+        val t0 = parseType()
+        // impl 无 for（`impl T { … }`）= 单纯方法添加（用户拍板：承担重载职责）：trait 置 null，成员在 parseFile 展开为自由函数
+        val trait: Type?
+        val self: Type
+        if (peek(Kind.FOR)) { pos++; trait = t0; self = parseType() } else { trait = null; self = t0 }
         // v3.0 特性 2：`impl C for T by field` 委托——by 后必须跟字段名（IDENT）
         var delegate: String? = null
         if (peek(Kind.BY)) {
@@ -749,11 +785,14 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
     // ---------- 表达式 ----------
 
     private fun parseExpr(angle: Boolean, stopArrow: Boolean = false): Expr {
-        var left = parseUnary()
+        var left = parseUnary(stopArrow)
         while (true) {
             val t = cur()
             // when 守卫在首个顶层 `->` 处停（`->` 既是蕴含中缀又是分支箭头，蕴含需加括号）
+            // 模板 when：空格 LPAREN（紧跟 body 的下一 arm 模式 `(11..20)` 前导）也停——防 `print(1) (11..20)` 后缀调用吞 arm；
+            // 无空格调用 `print(1)` / `f(x)` 不受影响。
             if (stopArrow && t.kind == Kind.ARROW) break
+            if (stopArrow && t.kind == Kind.LPAREN && t.precededBySpace) break
             if (t.kind == Kind.BY) { pos++; left = ByExpr(left, parseBracketList()); continue }
             if (t.kind == Kind.GT) {
                 if (angle) break
@@ -842,20 +881,22 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         return e
     }
 
-    private fun parseUnary(): Expr {
+    private fun parseUnary(stopArrow: Boolean = false): Expr {
         val t = cur()
-        if (t.kind == Kind.MINUS) { pos++; return UniExpr("-", parseUnary()) }
-        if (t.kind == Kind.BANG) { pos++; return UniExpr("!", parseUnary()) }
-        if (t.kind == Kind.LNOT) { pos++; return UniExpr("¬", parseUnary()) }
-        if (t.kind == Kind.IDENT && t.text == "not") { pos++; return UniExpr("¬", parseUnary()) }
-        return parsePostfix()
+        if (t.kind == Kind.MINUS) { pos++; return UniExpr("-", parseUnary(stopArrow)) }
+        if (t.kind == Kind.BANG) { pos++; return UniExpr("!", parseUnary(stopArrow)) }
+        if (t.kind == Kind.LNOT) { pos++; return UniExpr("¬", parseUnary(stopArrow)) }
+        if (t.kind == Kind.IDENT && t.text == "not") { pos++; return UniExpr("¬", parseUnary(stopArrow)) }
+        return parsePostfix(stopArrow)
     }
 
-    private fun parsePostfix(): Expr {
+    private fun parsePostfix(stopArrow: Boolean = false): Expr {
         var e = parsePrimary()
         while (true) {
             val t = cur()
             when {
+                // 模板 when body：空格 LPAREN（下一 arm 模式前导）在 stopArrow 下不再作后缀调用
+                stopArrow && t.kind == Kind.LPAREN && t.precededBySpace -> break
                 // v2.0 空安全：`a?.f(b)` 标准形式；`a ?.f b` 受限中缀（INFIX-5/7：f 为两参函数或单参方法时，
                 // 解析层无脑取同一行后继表达式为参数，合法性由语义层裁定）
                 t.kind == Kind.SAFECALL -> {
@@ -1143,7 +1184,8 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                 guard = if (peek(Kind.IF)) { pos++; parseExpr(angle = false, stopArrow = true) } else null
             }
             at(Kind.ARROW)
-            arms += WhenArm(pat, guard, parseBranchBody(), "$al:$ac", cond = cond)
+            // 模板 when：body 在 stopArrow 停（防后缀括号调用吞掉后续 arm）
+            arms += WhenArm(pat, guard, parseBranchBody(stopArrow = templateBase != null), "$al:$ac", cond = cond)
             skipSemis()
             if (peek(Kind.COMMA)) pos++
         }
@@ -1272,8 +1314,10 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         return out
     }
 
-    private fun parseBranchBody(): Expr =
-        if (peek(Kind.LBRACE)) parseBlock() else parseExpr(angle = false)
+    /** 分支体：`{ 语句 }` 块，或单表达式。stopArrow=true（模板 when 用）在首个顶层 `->` 停——
+     *  防 `1 (11..20) -> 2` 的后缀括号调用把后续 arm 吞成一个蕴含链（template when Parser 修复）。 */
+    private fun parseBranchBody(stopArrow: Boolean = false): Expr =
+        if (peek(Kind.LBRACE)) parseBlock() else parseExpr(angle = false, stopArrow = stopArrow)
 
     /*************************** v1.1：旧 `\(x) =>` lambda 已移除（BACKSLASH 不再解析） ***************************/
 

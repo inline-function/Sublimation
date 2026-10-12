@@ -41,7 +41,8 @@ data class ClassDecl(
 ) : Decl
 
 data class ImplDecl(
-    val trait: Type,
+    /** trait 为 null = 单纯方法添加（无类型类，承担重载职责）：Parser 阶段成员即脱糖为带 self 首参的自由函数重载 */
+    val trait: Type?,
     val self: Type,
     val members: List<FunDecl>,
     /** v3.0 特性 2：`impl C for T by field` 委托——转发字段的方法到 C 的所有方法 */

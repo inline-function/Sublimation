@@ -291,6 +291,9 @@ class Checker(
                     d.hint("H-FIELD-SHADOW", fn.body?.pos ?: "", "参数 ${p.name} 遮蔽了 ${selfT.render()} 的同名字段，体内裸用 ${p.name} 将指向参数")
                 f.declareVar(p.name, pt, fn.pos)   // 参数警告锚定函数声明位置（fn.body.pos 对表达式体可能为空）
                 f.inject(PAtom(":", listOf(NameRef(p.name), typeToExpr(pt))))
+                // 深化上下文系统：自然数形参蕴含 n ≥ 0
+                if (syms.expand(pt).name == "Nat")
+                    f.inject(PAtom(">=", listOf(NameRef(p.name), IntLit("0", fn.pos))))
             }
         }
         // v3.0 特性 1：结构体形参伴生命题自动注入——`fun f(test: Test)` 体内等价于前件
@@ -431,6 +434,9 @@ class Checker(
                     else t = want
                 }
                 f.declareVar(s.name, t, s.pos)
+                // 深化上下文系统：自然数变量声明蕴含 x ≥ 0
+                if (syms.expand(t).name == "Nat")
+                    f.inject(PAtom(">=", listOf(NameRef(s.name), IntLit("0", s.pos))))
                 // v3.0 特性 1：结构体构造成功注入——`var t = Test(m)` 注入 t.n = 实参 与伴生命题（t.n 形态）；
                 // 命名参数构造（StructCtorExpr）在 checkStructCtor 内同做证明
                 if (s.destruct == null) {
@@ -618,7 +624,11 @@ class Checker(
     // ============ 表达式 ============
 
     internal fun checkExpr(e: Expr, f: Frame, pure: Boolean, expect: Type? = null, flow: Boolean = false): Type = when (e) {
-        is IntLit -> namedT("Nat", emptyList())
+        is IntLit -> {
+            // 深化上下文系统：每个自然数字面量蕴含自然命题 n ≥ 0
+            f.inject(PAtom(">=", listOf(e, IntLit("0", e.pos))))
+            namedT("Nat", emptyList())
+        }
         is FloatLit -> namedT("Rat", emptyList())   // P10（决策 86）：浮点字面量 → Rat（IEEE double）
         is StrLit -> namedT("Str", emptyList())
         TopExpr, BotExpr, ReturnSym -> namedT("Bool", emptyList())

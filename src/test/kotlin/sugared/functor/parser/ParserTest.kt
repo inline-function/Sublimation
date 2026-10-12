@@ -113,7 +113,7 @@ class ParserTest {
         )
         assertTrue((f.entries[0] as DeclEntry).decl is StructDecl)
         val impl = (f.entries[1] as DeclEntry).decl as ImplDecl
-        assertEquals("Show", impl.trait.name)
+        assertEquals("Show", impl.trait?.name)
         assertEquals("Point", impl.self.name)
     }
 

@@ -379,7 +379,7 @@ private var funRefFree: Set<Expr> = emptySet()
             }
             is ClassDecl -> decl.members.forEach { if (it.body != null) genFun(it) }
             // 决策 60（T5）：impl 成员生成字典对象，方法体收隐藏字典参数 d
-            is ImplDecl -> genDict(decl)
+            is ImplDecl -> if (decl.trait != null) genDict(decl)   // 无类型类 impl 已脱糖为自由函数（Parser 阶段），零残留
             is TypeAliasDecl -> {}   // 纯类型层，零输出（别名在 checker 展开）
         }
     }
@@ -388,7 +388,7 @@ private var funRefFree: Set<Expr> = emptySet()
      *  （O2，决策 68；第四轮：块体方法用 `function` 形式展平语句，让 return 真正退出方法）
      *  P0（M6）：字典名带声明模块前缀（与 Checker resolveDict 的 dictNameOf 同参数） */
     private fun genDict(impl: ImplDecl) {
-        val dn = dictNameOf(impl.trait.name, impl.self, currentPrefix)
+        val dn = dictNameOf(impl.trait!!.name, impl.self, currentPrefix)
         line("const $dn = {")
         indent++
         val fields = structFields[(impl.self as? NamedType)?.name ?: ""] ?: emptyList()
@@ -398,7 +398,7 @@ private var funRefFree: Set<Expr> = emptySet()
             val body = m.body ?: continue
             // 隐藏首参 d（字典自身，供体内递归分发）。零参类型类加隐式接收者 __self（决策 68）；
             // kind 类型类（HKT-D2）self 已显式在形参表（map(f, fa) 的 fa 位），签名无 __self——(d, f, fa...)。
-            val ps = if (impl.trait.name in kindTraits)
+            val ps = if (impl.trait!!.name in kindTraits)
                 (listOf("d") + m.params.map { mangle(it.name) }).joinToString(", ")
             else
                 (listOf("d", "__self") + m.params.map { mangle(it.name) }).joinToString(", ")
