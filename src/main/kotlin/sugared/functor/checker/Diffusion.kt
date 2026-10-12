@@ -81,6 +81,18 @@ internal fun constAtomValue(p: Prop): Boolean? {
     }
 }
 
+/** 根文档·为命题 `e : T`：字面量类型判定（`1 : Nat`/`"s" : Str`）。
+ *  变量/参数的类型归属靠注入的 `x : T` 事实（proveOrDeep 的 gamma 匹配），不在此处理。 */
+internal fun constTypeAtom(p: Prop): Boolean? {
+    if (p !is PAtom || p.head != ":" || p.terms.size != 2) return null
+    val t = (p.terms[1] as? NameRef)?.name ?: return null
+    return when (p.terms[0]) {
+        is IntLit -> t == "Nat" || t == "Int"
+        is StrLit -> t == "Str"
+        else -> null
+    }
+}
+
 /** v3.0 特性 1：把目标里可归约的名字替换为字面量（var m = 5 ⇒ 事实 m = 5），全常量则返回常量版；否则 null。 */
 private fun reduceGoalToConstants(gamma: List<Prop>, goal: Prop): Prop? {
     if (goal !is PAtom) return null
@@ -122,6 +134,39 @@ private fun Checker.expandDefined(goal: Prop): Prop? {
     return null
 }
 
+/** `e : T` 类型归属判定（根文档·为命题）：
+ *  ① gamma 有同结构 `x : T` 事实（变量/参数注入）；② 构造表达式 → 其结构体类型与 T 同名义。 */
+private fun Checker.typeJudgement(gamma: List<Prop>, goal: PAtom): Boolean {
+    val e = goal.terms[0]; val t = goal.terms[1]
+    // ① 注入的事实 `x : T`（结构相等）
+    if (gamma.any { f ->
+            f is PAtom && f.head == ":" && f.terms.size == 2 && f.terms[0] == e && f.terms[1] == t
+        }) return true
+    // ② 构造表达式 A(...)：结果类型为结构体 A（命名字段 StructCtorExpr / 位置构造 CallExpr）
+    val ctorName = when (e) {
+        is StructCtorExpr -> e.struct
+        is CallExpr -> (e.callee as? NameRef)?.name
+        else -> null
+    }
+    if (ctorName != null && syms.structs.containsKey(ctorName)) {
+        val want = when (t) {
+            is NameRef -> NamedType(t.name)
+            is InstExpr -> NamedType((t.target as? NameRef)?.name ?: "", exprArgsToTypes(t))
+            else -> null
+        }
+        if (want != null) return typeEq(NamedType(ctorName), want)
+    }
+    return false
+}
+
+private fun exprArgsToTypes(ie: InstExpr): List<Type> = ie.terms.map { t1 ->
+    when (t1) {
+        is NameRef -> NamedType(t1.name)
+        is InstExpr -> NamedType((t1.target as? NameRef)?.name ?: "", exprArgsToTypes(t1))
+        else -> NamedType("?")
+    }
+}
+
 internal fun Checker.proveOrDeep(gamma: List<Prop>, goal: Prop): Boolean {
     // 根文档：自定义命题按定义展开后继续证明
     expandDefined(goal)?.let { return proveOrDeep(gamma, it) }
@@ -139,6 +184,10 @@ internal fun Checker.proveOrDeep(gamma: List<Prop>, goal: Prop): Boolean {
     }
     // v3.0 特性 1：常量原子真值直接判定（不动推理规则；构造位伴生命题字面量场景）
     constAtomValue(goal)?.let { return it }
+    // 根文档·为命题 `e : T`：字面量类型判定
+    constTypeAtom(goal)?.let { return it }
+    // 根文档·为命题 `e : T`：变量/参数注入的 `x : T` 事实匹配，或构造表达式结果类型归属
+    if (goal is PAtom && goal.head == ":" && goal.terms.size == 2 && typeJudgement(gamma, goal)) return true
     // v3.0 特性 1：目标含变量但等式事实可归约到常量（var m = 5 事实 → 目标 ≠<m,0> 归约为 ≠<5,0>）
     reduceGoalToConstants(gamma, goal)?.let { rg -> constAtomValue(rg)?.let { return it } }
     val res = prover.proves(globalFacts + gamma, goal)

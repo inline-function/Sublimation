@@ -1249,6 +1249,32 @@ class CheckerTest {
     }
 
     @Test
+    fun `根文档 为命题 e阶T - 构造伴生命题字面量类型`() {
+        // 构造证明是 error 语义（未封存）：A(1) 需证 1 : Nat——真判成立才 ok
+        val src = "struct A(n: Nat)<n : Nat>\nfun main() { A(1) }"
+        assertTrue(ok(src), "构造 A(1) 需证明 1 : Nat（字面量类型判定），应通过")
+    }
+
+    @Test
+    fun `根文档 为命题 e阶T - 参数注入 x阶Type 自动满足前件`() {
+        // 函数参数自动注入 a : A（根文档结构体参数注入）；前件 a : A 自动满足（error 语义）
+        val src = "struct A(n: Nat)<n : Nat>\nfun f(a: A)<a : A>: Null { }\nfun main() { f(A(1)) }"
+        assertTrue(ok(src), "参数 a : A 由声明位注入，前件 a : A 应自动成立")
+    }
+
+    @Test
+    fun `根文档 为命题 e阶T - 自然命题 x 属Nat 证明`() {
+        val src = "@impure fun main() { var x = 1\n∴ x : Nat }"
+        assertTrue(ok(src), "var x = 1 → 注入 x : Nat 自然命题，∴ x : Nat 应成立")
+    }
+
+    @Test
+    fun `根文档 为命题 e阶T - 字面量属型判定`() {
+        val src = "@impure fun main() { ∵ 1 : Nat }"
+        assertTrue(ok(src), "字面量 1 类型 Nat，∵ 1 : Nat 应成立")
+    }
+
+    @Test
     fun `IfProp 双支同结论特性六`() {
         val src = "@classic\n@impure fun main() { if[y = 2] { ∴ 1 = 1 } else { ∴ 1 = 1 } }"
         assertTrue(ok(src), "挂载 core.classic 后双支证明同结论应通过")
