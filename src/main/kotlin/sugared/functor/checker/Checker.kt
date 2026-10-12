@@ -488,7 +488,7 @@ class Checker(
                     d.supplement("D-BECAUSE-PROVED", s.pos, "∵ " + PropLogic.render(p) + "（上下文中成立，注入 Γ）")
                 } else {
                     val tried = if (syms.theorems.isEmpty()) "（无定理函数）" else syms.theorems.keys.joinToString(", ")
-                    d.error("E-CANNOT-PROVE", s.pos,
+                    d.warn("E-CANNOT-PROVE", s.pos,
                         "∵ " + PropLogic.render(p) + " 在上下文中无法成立，不能注入。尝试的定理：" + tried + "；当前 Γ：" + f.allFacts().joinToString("； ") { PropLogic.render(it) })
                 }
                 namedT("Null", emptyList())
@@ -500,7 +500,7 @@ class Checker(
                     d.supplement("D-THEREFORE", s.pos, "∴ " + PropLogic.render(q) + " 成立")
                 } else {
                     val tried = if (syms.theorems.isEmpty()) "（无定理函数）" else syms.theorems.keys.joinToString(", ")
-                    d.error("E-CANNOT-PROVE", s.pos,
+                    d.warn("E-CANNOT-PROVE", s.pos,
                         "∴ " + PropLogic.render(q) + " 证不出。尝试的定理：" + tried + "；当前 Γ：" + f.allFacts().joinToString("； ") { PropLogic.render(it) })
                 }
                 namedT("Null", emptyList())
@@ -513,7 +513,7 @@ class Checker(
                     d.supplement("D-PLUSBECAUSE-PROVED", s.pos, "+∵ " + PropLogic.render(p) + "（上下文中成立，注入 Γ）")
                 } else {
                     val tried = if (syms.theorems.isEmpty()) "（无定理函数）" else syms.theorems.keys.joinToString(", ")
-                    d.error("E-CANNOT-PROVE", s.pos,
+                    d.warn("E-CANNOT-PROVE", s.pos,
                         "+∵ " + PropLogic.render(p) + " 在上下文中无法成立，不能注入。尝试的定理：" + tried + "；当前 Γ：" + f.allFacts().joinToString("； ") { PropLogic.render(it) })
                 }
                 namedT("Null", emptyList())
@@ -522,7 +522,7 @@ class Checker(
             is IfPropStmt -> {
                 val p = PropLogic.fromExpr(s.prop)
                 if (!syms.classicMounted) {
-                    d.error("E-NEED-CLASSIC", s.pos, "if[p] 需要挂载 core.classic（文件内任一声明加 @classic 注解即挂载）")
+                    d.warn("E-NEED-CLASSIC", s.pos, "if[p] 需要挂载 core.classic（文件内任一声明加 @classic 注解即挂载）")
                 } else {
                     val thenF = Frame(f); thenF.inject(p)
                     val elseF = Frame(f); elseF.inject(PNot(p))
@@ -536,7 +536,7 @@ class Checker(
                     }
                     collect(s.thenStmts, thenC); collect(s.elseStmts, elseC)
                     if (thenC.keys != elseC.keys)
-                        d.error("E-IF-CONCLUSION-MISMATCH", s.pos,
+                        d.warn("E-IF-CONCLUSION-MISMATCH", s.pos,
                             "if[p] 两支 ∴ 结论集不同：then=${thenC.keys}；else=${elseC.keys}（排中律要求两支结论相同）")
                     else thenC.values.forEach { f.inject(it) }   // 块外 Γ += q₁ ∧ … ∧ qₙ
                 }
@@ -551,14 +551,14 @@ class Checker(
                     f.inject(PExists(listOf(s.name), PropLogic.fromExpr(s.prop)))
                     d.supplement("D-EXIST-INTRO", s.pos, "∃ 引入成立：∃${s.name}. " + PropLogic.render(PropLogic.fromExpr(s.prop)))
                 } else
-                    d.error("E-QUANT-UNPROVEN", s.pos, "∃ 引入实例 " + PropLogic.render(inst) + " 证不出")
+                    d.warn("E-QUANT-UNPROVEN", s.pos, "∃ 引入实例 " + PropLogic.render(inst) + " 证不出")
                 namedT("Null", emptyList())
             }
             is ExistsElimStmt -> {
                 val goal = PExists(listOf(s.name), PropLogic.fromExpr(s.prop))
                 val premise = f.allFacts().any { it is PExists && PropLogic.render(it) == PropLogic.render(goal) }
                 if (!premise) {
-                    d.error("E-PROP-UNBOUND", s.pos, "前提 " + PropLogic.render(goal) + " 不在 Γ 中（先用 ∃ 引入或 ∵ 注入）。当前 Γ：" + f.allFacts().joinToString("；") { PropLogic.render(it) })
+                    d.warn("E-PROP-UNBOUND", s.pos, "前提 " + PropLogic.render(goal) + " 不在 Γ 中（先用 ∃ 引入或 ∵ 注入）。当前 Γ：" + f.allFacts().joinToString("；") { PropLogic.render(it) })
                 } else {
                     val subF = Frame(f)
                     subF.inject(PropLogic.fromExpr(s.prop))   // P(x) 注入块内（x 作用域限于块）
@@ -570,7 +570,7 @@ class Checker(
             is FunStmt -> {
                 // ∀ 引入（V1）：局部函数定义登记为局部定理（形参即绑定变元）；定义体非空（不是"签名即证明"）
                 if (s.fn.body == null)
-                    d.error("E-QUANT-UNPROVEN", s.pos, "局部函数 ${s.fn.name} 必须体（∀ 引入要求有体，不是签名即证明）")
+                    d.warn("E-QUANT-UNPROVEN", s.pos, "局部函数 ${s.fn.name} 必须体（∀ 引入要求有体，不是签名即证明）")
                 else {
                     f.localTheorems[s.fn.name] = s.fn
                     d.supplement("D-LOCAL-FUN", s.pos, "局部函数 ${s.fn.name} 登记为局部定理（∀ 引入）")

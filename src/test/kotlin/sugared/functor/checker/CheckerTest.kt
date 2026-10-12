@@ -63,7 +63,7 @@ class CheckerTest {
     @Test
     fun `显式供给但作用域无该命题`() {
         val src = "fun witness[@q]<q>: Null {}\nfun main() { witness<torch>() }"
-        assertTrue(errs(src).contains("E-PROP-UNBOUND"))
+        assertTrue(warns(src).contains("E-PROP-UNBOUND"), "封存：显式供给失败降级为警告")
     }
 
     @Test
@@ -1207,9 +1207,9 @@ class CheckerTest {
     }
 
     @Test
-    fun `Therefore 证不出报特性五`() {
+    fun `Therefore 证不出封存为警告特性五`() {
         val src = "@impure fun main() { ∵ 1 = 1\n∴ x = 2 }"
-        assertTrue(errs(src).contains("E-CANNOT-PROVE"), "Γ 无 x = 2 应报 E-CANNOT-PROVE")
+        assertTrue(warns(src).contains("E-CANNOT-PROVE"), "封存：证明失败降级为警告 E-CANNOT-PROVE（不阻塞主流程）")
     }
 
     @Test
@@ -1224,9 +1224,9 @@ class CheckerTest {
     }
 
     @Test
-    fun `@theorem 值级调用禁特性五`() {
+    fun `@theorem 值级调用封存为警告特性五`() {
         val src = "@theorem fun Triv[p]: Null <p> { unchecked.axiom[p] }\n@impure fun main() { Triv() }"
-        assertTrue(errs(src).contains("E-THEOREM-VALUE-CALL"), "@theorem 擦除代码，值级调用应报 E-THEOREM-VALUE-CALL")
+        assertTrue(warns(src).contains("E-THEOREM-VALUE-CALL"), "封存：值级调用降级为警告（根文档程序风格后续重做）")
     }
 
     @Test
@@ -1236,15 +1236,15 @@ class CheckerTest {
     }
 
     @Test
-    fun `IfProp 未挂载报特性六`() {
+    fun `IfProp 未挂载封存为警告特性六`() {
         val src = "@impure fun main() { if[y = 2] { ∴ y = 1 } else { ∴ y = 1 } }"
-        assertTrue(errs(src).contains("E-NEED-CLASSIC"), "未挂载 core.classic 应报 E-NEED-CLASSIC")
+        assertTrue(warns(src).contains("E-NEED-CLASSIC"), "封存：未挂载 core.classic 降级为警告")
     }
 
     @Test
-    fun `IfProp 结论集不同报特性六`() {
+    fun `IfProp 结论集不同封存为警告特性六`() {
         val src = "@classic\n@impure fun main() { ∵ y = 1\nif[z = 2] { ∴ y = 1 } }"
-        assertTrue(errs(src).contains("E-IF-CONCLUSION-MISMATCH"), "两支 ∴ 结论集不同应报 E-IF-CONCLUSION-MISMATCH")
+        assertTrue(warns(src).contains("E-IF-CONCLUSION-MISMATCH"), "封存：两支 ∴ 结论集不同降级为警告")
     }
 
     @Test
@@ -1260,15 +1260,15 @@ class CheckerTest {
     }
 
     @Test
-    fun `Exists 前提不在 Γ 报特性七`() {
+    fun `Exists 前提不在 Γ 封存为警告特性七`() {
         val src = "@impure fun main() { ∃ y . y = 1 { ∴ y = 1 } }"
-        assertTrue(errs(src).contains("E-PROP-UNBOUND"), "前提不在 Γ 应报 E-PROP-UNBOUND")
+        assertTrue(warns(src).contains("E-PROP-UNBOUND"), "封存：前提不在 Γ 降级为警告")
     }
 
     @Test
-    fun `Exists 引入实例证不出报特性七`() {
+    fun `Exists 引入实例证不出封存为警告特性七`() {
         val src = "@impure fun main() { ∃ x = 1 . x = 2 }"
-        assertTrue(errs(src).contains("E-QUANT-UNPROVEN"), "实例 1 = 2 证不出应报 E-QUANT-UNPROVEN")
+        assertTrue(warns(src).contains("E-QUANT-UNPROVEN"), "封存：实例 1 = 2 证不出降级为警告")
     }
 
     @Test

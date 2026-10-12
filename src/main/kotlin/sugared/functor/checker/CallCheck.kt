@@ -548,7 +548,7 @@ internal fun Checker.checkFnCall(
 
     // @theorem 定理函数：编译期擦除，只能用于证明位（∴ 合一/前件供给），值级调用禁止
     if ("theorem" in fn.annotations)
-        d.error("E-THEOREM-VALUE-CALL", c.pos, "定理函数 $name 编译器擦除其代码，仅供证明使用（∴ 合一/前件），不能值级调用")
+        d.warn("E-THEOREM-VALUE-CALL", c.pos, "定理函数 $name 编译器擦除其代码，仅供证明使用（∴ 合一/前件），不能值级调用")
 
     // 决策 59：Any 严苛准入——实参含 Any 则调用受限；@tuple 形参只收元组字面量（裸名实参拒）
     if (fn.params.any { syms.expand(it.type).containsAny() } && effTypes.any { it.containsAny() }) {
@@ -699,14 +699,14 @@ internal fun Checker.checkFnCall(
         if (sup != null) {
             binding[q] = sup
             if (!proveOrDeep(f.allFacts(), sup))
-                d.error("E-PROP-UNBOUND", c.pos, "显式供给 ${PropLogic.render(sup)} 在作用域不成立")
+                d.warn("E-PROP-UNBOUND", c.pos, "显式供给 ${PropLogic.render(sup)} 在作用域不成立")
         } else if (usesQ) {
             // 自动供给：方括号命题参数是"名字"，只与作用域中的 0 元原子匹配
             val cands = f.allFacts()
                 .filter { it is PAtom && it.terms.isEmpty() && it.head !in PropLogic.structuralHeads }
                 .distinctBy { PropLogic.render(it) }
             when {
-                cands.isEmpty() -> d.error("E-PROP-UNBOUND", c.pos, "命题参数 @$q 作用域无 0 元命题供给（用 <...> 显式传入）")
+                cands.isEmpty() -> d.warn("E-PROP-UNBOUND", c.pos, "命题参数 @$q 作用域无 0 元命题供给（用 <...> 显式传入）")
                 cands.size > 1 -> d.error("E-PROP-AMBIGUOUS", c.pos, "命题参数 @$q 有 ${cands.size} 个 0 元候选，请显式供给")
                 else -> binding[q] = cands.first()
             }

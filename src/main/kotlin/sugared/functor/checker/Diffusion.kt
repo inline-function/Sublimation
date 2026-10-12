@@ -130,7 +130,7 @@ internal fun isTheoremFun(d: FunDecl): Boolean = "theorem" in d.annotations
  *  可绑定到目标对应位置的任意项（实例化后 post ≡ q）。 */
 internal fun Checker.searchTheorems(q: Prop, depth: Int, local: Map<String, FunDecl> = emptyMap()): Boolean {
     if (depth > 2) {
-        d.error("E-THEOREM-SEARCH-DEPTH", "", "定理搜索深度超限（默认两跳）：目标 " + PropLogic.render(q))
+        d.warn("E-THEOREM-SEARCH-DEPTH", "", "定理搜索深度超限（默认两跳）：目标 " + PropLogic.render(q))
         return false
     }
     val cross = if (moduleTree == null) emptyList() else
