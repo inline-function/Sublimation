@@ -371,6 +371,10 @@ fun toResult[T, E](o: Optional[T], e: E): Result[T, E] = when(o) {
     None -> Err(e)
 }
 
+// 构造便利：emptyList / listOf（@tulpe 可变元组 → 实参打包为 Cons 链，codegen 特判）
+fun emptyList[T](): List[T] = Nil()
+fun listOf[T](@tulpe t: T): List[T] = Cons(t, Nil())
+
 // ---------- v3.0 第三批 4.2：Collection 型类体系 ----------
 // 统一各容器的高阶查询：contains / size。方法式成员；扩展调用法（x.f()）优先类型类，自由函数用普通调用法 f(x)。
 // Map 的 contains 按 key 判定（`k in map`）；Optional/Result 的 size 为 0/1。

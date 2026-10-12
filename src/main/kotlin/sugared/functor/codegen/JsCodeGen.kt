@@ -978,6 +978,10 @@ private var funRefFree: Set<Expr> = emptySet()
             for (i in e.args.indices.reversed()) acc = "$cons(${expr(e.args[i])}, $acc)"
             return acc
         }
+        // listOf（@tulpe 可变元组）→ JS 数组字面量（List 是数组形态：[] / [h, ...t]）
+        if (name == "listOf" && moduleHits[callee] != null) {
+            return "[" + e.args.joinToString(", ") { expr(it) } + "]"
+        }
         if (name == "arraySet" && e.args.size == 3) {
             val arr = expr(e.args[0]); val idx = expr(e.args[1]); val v = expr(e.args[2])
             return "(() => { const n = ($arr).slice(); n[$idx] = $v; return n; })()"

@@ -262,7 +262,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
             while (true) {
                 // 形参注解（如 @tuple，决策 61）：@ 前缀出现在名字位即为注解列表
                 val anns = ArrayList<String>()
-                while (peek(Kind.AT)) { pos++; anns += at(Kind.IDENT).text }
+                while (peek(Kind.AT)) {
+                    pos++; val an = at(Kind.IDENT).text
+                    // @tulpe（用户文档拼写）= @vararg @tuple（可变元组，吸收剩余实参打包）
+                    if (an == "tulpe") { anns += "vararg"; anns += "tuple" } else anns += an
+                }
                 // P4（v2.1）：`fun f((a, b): Point)` 元组参数解构——LPAREN 紧跟在注解后即解构分量表
                 val destruct = if (peek(Kind.LPAREN)) parseParamDestruct() else null
                 val n = if (destruct != null) destruct.first() else nameToken()
