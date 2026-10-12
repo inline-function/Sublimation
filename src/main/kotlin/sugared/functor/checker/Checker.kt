@@ -489,8 +489,9 @@ class Checker(
                 val mut = "mut" in s.annotations
                 if (mut) f.declareMut(s.name)
                 // 指导§42：var n = 0 注入 n = 0 与 n : T；
-                // 决策35：@mut 变量仅保有自反相等，非自反相等论据（n = 初值）忽略不注入
-                if (isPureValue(s.value) && !mut) {
+                // 决策35：@mut 变量仅保有自反相等，非自反相等论据（n = 初值）忽略不注入；
+                // root doc 第 9 行：初值引用 @mut 变量时绑定等式不可靠（会变）——同样不注入
+                if (isPureValue(s.value) && !mut && !refsMut(s.value, f)) {
                     f.inject(PAtom("=", listOf(NameRef(s.name), s.value)))
                 }
                 if (isPureValue(s.value) || mut) {
@@ -661,6 +662,18 @@ class Checker(
             if (fn != null) "impure" !in fn.annotations
             else builtinPure(n) != null && builtinimpure(n) == null
         }
+        else -> false
+    }
+
+    /** root doc《副作用与可变性控制》第 9 行配套：表达式是否引用 @mut 变量。
+     *  不可变变量以 @mut 变量为初值时，绑定等式不可靠（初值会变）——不注入相等命题。 */
+    private fun Checker.refsMut(e: Expr, f: Frame): Boolean = when (e) {
+        is NameRef -> f.isMut(e.name)
+        is BinExpr -> refsMut(e.left, f) || refsMut(e.right, f)
+        is UniExpr -> refsMut(e.operand, f)
+        is CallExpr -> e.args.any { refsMut(it, f) }
+        is FieldExpr -> refsMut(e.target, f)
+        is InstExpr -> refsMut(e.target, f)
         else -> false
     }
 
@@ -1017,7 +1030,7 @@ class Checker(
             f.declareVar(e.name, t, e.pos)
             val mut = "mut" in e.annotations
             if (mut) f.declareMut(e.name)
-            if (isPureValue(e.value) && !mut) f.inject(PAtom("=", listOf(NameRef(e.name), e.value)))
+            if (isPureValue(e.value) && !mut && !refsMut(e.value, f)) f.inject(PAtom("=", listOf(NameRef(e.name), e.value)))
             if (isPureValue(e.value) || mut) f.inject(PAtom(":", listOf(NameRef(e.name), typeToExpr(t))))
             t
         }

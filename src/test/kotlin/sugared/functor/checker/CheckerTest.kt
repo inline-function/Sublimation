@@ -1053,6 +1053,33 @@ class CheckerTest {
     }
 
     @Test
+    fun `rootdoc 不可变var绑定等式进入上下文`() {
+        // root doc「用新的不可变变量赋值它，或 let 函数」——无 @mut var 即不可变绑定，绑定等式应入上下文
+        val src = "@impure fun main() { var y = 0\n var z = y\n ∵ z = y }"
+        assertTrue(warns(src).none { it.contains("E-CANNOT-PROVE") }, "不可变 z=y 应可证，WS=" + warns(src).joinToString(" | "))
+    }
+
+    @Test
+    fun `rootdoc @mut变量不承认绑定相等`() {
+        // root doc 第 9 行：可变变量除了自反外，不承认与其他表达式的相等命题
+        val src = "@impure fun main() { @mut var x = 0\n var y = x\n ∵ y = x }"
+        assertTrue(warns(src).any { it.contains("E-CANNOT-PROVE") }, "期望 y=x 不可证（@mut 仅自反），实际 WS=" + warns(src).joinToString(" | "))
+    }
+
+    @Test
+    fun `rootdoc @mut自反相等可证`() {
+        val src = "@impure fun main() { @mut var x = 0\n ∵ x = x }"
+        assertTrue(warns(src).none { it.contains("E-CANNOT-PROVE") }, "@mut 自反应可证，WS=" + warns(src).joinToString(" | "))
+    }
+
+    @Test
+    fun `rootdoc 不纯表达式不承认相等含自反`() {
+        // root doc 第 17 行：不纯函数的调用是不纯表达式，不承认相等命题，包括自反
+        val src = "@impure fun main() { ∵ print(\"a\") = print(\"a\") }"
+        assertTrue(warns(src).any { it.contains("E-CANNOT-PROVE") }, "不纯表达式不应承认相等（含自反），实际 WS=" + warns(src).joinToString(" | "))
+    }
+
+    @Test
     fun `P9 when 解构的结构递归通过`() {
         // 验收②：len(t) 的 t 由 when(xs){Cons(_, t)} 解构而来，是 xs 的语法子项 → 放行
         val src = "enum List[T] { Nil(), Cons(T, List[T]) }\n" +
