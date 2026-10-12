@@ -1270,6 +1270,23 @@ class CheckerTest {
     }
 
     @Test
+    fun `根文档 程序风格 - 定理公理调用注入下文供后续前件`() {
+        // 程序风格：@theorem 公理像代码一样调用（封存期不报错），调用注入其下文；后续函数前件自动满足
+        val src = "@theorem fun plusAssoc(a: Nat, b: Nat, c: Nat): <a + (b + c) = (a + b) + c>\n" +
+            "@theorem fun plusComm(a: Nat, b: Nat): <a + b = b + a>\n" +
+            "fun need()<1 + (2 + 3) = (1 + 2) + 3>: Null { }\n" +
+            "@impure fun main() { plusAssoc(1, 2, 3)\nplusComm(1, 2)\nneed() }"
+        assertTrue(ok(src), "公理调用注入两者下文；need 的前件由 plusAssoc 调用注入满足（error 语义）")
+    }
+
+    @Test
+    fun `根文档 纯lambda可证明pure`() {
+        // 根文档：pure<{ 1 + 1 }>——lambda 体纯则登记自然命题；后续函数前件自动满足（error 语义）
+        val src = "fun need()<pure<{1 + 1}>>: Null { }\n@impure fun main() { var f = { 1 + 1 }\nneed() }"
+        assertTrue(ok(src), "纯 lambda 注入 pure 事实，need 前件 pure<{1+1}> 自动满足")
+    }
+
+    @Test
     fun `根文档 为命题 e阶T - 自然命题 x 属Nat 证明`() {
         val src = "@impure fun main() { var x = 1\n∴ x : Nat }"
         assertTrue(ok(src), "var x = 1 → 注入 x : Nat 自然命题，∴ x : Nat 应成立")

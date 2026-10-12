@@ -849,6 +849,8 @@ class Checker(
             val bodyImpure = curLambdaImpure
             lambdaDepth--
             curLambdaImpure = savedImpure
+            // 根文档：纯 lambda 亦可被证明纯（`pure<{ 1 + 1 }>`）——体无 impure 调用时登记自然命题
+            if (!bodyImpure) f.inject(PAtom("pure", listOf(e)))
             val purity = if (bodyImpure) "impure" else ""
             if (ft != null) FunType(ft.params, bt, purity = purity, theory = ft.theory)
             else FunType(e.params.map { syntheticT("参数") }, bt, purity = purity)
