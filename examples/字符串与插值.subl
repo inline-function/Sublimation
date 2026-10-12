@@ -22,7 +22,7 @@ fun main() {
     unchecked print(substring("abcd", 1, 3))       // bc
     unchecked print(strCmp("a", "b"))              // -1
     when(parseNat("12")) {
-        Some(n) -> { unchecked print(n) }          // 12
+        is Some(n) -> { unchecked print(n) }          // 12
         None -> { unchecked print("bad") }
     }
     unchecked print(toStr(42))                     // 42
@@ -38,7 +38,7 @@ fun main() {
     unchecked print(startsWith("hello", "he"))     // true
     unchecked print(endsWith("hello", "lo"))       // true
     unchecked print(strReplace("a-b-c", "-", "+")) // a+b+c
-    when(strIndexOf("hello", "ll")) { Some(i) -> { unchecked print(i) }; None -> { unchecked print("x") } }  // 2
+    when(strIndexOf("hello", "ll")) { is Some(i) -> { unchecked print(i) }; None -> { unchecked print("x") } }  // 2
     // ---- v2.0 Math 扩展 ----
     unchecked print(mathMin(3.0, 1.5))             // 1.5
     unchecked print(mathMax(3.0, 1.5))             // 3

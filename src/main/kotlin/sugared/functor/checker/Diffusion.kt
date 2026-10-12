@@ -121,14 +121,8 @@ internal fun Checker.proveOrDeep(gamma: List<Prop>, goal: Prop): Boolean {
     return res
 }
 
-/** 定理判据：`@theorem` 显式标注（强制登记，编译器擦除其代码）或 无 @impure、无 @mut 参数、返回 Null（自动登记，代码照常生成）。 */
-internal fun isTheoremFun(d: FunDecl): Boolean {
-    if ("theorem" in d.annotations) return true
-    if ("impure" in d.annotations) return false
-    if (d.params.any { "mut" in it.annotations }) return false
-    val rt = d.retType
-    return rt == null || (rt is NamedType && rt.name == "Null" && rt.args.isEmpty())
-}
+/** 定理判据：**只有 `@theorem` 显式标注的函数才是定理函数**（登记进定理空间，编译器擦除其代码，只供证明位）。非 @theorem 函数即使纯+Null 也不进定理空间。 */
+internal fun isTheoremFun(d: FunDecl): Boolean = "theorem" in d.annotations
 
 /** 定理搜索（`∴` 用）：纯函数（无 @impure/@mut）+ 返回 Null = 定理函数，自动登记进 theorems。
  *  搜索深度默认两跳——超限报 E-THEOREM-SEARCH-DEPTH（by solve 未来加深）。

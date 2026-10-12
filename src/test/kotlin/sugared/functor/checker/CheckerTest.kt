@@ -367,20 +367,20 @@ class CheckerTest {
 
     @Test
     fun `A2 Optional带字段枚举穷尽`() {
-        val src = "fun unwrap(o: Optional[Nat]): Nat = when(o) { None -> 0 Some(x) -> x }"
+        val src = "fun unwrap(o: Optional[Nat]): Nat = when(o) { None -> 0 is Some(x) -> x }"
         assertTrue(warns(src).none { it == "W-NON-EXHAUSTIVE" }, "Optional 两分支应穷尽")
         assertTrue(ok(src))
     }
 
     @Test
     fun `A2 Optional缺分支非穷尽`() {
-        val src = "fun f(o: Optional[Nat]): Null { when(o) { Some(x) -> 1 } }"
+        val src = "fun f(o: Optional[Nat]): Null { when(o) { is Some(x) -> 1 } }"
         assertTrue(warns(src).contains("W-NON-EXHAUSTIVE"), "缺 None 分支应判非穷尽")
     }
 
     @Test
     fun `A2 带字面量构造子模式保守非穷尽`() {
-        val src = "fun f(o: Optional[Nat]): Null { when(o) { None -> 0 Some(0) -> 1 } }"
+        val src = "fun f(o: Optional[Nat]): Null { when(o) { None -> 0 is Some(0) -> 1 } }"
         assertTrue(warns(src).contains("W-NON-EXHAUSTIVE"), "Some(0) 不覆盖所有 Some，应判非穷尽")
     }
 
@@ -423,7 +423,7 @@ class CheckerTest {
 
     @Test
     fun `决策30 参数化别名`() {
-        val src = "type NatOpt = Optional[Nat]\nfun f(o: NatOpt): Nat = when(o) { Some(x) -> x None -> 0 }\nfun main() { f(Some(1)) }"
+        val src = "type NatOpt = Optional[Nat]\nfun f(o: NatOpt): Nat = when(o) { is Some(x) -> x None -> 0 }\nfun main() { f(Some(1)) }"
         assertTrue(ok(src))
     }
 
@@ -440,14 +440,14 @@ class CheckerTest {
     @Test
     fun `T0 嵌套构造子模式穷尽无假阳性`() {
         val src = "fun depth(o: Optional[Optional[Nat]]): Nat = " +
-            "when(o) { Some(Some(y)) -> y  Some(None) -> 0  None -> 0 }"
+            "when(o) { is Some(is Some(y)) -> y  is Some(None) -> 0  None -> 0 }"
         val bad = checkFile(parseSource(src, "t")).diags.filter { it.severity == Severity.ERROR || it.code == "W-NON-EXHAUSTIVE" }
         assertTrue(bad.isEmpty(), "三层分支应判穷尽，实际: ${bad.map { it.render() }}")
     }
 
     @Test
     fun `T0 嵌套模式仍保守 - 缺内层分支`() {
-        val src = "fun f(o: Optional[Optional[Nat]]): Null { when(o) { Some(Some(y)) -> 0  None -> 0 } }"
+        val src = "fun f(o: Optional[Optional[Nat]]): Null { when(o) { is Some(is Some(y)) -> 0  None -> 0 } }"
         assertTrue(warns(src).contains("W-NON-EXHAUSTIVE"), "缺 Some(None) 分支应判非穷尽")
     }
 
@@ -455,7 +455,7 @@ class CheckerTest {
     fun `T0 绑定式分支吸收多字段枚举 - 无假阳性`() {
         val src = "enum Tree { Leaf(Nat), Node(Tree, Tree) }\n" +
             "enum Box[T] { B(T) }\n" +
-            "fun f(b: Box[Tree]): Null { when(b) { B(t) -> 1 } }"
+            "fun f(b: Box[Tree]): Null { when(b) { is B(t) -> 1 } }"
         assertTrue(warns(src).none { it == "W-NON-EXHAUSTIVE" }, "B(t) 绑定式吸收 B 全部值（含 Leaf/Node 细分），应穷尽")
     }
 
@@ -463,20 +463,20 @@ class CheckerTest {
     fun `T0 嵌套模式仍不吸收 - 缺内层细分分支`() {
         val src = "enum Tree { Leaf(Nat), Node(Tree, Tree) }\n" +
             "enum Box[T] { B(T) }\n" +
-            "fun f(b: Box[Tree]): Null { when(b) { B(Leaf(x)) -> 1 } }"
+            "fun f(b: Box[Tree]): Null { when(b) { is B(is Leaf(x)) -> 1 } }"
         assertTrue(warns(src).contains("W-NON-EXHAUSTIVE"), "B(Leaf(x)) 嵌套不吸收 Node，应判非穷尽")
     }
 
     @Test
     fun `T0 绑定式分支缺构造子仍非穷尽`() {
         val src = "enum Tree { Leaf(Nat), Node(Tree, Tree) }\n" +
-            "fun g(t: Tree): Null { when(t) { Node(l, r) -> 1 } }"
+            "fun g(t: Tree): Null { when(t) { is Node(l, r) -> 1 } }"
         assertTrue(warns(src).contains("W-NON-EXHAUSTIVE"), "Node 绑定式吸收 Node，但缺 Leaf 分支，应判非穷尽")
     }
 
     @Test
     fun `T0 嵌套模式等式保留完整结构`() {
-        val src = "fun f(o: Optional[Optional[Nat]]): Nat = when(o) { Some(Some(y)) -> y else -> 0 }"
+        val src = "fun f(o: Optional[Optional[Nat]]): Nat = when(o) { is Some(is Some(y)) -> y else -> 0 }"
         assertTrue(ok(src))
     }
 
@@ -672,7 +672,7 @@ class CheckerTest {
         "impl Functor for List[a] {\n" +
         "  fun map[A, B](f: (A) => B, fa: List[A]): List[B] = when (fa) {\n" +
         "    Nil -> Nil\n" +
-        "    Cons(h, t) -> Cons(f(h), map(f, t))\n" +
+        "    is Cons(h, t) -> Cons(f(h), map(f, t))\n" +
         "  }\n" +
         "}\n"
 
@@ -1053,7 +1053,7 @@ class CheckerTest {
         val src = "enum List[T] { Nil(), Cons(T, List[T]) }\n" +
             "fun len[T](xs: List[T]): Nat = when(xs) {\n" +
             "    Nil -> 0\n" +
-            "    Cons(_, t) -> 1 + len(t)\n" +
+            "    is Cons(_, t) -> 1 + len(t)\n" +
             "}"
         assertTrue(ok(src), "解构变量的结构递归应通过")
     }
@@ -1066,7 +1066,7 @@ class CheckerTest {
         val map = "enum List[T] { Nil(), Cons(T, List[T]) }\n" +
             "fun map[T, U](f: (T) => U, xs: List[T]): List[U] = when(xs) {\n" +
             "    Nil -> Nil()\n" +
-            "    Cons(h, t) -> Cons(f(h), map(f, t))\n" +
+            "    is Cons(h, t) -> Cons(f(h), map(f, t))\n" +
             "}"
         assertTrue(ok(map), "多参数递归至少一个实参为子项（map(f, t) 的 t）应放行")
     }
@@ -1214,7 +1214,7 @@ class CheckerTest {
 
     @Test
     fun `theorem 合一特性五`() {
-        val src = "fun LawOfExcludedMiddle[@q]: Null <q ∨ ¬q>\n@impure fun main() { ∴ q ∨ ¬q }"
+        val src = "@theorem fun LawOfExcludedMiddle[@q]: Null <q ∨ ¬q>\n@impure fun main() { ∴ q ∨ ¬q }"
         assertTrue(ok(src), "定理函数（纯+Null）后件与目标合一应证明")
     }
     @Test

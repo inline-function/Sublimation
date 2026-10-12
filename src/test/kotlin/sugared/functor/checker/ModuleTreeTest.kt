@@ -352,7 +352,7 @@ class ModuleTreeTest {
         enum List[T] { Nil(), Cons(T, List[T]) }
         fun listLength[T](xs: List[T]): Nat = when(xs) {
             Nil -> 0
-            Cons(_, t) -> 1 + listLength(t)
+            is Cons(_, t) -> 1 + listLength(t)
         }
     """.trimIndent()
 

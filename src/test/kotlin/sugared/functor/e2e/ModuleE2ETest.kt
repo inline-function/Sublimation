@@ -206,7 +206,7 @@ class ModuleE2ETest {
         val std = File("stdlib/collection.subl").readText()
         val main = "@impure fun main() {\n" +
             "var xs = stdlib.range(1, 5)\n" +
-            "when(xs.indexOf(2)) { Some(i) -> print(i); None -> print(\"x\") }\n" +
+            "when(xs.indexOf(2)) { is Some(i) -> print(i); None -> print(\"x\") }\n" +
             "print(xs.slice(1, 3).joinToString(\",\"))\n" +
             "print(xs.sortBy({ a, b -> a > b }).joinToString(\",\"))\n" +
             "print(xs.sortBy({ a, b -> a < b }).joinToString(\",\"))\n" +
@@ -227,10 +227,10 @@ class ModuleE2ETest {
                 "writeFile(\"$p1\", \"x\")\n" +
                 "appendFile(\"$p1\", \"y\")\n" +
                 "var r = readFile(\"$p1\")\n" +
-                "when(r) { Ok(s) -> print(s); Err(e) -> print(e) }\n" +
+                "when(r) { is Ok(s) -> print(s); is Err(e) -> print(e) }\n" +
                 "print(fileExists(\"$p1\"))\n" +
                 "var rd = readDir(\"$d\")\n" +
-                "when(rd) { Ok(xs) -> print(xs.size()); Err(e) -> print(e) }\n" +
+                "when(rd) { is Ok(xs) -> print(xs.size()); is Err(e) -> print(e) }\n" +
                 "}"
             assertEquals("xy\ntrue\n1", runTree(mapOf(
                 "stdlib/collection.subl" to std, "stdlib/collection.subl" to res, "main.subl" to main)))
@@ -258,7 +258,7 @@ class ModuleE2ETest {
         val p = f.absolutePath.replace("\\", "\\\\")
         // P5：readFile 返回 Result<Str,Str>，解构 Ok/Err 取内容
         val main = "@impure fun main() {\nwriteFile(\"$p\", \"hi\")\nvar r = readFile(\"$p\")\n" +
-            "when(r) {\n    Ok(s) -> print(s)\n    Err(e) -> print(e)\n}\n}"
+            "when(r) {\n    is Ok(s) -> print(s)\n    is Err(e) -> print(e)\n}\n}"
         try {
             assertEquals("hi", runTree(mapOf(
                 "stdlib/collection.subl" to std, "stdlib/collection.subl" to res, "main.subl" to main)))
@@ -272,7 +272,7 @@ class ModuleE2ETest {
         val res = File("stdlib/collection.subl").readText()
         // P5：readLine 返回 Result<Str,Str>，解构 Ok/Err 取该行
         val main = "@impure fun main() {\nvar r = readLine()\n" +
-            "when(r) {\n    Ok(s) -> print(s)\n    Err(e) -> print(e)\n}\n}"
+            "when(r) {\n    is Ok(s) -> print(s)\n    is Err(e) -> print(e)\n}\n}"
         assertEquals("hello", runTreeIn(mapOf(
             "stdlib/collection.subl" to std, "stdlib/collection.subl" to res, "main.subl" to main), "hello\n"))
     }
@@ -286,7 +286,7 @@ class ModuleE2ETest {
         val res = File("stdlib/collection.subl").readText()
         // 读不存在的文件 → Err 分支（平台无关，只断言命中 Err 分支）
         val main = "@impure fun main() {\nvar r = readFile(\"C:/no/such/subl-file.txt\")\n" +
-            "when(r) {\n    Ok(_) -> print(\"ok\")\n    Err(e) -> print(\"err\")\n}\n}"
+            "when(r) {\n    is Ok(_) -> print(\"ok\")\n    is Err(e) -> print(\"err\")\n}\n}"
         assertEquals("err", runTree(mapOf(
             "stdlib/collection.subl" to std, "stdlib/collection.subl" to res, "main.subl" to main)))
     }
@@ -299,7 +299,7 @@ class ModuleE2ETest {
         val f = File.createTempFile("subl-p5-rf", ".txt")
         val p = f.absolutePath.replace("\\", "\\\\")
         val main = "@impure fun main() {\nwriteFile(\"$p\", \"ok content\")\nvar r = readFile(\"$p\")\n" +
-            "when(r) {\n    Ok(s) -> print(s)\n    Err(e) -> print(\"err \" + e)\n}\n}"
+            "when(r) {\n    is Ok(s) -> print(s)\n    is Err(e) -> print(\"err \" + e)\n}\n}"
         try {
             assertEquals("ok content", runTree(mapOf(
                 "stdlib/collection.subl" to std, "stdlib/collection.subl" to res, "main.subl" to main)))
@@ -657,7 +657,7 @@ class ModuleE2ETest {
         val main = "@impure @async fun consume(ch: Channel[Nat]): Null {\n" +
             "  var x = ch.receive()\n" +   // 参数位 → T?（保守，CH-5 表）
             "  when (x) {\n" +
-            "    Some(v) -> print(\"val=\$v\")\n" +
+            "    is Some(v) -> print(\"val=\$v\")\n" +
             "    None -> print(\"closed\")\n" +
             "  }\n" +
             "}\n" +

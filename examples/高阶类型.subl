@@ -15,13 +15,13 @@ class Functor[F[_]] {
 impl Functor for List[a] {
     fun map[A, B](f: (A) => B, fa: List[A]): List[B] = when(fa) {
         Nil -> Nil()
-        Cons(h, t) -> Cons(f(h), map(f, t))
+        is Cons(h, t) -> Cons(f(h), map(f, t))
     }
 }
 
 fun fold[T, U](xs: List[T], init: U, f: (T, U) => U): U = when(xs) {
     Nil -> init
-    Cons(h, t) -> fold(t, f(h, init), f)
+    is Cons(h, t) -> fold(t, f(h, init), f)
 }
 
 fun joinToStr[T](xs: List[T], sep: Str): Str =

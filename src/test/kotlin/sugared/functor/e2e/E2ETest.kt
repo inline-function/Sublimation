@@ -71,7 +71,7 @@ class E2ETest {
     @Test
     fun `Optional 解构与默认值`() {
         assumeTrue(nodeAvailable())
-        val src = "fun u(o: Optional[Nat], d: Nat): Nat = when(o) { Some(x) -> x  None -> d }\n" +
+        val src = "fun u(o: Optional[Nat], d: Nat): Nat = when(o) { is Some(x) -> x  None -> d }\n" +
             "fun main() { unchecked print(u(Some(42), 0))\nunchecked print(u(None, 7)) }"
         assertEquals("42\n7", run(src))
     }
@@ -81,7 +81,7 @@ class E2ETest {
         assumeTrue(nodeAvailable())
         // 决策 64：嵌套 ∃ 展开后三层分支已可判穷尽，无需 else 兜底
         val src = "fun depth(o: Optional[Optional[Nat]]): Nat = " +
-            "when(o) { Some(Some(y)) -> y  Some(None) -> 0  None -> 0 }\n" +
+            "when(o) { is Some(is Some(y)) -> y  is Some(None) -> 0  None -> 0 }\n" +
             "fun main() { unchecked print(depth(Some(Some(5))))\nunchecked print(depth(Some(None))) }"
         assertEquals("5\n0", run(src))
     }
@@ -244,7 +244,7 @@ class E2ETest {
             "print(startsWith(\"hello\", \"he\"))\n" +
             "print(endsWith(\"hello\", \"lo\"))\n" +
             "print(strReplace(\"a-b-c\", \"-\", \"+\"))\n" +
-            "when(strIndexOf(\"hello\", \"ll\")) { Some(i) -> print(i); None -> print(\"-\") }\n" +
+            "when(strIndexOf(\"hello\", \"ll\")) { is Some(i) -> print(i); None -> print(\"-\") }\n" +
             "}"
         assertEquals("ABC\nabc\nx\ntrue\ntrue\na+b+c\n2", run(src))
     }
@@ -286,14 +286,14 @@ class E2ETest {
     fun `P1 parseNat 解构分支`() {
         assumeTrue(nodeAvailable())
         // when 分支体是表达式位，print 需 @impure main（决策 74/77）；主语直接是调用
-        val src = "@impure fun main() { when(parseNat(\"12\")) { Some(n) -> print(n)  None -> print(\"bad\") } }"
+        val src = "@impure fun main() { when(parseNat(\"12\")) { is Some(n) -> print(n)  None -> print(\"bad\") } }"
         assertEquals("12", run(src))
     }
 
     @Test
     fun `P1 parseNat 非法输入落 None`() {
         assumeTrue(nodeAvailable())
-        val src = "@impure fun main() { when(parseNat(\"x\")) { Some(n) -> print(n)  None -> print(\"bad\") } }"
+        val src = "@impure fun main() { when(parseNat(\"x\")) { is Some(n) -> print(n)  None -> print(\"bad\") } }"
         assertEquals("bad", run(src))
     }
 
@@ -318,8 +318,8 @@ class E2ETest {
         assumeTrue(nodeAvailable())
         val src = "@impure fun main() {\n" +
             "print(arrayLength(arrayOf(1, 2, 3)))\n" +
-            "when(arrayGet(arrayOf(7, 8), 0)) { Some(x) -> print(x)  None -> print(\"none\") }\n" +
-            "when(arrayGet(arrayOf(7, 8), 5)) { Some(x) -> print(x)  None -> print(\"none\") }\n" +
+            "when(arrayGet(arrayOf(7, 8), 0)) { is Some(x) -> print(x)  None -> print(\"none\") }\n" +
+            "when(arrayGet(arrayOf(7, 8), 5)) { is Some(x) -> print(x)  None -> print(\"none\") }\n" +
             "}"
         assertEquals("3\n7\nnone", run(src))
     }
@@ -330,7 +330,7 @@ class E2ETest {
         val src = "@impure fun main() {\n" +
             "var a = arraySet(arrayOf(1, 2), 0, 9)\n" +
             "print(arrayLength(a))\n" +
-            "when(arrayGet(a, 0)) { Some(x) -> print(x)  None -> print(\"none\") }\n" +
+            "when(arrayGet(a, 0)) { is Some(x) -> print(x)  None -> print(\"none\") }\n" +
             "}"
         assertEquals("2\n9", run(src))
     }
@@ -381,8 +381,8 @@ class E2ETest {
     fun `P10 parseRat 与向量混合`() {
         assumeTrue(nodeAvailable())
         val src = "@impure fun main() {\n" +
-            "when(parseRat(\"2.5\")) { Some(x) -> print(x)  None -> print(\"none\") }\n" +
-            "when(parseRat(\"abc\")) { Some(x) -> print(x)  None -> print(\"none\") }\n" +
+            "when(parseRat(\"2.5\")) { is Some(x) -> print(x)  None -> print(\"none\") }\n" +
+            "when(parseRat(\"abc\")) { is Some(x) -> print(x)  None -> print(\"none\") }\n" +
             "}"
         assertEquals("2.5\nnone", run(src))
     }
@@ -398,8 +398,8 @@ class E2ETest {
             "impl Show for Nat { fun show(): Str = toStr(self) }\n" +
             "enum L[T] { LNil(), LCons(T, L[T]) }\n" +
             "fun joinAll[T: Show](xs: L[T]): Str = when(xs) {\n" +
-            "    LNil() -> \"\"\n" +
-            "    LCons(h, t) -> concat(h.show(), joinAll(t))\n" +
+            "    is LNil() -> \"\"\n" +
+            "    is LCons(h, t) -> concat(h.show(), joinAll(t))\n" +
             "    _ -> \"\"\n" +
             "}\n" +
             "@impure fun main() {\n" +
@@ -416,17 +416,17 @@ class E2ETest {
         // 语言风格验证：jsonParse 失败返回 None 而非异常（空安全）；纯函数无需 unchecked；Optional 解构
         val src = "@impure fun main() {\n" +
             "when(jsonParse(\"{\\\"name\\\":\\\"alice\\\",\\\"age\\\":30,\\\"tags\\\":[1,2,3]}\")) {\n" +
-            "    Some(j) -> {\n" +
-            "        when(jsonGet(j, \"name\")) { Some(v) -> print(\"name=\" + jsonToStr(v))  None -> print(\"no-name\") }\n" +
-            "        when(jsonGet(j, \"age\")) { Some(v) -> when(jsonNum(v)) { Some(n) -> print(toStr(n))  None -> print(\"age-not-num\") }  None -> print(\"no-age\") }\n" +
+            "    is Some(j) -> {\n" +
+            "        when(jsonGet(j, \"name\")) { is Some(v) -> print(\"name=\" + jsonToStr(v))  None -> print(\"no-name\") }\n" +
+            "        when(jsonGet(j, \"age\")) { is Some(v) -> when(jsonNum(v)) { is Some(n) -> print(toStr(n))  None -> print(\"age-not-num\") }  None -> print(\"no-age\") }\n" +
             "        when(jsonGet(j, \"tags\")) {\n" +
-            "            Some(t) -> when(jsonAt(t, 1)) { Some(v) -> when(jsonNum(v)) { Some(n) -> print(\"tag1=\" + toStr(n))  None -> print(\"tag1-not-num\") }  None -> print(\"no-tag1\") }\n" +
+            "            is Some(t) -> when(jsonAt(t, 1)) { is Some(v) -> when(jsonNum(v)) { is Some(n) -> print(\"tag1=\" + toStr(n))  None -> print(\"tag1-not-num\") }  None -> print(\"no-tag1\") }\n" +
             "            None -> print(\"no-tags\")\n" +
             "        }\n" +
             "    }\n" +
             "    None -> print(\"parse-fail\")\n" +
             "}\n" +
-            "when(jsonParse(\"not json\")) { Some(_) -> print(\"should-not\")  None -> print(\"parse-fail-ok\") }\n" +
+            "when(jsonParse(\"not json\")) { is Some(_) -> print(\"should-not\")  None -> print(\"parse-fail-ok\") }\n" +
             "}"
         assertEquals("name=\"alice\"\n30\ntag1=2\nparse-fail-ok", run(src))
     }
@@ -436,11 +436,11 @@ class E2ETest {
         assumeTrue(nodeAvailable())
         val src = "@impure fun main() {\n" +
             "when(jsonParse(\"[true, false, null, 1.5, \\\"x\\\"]\")) {\n" +
-            "    Some(j) -> {\n" +
+            "    is Some(j) -> {\n" +
             "        print(\"isArr=\" + toStr(jsonIsArr(j)))\n" +
-            "        when(jsonAt(j, 0)) { Some(v) -> when(jsonBool(v)) { Some(b) -> print(\"b0=\" + toStr(b))  None -> print(\"not-bool\") }  None -> print(\"no-0\") }\n" +
-            "        when(jsonAt(j, 2)) { Some(v) -> print(\"null=\" + toStr(jsonIsNull(v)))  None -> print(\"no-2\") }\n" +
-            "        when(jsonAt(j, 3)) { Some(v) -> when(jsonNum(v)) { Some(n) -> print(\"n3=\" + toStr(n))  None -> print(\"no-3\") }  None -> print(\"no-3\") }\n" +
+            "        when(jsonAt(j, 0)) { is Some(v) -> when(jsonBool(v)) { is Some(b) -> print(\"b0=\" + toStr(b))  None -> print(\"not-bool\") }  None -> print(\"no-0\") }\n" +
+            "        when(jsonAt(j, 2)) { is Some(v) -> print(\"null=\" + toStr(jsonIsNull(v)))  None -> print(\"no-2\") }\n" +
+            "        when(jsonAt(j, 3)) { is Some(v) -> when(jsonNum(v)) { is Some(n) -> print(\"n3=\" + toStr(n))  None -> print(\"no-3\") }  None -> print(\"no-3\") }\n" +
             "        print(\"dump=\" + jsonToStr(j))\n" +
             "    }\n" +
             "    None -> print(\"parse-fail\")\n" +
@@ -458,7 +458,7 @@ class E2ETest {
             "@root fun jsonNum(j: Json): Optional[Rat]\n" +
             "@impure fun main() {\n" +
             "when(jsonParse(\"{\\\"age\\\":30}\")) {\n" +
-            "    Some(j) -> when(jsonGet(j, \"age\")) { Some(v) -> when(jsonNum(v)) { Some(n) -> print(toStr(n))  None -> print(\"not-num\") }  None -> print(\"no-field\") }\n" +
+            "    is Some(j) -> when(jsonGet(j, \"age\")) { is Some(v) -> when(jsonNum(v)) { is Some(n) -> print(toStr(n))  None -> print(\"not-num\") }  None -> print(\"no-field\") }\n" +
             "    None -> print(\"parse-fail\")\n" +
             "}\n" +
             "}"

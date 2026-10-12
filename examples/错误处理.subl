@@ -7,18 +7,18 @@
 enum Result[T, E] { Ok(T), Err(E) }
 
 fun isOk[T, E](r: Result[T, E]): Bool = when(r) {
-    Ok(_) -> true
-    Err(_) -> false
+    is Ok(_) -> true
+    is Err(_) -> false
 }
 
 fun unwrapOr[T, E](r: Result[T, E], d: T): T = when(r) {
-    Ok(v) -> v
-    Err(_) -> d
+    is Ok(v) -> v
+    is Err(_) -> d
 }
 
 fun mapResult[T, E, U](r: Result[T, E], f: (T) => U): Result[U, E] = when(r) {
-    Ok(v) -> Ok(f(v))
-    Err(e) -> Err(e)
+    is Ok(v) -> Ok(f(v))
+    is Err(e) -> Err(e)
 }
 
 @impure
@@ -32,7 +32,7 @@ fun main() {
     unchecked print(concat("isOk=", toStr(isOk(r))))       // isOk=true
 
     when(bad) {                                            // 解构分支
-        Ok(v) -> { unchecked print(v) }
-        Err(e) -> { unchecked print(concat("ERR: ", e)) } // ERR: bad
+        is Ok(v) -> { unchecked print(v) }
+        is Err(e) -> { unchecked print(concat("ERR: ", e)) } // ERR: bad
     }
 }

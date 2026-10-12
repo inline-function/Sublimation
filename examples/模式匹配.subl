@@ -35,8 +35,8 @@ fun range(n: Nat): Str = when(n) {
 
 // 嵌套解构 + 穷尽判定：Optional<Optional<Nat>> 覆盖律深展开
 fun flatten(oo: Optional[Optional[Nat]]): Nat = when(oo) {
-    Some(Some(y)) -> y
-    Some(None) -> 0
+    is Some(is Some(y)) -> y
+    is Some(None) -> 0
     None -> 0
 }
 

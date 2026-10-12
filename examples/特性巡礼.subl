@@ -23,7 +23,7 @@ enum Role { Admin(), Editor(Id), Guest() }
 fun roleText(r: Role): Str {
     return when(r) {
         Admin -> "admin"
-        Editor(_) -> "editor"
+        is Editor(_) -> "editor"
         Guest -> "guest"
     }
 }
@@ -31,8 +31,8 @@ fun roleText(r: Role): Str {
 // ---------- Optional 嵌套解构（决策 64） ----------
 fun flatten(oo: Optional[Optional[Nat]]): Nat {
     return when(oo) {
-        Some(Some(y)) -> y
-        Some(None) -> 0
+        is Some(is Some(y)) -> y
+        is Some(None) -> 0
         None -> 0
     }
 }

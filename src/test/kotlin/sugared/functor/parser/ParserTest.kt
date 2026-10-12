@@ -164,7 +164,7 @@ class ParserTest {
 
     @Test
     fun `when 解构与守卫`() {
-        val w = (stmtsOf("when(o) { Some(x) -> { 1 } is Nat if o < 1 -> 2 _ -> 0 }")[0] as ExprStmt).expr as WhenExpr
+        val w = (stmtsOf("when(o) { is Some(x) -> { 1 } is Nat if o < 1 -> 2 _ -> 0 }")[0] as ExprStmt).expr as WhenExpr
         val p0 = w.arms[0].pattern as PatCtor
         assertEquals("Some", p0.name)
         assertEquals(listOf("x"), p0.args.map { (it as PatCtor).name })   // 裸名由语义层裁定为绑定

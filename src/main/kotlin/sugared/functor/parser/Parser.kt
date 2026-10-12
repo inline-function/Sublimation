@@ -823,6 +823,10 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                 // is 前一个 token 的行即左操作数结束行；跨行的 is 不是中缀（when 分支体换行后的 is 属下一分支模式）
                 val leftEnd = toks.getOrNull(pos - 1)?.line
                 if (leftEnd != null && leftEnd != t.line) break
+                // 消歧（构造子解构须 is）：`is Ctor(...)` 的右侧是构造子调用形态（圆括号），绝不可能是类型——
+                // 视为 when 下一分支的模式起始而非中缀类型测（单行 when 内 `-> 0 is Some(x) ->` 必须这样切）
+                val nxt = toks.getOrNull(pos + 1)
+                if (nxt?.kind == Kind.IDENT && toks.getOrNull(pos + 2)?.kind == Kind.LPAREN) break
                 pos++
                 left = TypeTestExpr(left, parseType())
                 continue
@@ -1228,6 +1232,25 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                 }
                 return PatCtor(full, emptyList(), p)
             }
+            // `is Ctor(args)`：非路径构造子解构（Kotlin 风格 is + Rust 结构模式）
+            if (peek(Kind.IDENT) && toks.getOrNull(pos + 1)?.kind == Kind.LPAREN) {
+                val ctor = next().text
+                at(Kind.LPAREN)
+                val args = ArrayList<Pattern>()
+                if (!peek(Kind.RPAREN)) {
+                    while (true) {
+                        args += parsePattern()
+                        if (peek(Kind.COMMA)) {
+                            pos++
+                            if (peek(Kind.RPAREN) || peek(Kind.RBRACKET) || peek(Kind.RBRACE)) break   // v3.0：尾随逗号
+                            continue
+                        }
+                        break
+                    }
+                }
+                at(Kind.RPAREN)
+                return PatCtor(ctor, args, p)
+            }
             val ty = parseType()
             val bind = if (peek(Kind.IDENT) && cur().text == "as") { pos++; nameToken() } else null
             return PatIs(ty, bind, p)
@@ -1258,40 +1281,19 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                 val full = "$nm::$ctor"
                 if (peek(Kind.LPAREN)) {
                     pos++
-                    val args = ArrayList<Pattern>()
-                    if (!peek(Kind.RPAREN)) {
-                        while (true) {
-                            args += parsePattern()
-                            if (peek(Kind.COMMA)) {
-                    pos++
-                    if (peek(Kind.RPAREN) || peek(Kind.RBRACKET) || peek(Kind.RBRACE)) break   // v3.0：尾随逗号
-                    continue
-                }
-                            break
-                        }
-                    }
+                    if (!peek(Kind.RPAREN)) throw ParseFailure(fileName, cur(), "以 is 开头的构造子解构（类型解构须显式 is：`is E::A(...)`）")
                     at(Kind.RPAREN)
-                    return PatCtor(full, args, p)
+                    return PatCtor(full, emptyList(), p)
                 }
                 return PatCtor(full, emptyList(), p)
             }
             // 构造子模式：紧跟 `(` 且是已知大写构造子名 → 解构；否则是绑定变量
+            // 规则（用户约定）：**解构（带绑定/嵌套）必须显式 `is`**；无 is 的括号模式仅允许空参值比较 `A()`
             if (peek(Kind.LPAREN)) {
                 pos++
-                val args = ArrayList<Pattern>()
-                if (!peek(Kind.RPAREN)) {
-                    while (true) {
-                        args += parsePattern()
-                        if (peek(Kind.COMMA)) {
-                    pos++
-                    if (peek(Kind.RPAREN) || peek(Kind.RBRACKET) || peek(Kind.RBRACE)) break   // v3.0：尾随逗号
-                    continue
-                }
-                        break
-                    }
-                }
+                if (!peek(Kind.RPAREN)) throw ParseFailure(fileName, cur(), "以 is 开头的构造子解构（类型解构须显式 is：`is Some(v)`）")
                 at(Kind.RPAREN)
-                return PatCtor(nm, args, p)
+                return PatCtor(nm, emptyList(), p)
             }
             // 无参构造子（true/false/None）与绑定变量在此同形，由语义层按符号表判定
             return PatCtor(nm, emptyList(), p)

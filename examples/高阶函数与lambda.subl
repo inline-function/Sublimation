@@ -8,12 +8,12 @@ enum List[T] { Nil(), Cons(T, List[T]) }
 
 fun map[T, U](xs: List[T], f: (T) => U): List[U] = when(xs) {
     Nil -> Nil()
-    Cons(h, t) -> Cons(f(h), map(t, f))
+    is Cons(h, t) -> Cons(f(h), map(t, f))
 }
 
 fun fold[T, U](xs: List[T], init: U, f: (T, U) => U): U = when(xs) {
     Nil -> init
-    Cons(h, t) -> fold(t, f(h, init), f)
+    is Cons(h, t) -> fold(t, f(h, init), f)
 }
 
 fun joinToStr[T](xs: List[T], sep: Str): Str =
