@@ -58,8 +58,24 @@ internal fun Checker.rangeExhaustive(premises: List<Prop>, goal: Prop): Boolean 
         if (p is PAtom && p.head == "in" && p.terms.size == 2 && (p.terms[0] as? NameRef)?.name == name)
             rangeBounds(p.terms[1]) else null
     }
-    if (domainF == null) return false
-    val domain = domainF
+    // 深化：无 `x in (l..r)` 事实时，从同一变量的不等式对（x ≥ l 且 x ≤ r）组合出全域域——
+    // 前提为自然命题（score ≥ 0 / score ≤ 100）的无主题 when 区间穷尽（show.grade() 案例）
+    val domain = domainF ?: run {
+        var lo: Long? = null; var hi: Long? = null
+        for (p in premises) {
+            if (p !is PAtom || p.terms.size != 2) continue
+            if ((p.terms[0] as? NameRef)?.name != name) continue
+            val v = (p.terms[1] as? IntLit)?.value?.toLongOrNull() ?: continue
+            when (p.head) {
+                ">=", "≥" -> lo = maxOf(lo ?: v, v)
+                ">" -> lo = maxOf(lo ?: v + 1, v + 1)
+                "<=", "≤" -> hi = minOf(hi ?: v, v)
+                "<" -> hi = minOf(hi ?: v - 1, v - 1)
+            }
+        }
+        if (lo != null && hi != null) longArrayOf(lo, hi) else null
+    }
+    if (domain == null) return false
     val sorted = ranges.sortedBy { it[0] }
     if (sorted.isEmpty() || sorted[0][0] > domain[0]) return false
     var cur = sorted[0][0]

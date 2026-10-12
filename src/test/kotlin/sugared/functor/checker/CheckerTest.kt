@@ -1322,6 +1322,30 @@ class CheckerTest {
     }
 
     @Test
+    fun `无主题 when 区间穷尽 - 结构体伴生命题建域`() {
+        // show.grade() 浓缩：Nat 字段 ≥0（自然命题）∧ 伴生命题 ≤100 → 分支区间 0..100 全覆盖 → 密封
+        val src = "struct Student(name: Str, score: Nat) <score ≤ 100>\n" +
+            "enum Grade { A,B,C,D }\n" +
+            "class Gradable { fun grade(): Grade }\n" +
+            "impl Gradable for Student {\n" +
+            "  fun grade(): Grade = when {\n" +
+            "    score in (90..100) -> Grade::A\n" +
+            "    score in (80..89) -> Grade::B\n" +
+            "    score in (60..79) -> Grade::C\n" +
+            "    score in (0..59) -> Grade::D\n" +
+            "  }\n" +
+            "}\n" +
+            "fun main() { }"
+        assertTrue(ok(src), "域 [0,100] 由 score ≥ 0 与 score ≤ 100 组合，四段区间无缝衔接覆盖 → 非穷尽警告不应出现")
+    }
+
+    @Test
+    fun `自然命题 Nat 局部变量蕴含 n 大于等于 0`() {
+        val src = "fun need()<n ≥ 0>: Null { }\n@impure fun main() { var n = 3\nneed() }"
+        assertTrue(ok(src), "var n = 3（Nat）注入 n ≥ 0 自然命题，前件 n ≥ 0 自动满足（error 语义）")
+    }
+
+    @Test
     fun `IfProp 双支同结论特性六`() {
         val src = "@classic\n@impure fun main() { if[y = 2] { ∴ 1 = 1 } else { ∴ 1 = 1 } }"
         assertTrue(ok(src), "挂载 core.classic 后双支证明同结论应通过")

@@ -1,0 +1,9 @@
+// core.logic.classic —— 经典逻辑定理（排中律等）
+// @classic：本文件任一声明标注 @classic 即挂载经典逻辑（if[p] 排中律前置可用）
+@classic
+@theorem
+fun tertiumNonDatur[p]: Null <p ∨ ¬p>
+@theorem
+fun doubleNegation[p]: Null <¬¬p -> p>
+@theorem
+fun contraposition[p, q]: Null <(p -> q) -> (¬q -> ¬p)>

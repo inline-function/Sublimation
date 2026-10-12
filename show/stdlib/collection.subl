@@ -9,83 +9,83 @@ fun mapEmpty[K, V](): Map[K, V] = MapNil()
 
 fun size[T](xs: Set[T]): Nat = when(xs) {
     SetNil -> 0
-    SetCons(_, t) -> 1 + size(t)
+    is SetCons(_, t) -> 1 + size(t)
 }
 
 fun isEmpty[T](xs: Set[T]): Bool = when(xs) {
     SetNil -> true
-    SetCons(_, _) -> false
+    is SetCons(_, _) -> false
 }
 
 fun contains[T](xs: Set[T], x: T): Bool = when(xs) {
     SetNil -> false
-    SetCons(h, t) -> if (h == x) { true } else { contains(t, x) }
+    is SetCons(h, t) -> if (h == x) { true } else { contains(t, x) }
 }
 
 fun add[T](xs: Set[T], x: T): Set[T] = if (contains(xs, x)) { xs } else { SetCons(x, xs) }
 
 fun remove[T](xs: Set[T], x: T): Set[T] = when(xs) {
     SetNil -> SetNil()
-    SetCons(h, t) -> if (h == x) { remove(t, x) } else { SetCons(h, remove(t, x)) }
+    is SetCons(h, t) -> if (h == x) { remove(t, x) } else { SetCons(h, remove(t, x)) }
 }
 
 fun union[T](xs: Set[T], ys: Set[T]): Set[T] = when(xs) {
     SetNil -> ys
-    SetCons(h, t) -> if (contains(ys, h)) { union(t, ys) } else { SetCons(h, union(t, ys)) }
+    is SetCons(h, t) -> if (contains(ys, h)) { union(t, ys) } else { SetCons(h, union(t, ys)) }
 }
 
 fun intersect[T](xs: Set[T], ys: Set[T]): Set[T] = when(xs) {
     SetNil -> SetNil()
-    SetCons(h, t) -> if (contains(ys, h)) { SetCons(h, intersect(t, ys)) } else { intersect(t, ys) }
+    is SetCons(h, t) -> if (contains(ys, h)) { SetCons(h, intersect(t, ys)) } else { intersect(t, ys) }
 }
 
 fun toList[T](xs: Set[T]): List[T] = when(xs) {
     SetNil -> Nil()
-    SetCons(h, t) -> Cons(h, toList(t))
+    is SetCons(h, t) -> Cons(h, toList(t))
 }
 
 fun get[K, V](m: Map[K, V], k: K): Optional[V] = when(m) {
     MapNil -> None()
-    MapCons(k0, v0, t) -> if (k0 == k) { Some(v0) } else { get(t, k) }
+    is MapCons(k0, v0, t) -> if (k0 == k) { Some(v0) } else { get(t, k) }
 }
 
 fun put[K, V](m: Map[K, V], k: K, v: V): Map[K, V] = MapCons(k, v, m)
 
 fun size[K, V](m: Map[K, V]): Nat = when(m) {
     MapNil -> 0
-    MapCons(_, _, t) -> 1 + size(t)
+    is MapCons(_, _, t) -> 1 + size(t)
 }
 
 fun containsKey[K, V](m: Map[K, V], k: K): Bool = when(m) {
     MapNil -> false
-    MapCons(k0, _, t) -> if (k0 == k) { true } else { containsKey(t, k) }
+    is MapCons(k0, _, t) -> if (k0 == k) { true } else { containsKey(t, k) }
 }
 
 fun remove[K, V](m: Map[K, V], k: K): Map[K, V] = when(m) {
     MapNil -> MapNil()
-    MapCons(k0, v0, t) -> if (k0 == k) { t } else { MapCons(k0, v0, remove(t, k)) }
+    is MapCons(k0, v0, t) -> if (k0 == k) { t } else { MapCons(k0, v0, remove(t, k)) }
 }
 
 fun keys[K, V](m: Map[K, V]): List[K] = when(m) {
     MapNil -> Nil()
-    MapCons(k0, _, t) -> Cons(k0, keys(t))
+    is MapCons(k0, _, t) -> Cons(k0, keys(t))
 }
 
 fun values[K, V](m: Map[K, V]): List[V] = when(m) {
     MapNil -> Nil()
-    MapCons(_, v0, t) -> Cons(v0, values(t))
+    is MapCons(_, v0, t) -> Cons(v0, values(t))
 }
 
 // List → Set 转换（v2.0 基本库）
 fun toSet[A](xs: List[A]): Set[A] = when(xs) {
     Nil -> SetNil()
-    Cons(h, t) -> add(toSet(t), h)
+    is Cons(h, t) -> add(toSet(t), h)
 }
 
 // List[(K,V)] → Map 转换（v2.0 基本库）。元组解构用 when (k, v) ->（无元组下标语法）。
 fun toMap[K, V](xs: List[(K, V)]): Map[K, V] = when(xs) {
     Nil -> MapNil()
-    Cons(pr, t) -> when(pr) {
+    is Cons(pr, t) -> when(pr) {
         (k, v) -> put(toMap(t), k, v)
     }
 }
@@ -97,14 +97,14 @@ fun setOf[T](@vararg @tuple _items: (T)): Set[T] = SetNil()
 // Set.map：Kotlin 语义（Set → List）
 fun map[T, U](xs: Set[T], f: (T) => U): List[U] = when(xs) {
     SetNil -> Nil()
-    SetCons(h, t) -> Cons(f(h), map(t, f))
+    is SetCons(h, t) -> Cons(f(h), map(t, f))
 }
 
 // Set.forEach：无返回值（块体 → Null）
 fun forEach[T](xs: Set[T], f: (T) => Null) {
     when(xs) {
         SetNil -> null
-        SetCons(h, t) -> { f(h); forEach(t, f) }
+        is SetCons(h, t) -> { f(h); forEach(t, f) }
     }
     return null
 }
@@ -116,83 +116,83 @@ enum List[T] { Nil(), Cons(T, List[T]) }
 
 fun listLength[T](xs: List[T]): Nat = when(xs) {
     Nil -> 0
-    Cons(_, t) -> 1 + listLength(t)
+    is Cons(_, t) -> 1 + listLength(t)
 }
 
 // Kotlin 风格：xs.size()（List/Set/Map 各有同名重载，路由按接收者）
 fun size[T](xs: List[T]): Nat = when(xs) {
     Nil -> 0
-    Cons(_, t) -> 1 + size(t)
+    is Cons(_, t) -> 1 + size(t)
 }
 
 fun isEmpty[T](xs: List[T]): Bool = when(xs) {
     Nil -> true
-    Cons(_, _) -> false
+    is Cons(_, _) -> false
 }
 
 fun head[T](xs: List[T]): Optional[T] = when(xs) {
     Nil -> None()
-    Cons(h, _) -> Some(h)
+    is Cons(h, _) -> Some(h)
 }
 
 fun last[T](xs: List[T]): Optional[T] = when(xs) {
     Nil -> None()
-    Cons(h, Nil) -> Some(h)
-    Cons(_, t) -> last(t)
+    is Cons(h, Nil) -> Some(h)
+    is Cons(_, t) -> last(t)
 }
 
 fun contains[T](xs: List[T], x: T): Bool = when(xs) {
     Nil -> false
-    Cons(h, t) -> if (h == x) { true } else { contains(t, x) }
+    is Cons(h, t) -> if (h == x) { true } else { contains(t, x) }
 }
 
 fun elementAt[T](xs: List[T], i: Nat): Optional[T] = when(xs) {
     Nil -> None()
-    Cons(h, t) -> if (i == 0) { Some(h) } else { elementAt(t, i - 1) }
+    is Cons(h, t) -> if (i == 0) { Some(h) } else { elementAt(t, i - 1) }
 }
 
 fun count[T](xs: List[T], f: (T) => Bool): Nat = when(xs) {
     Nil -> 0
-    Cons(h, t) -> if (f(h)) { 1 + count(t, f) } else { count(t, f) }
+    is Cons(h, t) -> if (f(h)) { 1 + count(t, f) } else { count(t, f) }
 }
 
 fun map[T, U](xs: List[T], f: (T) => U): List[U] = when(xs) {
     Nil -> Nil()
-    Cons(h, t) -> Cons(f(h), map(t, f))
+    is Cons(h, t) -> Cons(f(h), map(t, f))
 }
 
 fun flatMap[T, U](xs: List[T], f: (T) => List[U]): List[U] = when(xs) {
     Nil -> Nil()
-    Cons(h, t) -> append(f(h), flatMap(t, f))
+    is Cons(h, t) -> append(f(h), flatMap(t, f))
 }
 
 fun filter[T](xs: List[T], f: (T) => Bool): List[T] = when(xs) {
     Nil -> Nil()
-    Cons(h, t) -> if (f(h)) { Cons(h, filter(t, f)) } else { filter(t, f) }
+    is Cons(h, t) -> if (f(h)) { Cons(h, filter(t, f)) } else { filter(t, f) }
 }
 
 fun fold[T, U](xs: List[T], init: U, f: (T, U) => U): U = when(xs) {
     Nil -> init
-    Cons(h, t) -> fold(t, f(h, init), f)
+    is Cons(h, t) -> fold(t, f(h, init), f)
 }
 
 // forEach：无返回值（块体 → Null）。when 分支体是值位，故用尾 `return null` 收束（分支内 return 暂不展平）。
 fun forEach[T](xs: List[T], f: (T) => Null) {
     when(xs) {
         Nil -> null
-        Cons(h, t) -> { f(h); forEach(t, f) }
+        is Cons(h, t) -> { f(h); forEach(t, f) }
     }
     return null
 }
 
 fun append[T](xs: List[T], ys: List[T]): List[T] = when(xs) {
     Nil -> ys
-    Cons(h, t) -> Cons(h, append(t, ys))
+    is Cons(h, t) -> Cons(h, append(t, ys))
 }
 
 fun reverse[T](xs: List[T]): List[T] = when(xs) {
     Nil -> Nil()
-    Cons(h, t) -> append(reverse(t), Cons(h, Nil()))
+    is Cons(h, t) -> append(reverse(t), Cons(h, Nil()))
 }
 
 // 数值递减递归（a → a+1），非结构子项——按 P9 用 unchecked 逃逸标注。
@@ -206,12 +206,12 @@ fun range(a: Nat, b: Nat): List[Nat] {
 
 fun take[T](xs: List[T], n: Nat): List[T] = when(xs) {
     Nil -> Nil()
-    Cons(h, t) -> if (n == 0) { Nil() } else { unchecked var r = take(t, n - 1); Cons(h, r) }
+    is Cons(h, t) -> if (n == 0) { Nil() } else { unchecked var r = take(t, n - 1); Cons(h, r) }
 }
 
 fun drop[T](xs: List[T], n: Nat): List[T] = when(xs) {
     Nil -> Nil()
-    Cons(h, t) -> if (n == 0) { xs } else { unchecked var r = drop(t, n - 1); r }
+    is Cons(h, t) -> if (n == 0) { xs } else { unchecked var r = drop(t, n - 1); r }
 }
 
 // zip 恢复（v2.0 记录：#基础库）：类型参数命名 **A/B** 而非 T/U——Cons 构造子的枚举类型参数也叫 T，
@@ -219,9 +219,9 @@ fun drop[T](xs: List[T], n: Nat): List[T] = when(xs) {
 // 编译器哲学"用户避开重名"——改名即修复，无需 alpha 化。
 fun zip[A, B](xs: List[A], ys: List[B]): List[(A, B)] = when(xs) {
     Nil -> Nil()
-    Cons(h, t) -> when(ys) {
+    is Cons(h, t) -> when(ys) {
         Nil -> Nil()
-        Cons(h2, t2) -> Cons((h, h2), zip(t, t2))
+        is Cons(h2, t2) -> Cons((h, h2), zip(t, t2))
     }
 }
 
@@ -232,24 +232,24 @@ fun sum(xs: List[Nat]): Nat = fold(xs, 0, { x, acc -> acc + x })
 
 fun maxNat(xs: List[Nat]): Optional[Nat] = when(xs) {
     Nil -> None()
-    Cons(h, t) -> when(t) {
+    is Cons(h, t) -> when(t) {
         Nil -> Some(h)
-        Cons(_, _) -> { var m = maxNat(t); when(m) { Some(v) -> if (h > v) { Some(h) } else { Some(v) }; None -> Some(h) } }
+        is Cons(_, _) -> { var m = maxNat(t); when(m) { is Some(v) -> if (h > v) { Some(h) } else { Some(v) }; None -> Some(h) } }
     }
 }
 
 fun minNat(xs: List[Nat]): Optional[Nat] = when(xs) {
     Nil -> None()
-    Cons(h, t) -> when(t) {
+    is Cons(h, t) -> when(t) {
         Nil -> Some(h)
-        Cons(_, _) -> { var m = minNat(t); when(m) { Some(v) -> if (h < v) { Some(h) } else { Some(v) }; None -> Some(h) } }
+        is Cons(_, _) -> { var m = minNat(t); when(m) { is Some(v) -> if (h < v) { Some(h) } else { Some(v) }; None -> Some(h) } }
     }
 }
 
 // 去重（v2.0 基本库）：保留首次出现顺序。类型参数 A 避开 Cons 的 T 撞名（同 zip 注释）。
 fun distinct[A](xs: List[A]): List[A] = when(xs) {
     Nil -> Nil()
-    Cons(h, t) -> if (contains(t, h)) { distinct(t) } else { Cons(h, distinct(t)) }
+    is Cons(h, t) -> if (contains(t, h)) { distinct(t) } else { Cons(h, distinct(t)) }
 }
 
 // ---- v2.0 基本库补全（2026-10-10）：any / all / indexOf / slice / sortBy ----
@@ -257,22 +257,22 @@ fun distinct[A](xs: List[A]): List[A] = when(xs) {
 
 fun any[T](xs: List[T], f: (T) => Bool): Bool = when(xs) {
     Nil -> false
-    Cons(h, t) -> if (f(h)) { true } else { any(t, f) }
+    is Cons(h, t) -> if (f(h)) { true } else { any(t, f) }
 }
 
 fun all[T](xs: List[T], f: (T) => Bool): Bool = when(xs) {
     Nil -> true
-    Cons(h, t) -> if (f(h)) { all(t, f) } else { false }
+    is Cons(h, t) -> if (f(h)) { all(t, f) } else { false }
 }
 
 fun indexOf[T](xs: List[T], x: T): Optional[Nat] = when(xs) {
     Nil -> None()
-    Cons(h, t) -> if (h == x) { Some(0) } else { when(indexOf(t, x)) { Some(n) -> Some(n + 1); None -> None() } }
+    is Cons(h, t) -> if (h == x) { Some(0) } else { when(indexOf(t, x)) { is Some(n) -> Some(n + 1); None -> None() } }
 }
 
 fun slice[T](xs: List[T], a: Nat, b: Nat): List[T] = when(xs) {
     Nil -> Nil()
-    Cons(h, t) -> if (a > 0) { unchecked var r = slice(t, a - 1, b - 1); r }
+    is Cons(h, t) -> if (a > 0) { unchecked var r = slice(t, a - 1, b - 1); r }
         else if (b == 0) { Nil() }
         else { unchecked var r2 = slice(t, 0, b - 1); Cons(h, r2) }
 }
@@ -280,12 +280,12 @@ fun slice[T](xs: List[T], a: Nat, b: Nat): List[T] = when(xs) {
 // 稳定排序：f(a, b) 为 true ⇒ a 排在 b 前。稳定排序用插入排序自举。
 fun sortBy[T](xs: List[T], f: (T, T) => Bool): List[T] = when(xs) {
     Nil -> Nil()
-    Cons(h, t) -> insertSort(h, sortBy(t, f), f)
+    is Cons(h, t) -> insertSort(h, sortBy(t, f), f)
 }
 
 fun insertSort[T](x: T, xs: List[T], f: (T, T) => Bool): List[T] = when(xs) {
     Nil -> Cons(x, Nil())
-    Cons(h, t) -> if (f(x, h)) { Cons(x, Cons(h, t)) } else { Cons(h, insertSort(x, t, f)) }
+    is Cons(h, t) -> if (f(x, h)) { Cons(x, Cons(h, t)) } else { Cons(h, insertSort(x, t, f)) }
 }
 // Sublimation 标准库（v2.0 Kotlin 化）：Result / Optional
 // Result[T, E]：Ok(T) 成功携带值；Err(E) 失败携带错误信息（比 Optional 多错误通道）
@@ -294,82 +294,86 @@ fun insertSort[T](x: T, xs: List[T], f: (T, T) => Bool): List[T] = when(xs) {
 enum Result[T, E] { Ok(T), Err(E) }
 
 fun isOk[T, E](r: Result[T, E]): Bool = when(r) {
-    Ok(_) -> true
-    Err(_) -> false
+    is Ok(_) -> true
+    is Err(_) -> false
 }
 
 fun isErr[T, E](r: Result[T, E]): Bool = when(r) {
-    Ok(_) -> false
-    Err(_) -> true
+    is Ok(_) -> false
+    is Err(_) -> true
 }
 
 fun unwrapOr[T, E](r: Result[T, E], d: T): T = when(r) {
-    Ok(x) -> x
-    Err(_) -> d
+    is Ok(x) -> x
+    is Err(_) -> d
 }
 
 fun map[T, U, E](r: Result[T, E], f: (T) => U): Result[U, E] = when(r) {
-    Ok(x) -> Ok(f(x))
-    Err(e) -> Err(e)
+    is Ok(x) -> Ok(f(x))
+    is Err(e) -> Err(e)
 }
 
 fun flatMap[T, U, E](r: Result[T, E], f: (T) => Result[U, E]): Result[U, E] = when(r) {
-    Ok(x) -> f(x)
-    Err(e) -> Err(e)
+    is Ok(x) -> f(x)
+    is Err(e) -> Err(e)
 }
 
 fun mapErr[T, E, F](r: Result[T, E], f: (E) => F): Result[T, F] = when(r) {
-    Ok(x) -> Ok(x)
-    Err(e) -> Err(f(e))
+    is Ok(x) -> Ok(x)
+    is Err(e) -> Err(f(e))
 }
 
 // mapResult / flatMapResult 保留（v1.1 名字，P5 验收用）
 fun mapResult[T, U, E](r: Result[T, E], f: (T) => U): Result[U, E] = when(r) {
-    Ok(x) -> Ok(f(x))
-    Err(e) -> Err(e)
+    is Ok(x) -> Ok(f(x))
+    is Err(e) -> Err(e)
 }
 
 // ---------- Optional 便捷方法（接收者风格 o.map {} / o.getOrElse {}） ----------
 
 fun map[T, U](o: Optional[T], f: (T) => U): Optional[U] = when(o) {
-    Some(x) -> Some(f(x))
+    is Some(x) -> Some(f(x))
     None -> None()
 }
 
 fun flatMap[T, U](o: Optional[T], f: (T) => Optional[U]): Optional[U] = when(o) {
-    Some(x) -> f(x)
+    is Some(x) -> f(x)
     None -> None()
 }
 
 fun filter[T](o: Optional[T], f: (T) => Bool): Optional[T] = when(o) {
-    Some(x) -> if (f(x)) { o } else { None() }
+    is Some(x) -> if (f(x)) { o } else { None() }
     None -> None()
 }
 
 fun isSome[T](o: Optional[T]): Bool = when(o) {
-    Some(_) -> true
+    is Some(_) -> true
     None -> false
 }
 
 fun isNone[T](o: Optional[T]): Bool = when(o) {
-    Some(_) -> false
+    is Some(_) -> false
     None -> true
 }
 
 fun getOrElse[T](o: Optional[T], d: T): T = when(o) {
-    Some(x) -> x
+    is Some(x) -> x
     None -> d
 }
 
 fun orElse[T](o: Optional[T], d: Optional[T]): Optional[T] = when(o) {
-    Some(_) -> o
+    is Some(_) -> o
     None -> d
 }
 
 fun toResult[T, E](o: Optional[T], e: E): Result[T, E] = when(o) {
-    Some(x) -> Ok(x)
+    is Some(x) -> Ok(x)
     None -> Err(e)
 }
+
+// 构造便利：emptyList / listOf（@tulpe 可变元组 → 实参打包为 Cons 链，codegen 特判）
+fun emptyList[T](): List[T] = Nil()
+fun listOf[T](@tulpe t: T): List[T] = Cons(t, Nil())
 
 // ---------- v3.0 第三批 4.2：Collection 型类体系 ----------
 // 统一各容器的高阶查询：contains / size。方法式成员；扩展调用法（x.f()）优先类型类，自由函数用普通调用法 f(x)。
@@ -377,56 +381,63 @@ fun toResult[T, E](o: Optional[T], e: E): Result[T, E] = when(o) {
 class Collection {
     fun contains[T](element: T): Bool
     fun size(): Nat
+    // isEmpty ⇔ size() = 0
+    fun isEmpty(): Bool
 }
 impl Collection for List[a] {
     fun contains[T](element: T): Bool = when (self) {
         Nil -> false
-        Cons(h, t) -> if (h == element) { true } else { t.contains(element) }
+        is Cons(h, t) -> if (h == element) { true } else { t.contains(element) }
     }
     fun size(): Nat = when (self) {
         Nil -> 0
-        Cons(_, t) -> 1 + t.size()
+        is Cons(_, t) -> 1 + t.size()
     }
+    fun isEmpty(): Bool = self.size() == 0
 }
 impl Collection for Set[a] {
     fun contains[T](element: T): Bool = when (self) {
         SetNil -> false
-        SetCons(h, t) -> if (h == element) { true } else { t.contains(element) }
+        is SetCons(h, t) -> if (h == element) { true } else { t.contains(element) }
     }
     fun size(): Nat = when (self) {
         SetNil -> 0
-        SetCons(_, t) -> 1 + t.size()
+        is SetCons(_, t) -> 1 + t.size()
     }
+    fun isEmpty(): Bool = self.size() == 0
 }
 impl Collection for Map[k, v] {
     fun contains[T](element: T): Bool = when (self) {
         MapNil -> false
-        MapCons(k0, v0, t) -> if (k0 == element) { true } else { t.contains(element) }
+        is MapCons(k0, v0, t) -> if (k0 == element) { true } else { t.contains(element) }
     }
     fun size(): Nat = when (self) {
         MapNil -> 0
-        MapCons(_, _, t) -> 1 + t.size()
+        is MapCons(_, _, t) -> 1 + t.size()
     }
+    fun isEmpty(): Bool = self.size() == 0
 }
 impl Collection for Optional[a] {
     fun contains[T](element: T): Bool = when (self) {
-        Some(x) -> x == element
+        is Some(x) -> x == element
         None -> false
     }
     fun size(): Nat = when (self) {
-        Some(_) -> 1
+        is Some(_) -> 1
         None -> 0
     }
+    fun isEmpty(): Bool = self.size() == 0
 }
 impl Collection for Result[a, e] {
     fun contains[T](element: T): Bool = when (self) {
-        Ok(x) -> x == element
-        Err(_) -> false
+        is Ok(x) -> x == element
+        is Err(_) -> false
     }
     fun size(): Nat = when (self) {
-        Ok(_) -> 1
-        Err(_) -> 0
+        is Ok(_) -> 1
+        is Err(_) -> 0
     }
+    fun isEmpty(): Bool = self.size() == 0
 }
 
 // ---------- v3.0 第三批 4.3：Tuple 类型族（决策 61/62）----------
@@ -446,8 +457,15 @@ impl Tuple for SingleTuple[a] {
 impl Tuple for (a, b) {
     fun size(): Nat = 2
     fun isEmpty(): Bool = false
+
 }
 impl Tuple for (a, b, c) {
     fun size(): Nat = 3
     fun isEmpty(): Bool = false
+}
+
+// ---------- Functor 型类（高阶类型）：map/lift 统一入口（方法糖优先自由函数，实施理见 CallCheck sugar-first）----------
+// 注：HKT 点号式（receiver 在 kind 应用位）的字典调用实参装配仍需完善；容器 map 由同名自由函数承载。
+class Functor[F[_]] {
+    fun map[A, B](fa: F[A], f: (A) => B): F[B]
 }

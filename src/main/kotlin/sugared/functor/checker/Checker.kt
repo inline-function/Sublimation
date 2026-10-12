@@ -404,6 +404,17 @@ class Checker(
             // 字段裸名 ⟝ self.field —— 供智能转换与等式推理使用
             f.inject(PAtom("=", listOf(NameRef(fp.name), FieldExpr(NameRef("self"), fp.name))))
             f.inject(PAtom(":", listOf(NameRef(fp.name), typeToExpr(ft))))
+            // 深化上下文系统：Nat 字段蕴含 f ≥ 0（自然命题；无主题 when 区间穷尽的域下界）
+            if (ft.name == "Nat")
+                f.inject(PAtom(">=", listOf(NameRef(fp.name), IntLit("0", ""))))
+        }
+        // 深化上下文系统：方法体内注入 self 结构体的伴生命题（同结构体形参语义：
+        // `struct Student<score ≤ 100>` 的方法体内有 score ≤ 100——无主题 when 区间穷尽判定据此建域）
+        st?.props?.forEach { prop ->
+            // 方法体内字段以裸名出现（score 而非 self.score）：占位符替换为裸字段名
+            val sub = LinkedHashMap<String, Expr>()
+            st.fields.forEach { sub[it.name] = NameRef(it.name) }
+            f.inject(substPropTerms(PropLogic.fromExpr(prop), sub))
         }
     }
 
@@ -485,6 +496,9 @@ class Checker(
                 if (isPureValue(s.value) || mut) {
                     f.inject(PAtom(":", listOf(NameRef(s.name), typeToExpr(t))))
                 }
+                // 深化上下文系统：Nat 局部变量蕴含 n ≥ 0（自然命题；区间穷尽/下界推理）
+                if (syms.expand(t).name == "Nat")
+                    f.inject(PAtom(">=", listOf(NameRef(s.name), IntLit("0", s.pos))))
                 if (s.type == null) d.supplement("D-TYPE-INFERRED", s.pos, "var ${s.name} 推导为 ${t.render()}")
                 t   // 声明即表达式：var 的值是初值（A3）
             }
