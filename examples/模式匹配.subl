@@ -46,7 +46,7 @@ fun firstOf(p: (Nat, Nat)): Nat = when(p) {
     else -> 0
 }
 
-@unpure
+@impure
 fun main() {
     unchecked print(name(Red))               // 红
     partial(Blue)                            // 只警告不报错

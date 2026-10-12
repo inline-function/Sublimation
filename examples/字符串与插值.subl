@@ -14,7 +14,7 @@ fun mulPair(t: (Nat, Nat)): Nat = when(t) {
     else -> 0
 }
 
-@unpure
+@impure
 fun main() {
     unchecked print(concat("ab", "cd"))            // abcd
     unchecked print(length("abcd"))                // 4
@@ -44,7 +44,7 @@ fun main() {
     unchecked print(mathMax(3.0, 1.5))             // 3
     unchecked print(mathClamp(9.0, 0.0, 5.0))      // 5
     unchecked print(mathRound(2.6))                // 3
-    // ---- v2.0 Time / Random（@unpure）----
+    // ---- v2.0 Time / Random（@impure）----
     if (timeNow() > 0) { unchecked print("t") }    // t
     var rr = rand()
     if (rr < 1.0) { unchecked print("r") }        // r

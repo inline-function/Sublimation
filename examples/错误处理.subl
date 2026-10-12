@@ -21,7 +21,7 @@ fun mapResult[T, E, U](r: Result[T, E], f: (T) => U): Result[U, E] = when(r) {
     Err(e) -> Err(e)
 }
 
-@unpure
+@impure
 fun main() {
     var r: Result[Nat, Str] = Ok(42)
     var bad: Result[Nat, Str] = Err("bad")

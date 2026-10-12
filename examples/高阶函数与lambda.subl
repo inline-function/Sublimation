@@ -19,7 +19,7 @@ fun fold[T, U](xs: List[T], init: U, f: (T, U) => U): U = when(xs) {
 fun joinToStr[T](xs: List[T], sep: Str): Str =
     fold(xs, "", { x, acc -> if (acc == "") { toStr(x) } else { concat(acc, concat(sep, toStr(x))) } })
 
-@unpure
+@impure
 fun main() {
     var inc: (Nat) => Nat = { x -> x + 1 }     // lambda 作值，显式参数
     unchecked print(inc(4))                      // 5

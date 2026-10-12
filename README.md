@@ -8,7 +8,7 @@
 
 语言名取自物理现象「凝华」——气态不经液态直接成固态。正如本文的命题不经运行时、直接在编译期析出为程序的静态保证。
 
-> ✅ v2.0 完成：空安全 / 可变性控制 / 异步 + HKT 高阶类型，376 项测试全绿
+> ✅ v3.0：上下文系统 / 定理函数与定理库 / 容器与类型类体系，452 项测试全绿
 
 ---
 
@@ -27,19 +27,18 @@
 
 ## 核心特性
 
-- **上下文弥散（命题系统）**——函数类型携带前置/后置命题，调用前必须满足什么、调用后能保证什么，写进类型本身。用户写普通代码，编译器自动推理，命题像气体一样在作用域里弥散，无需显式传递。
-- **目录即模块（P0）**——一个目录 = 一个模块，`<模块名>.settings` 显式挂载；根目录下的 `stdlib/` 隐式挂载给所有模块。
-- **类型类**——Haskell 的拼写、Rust 的机制：`class Show[T] { fun show(): Str }` + `impl Show for Grade { ... }`，按实参类型解析类型类字典分发。
-- **真模式匹配 `when`**——解构、嵌套构造子、守卫、穷尽性判定（Java 式 switch 已全盘废弃）。
-- **纯度受控**——函数默认且只能为纯；禁止调用非纯内建、禁止写外部变量，除非用 `unchecked` 逃逸。`unchecked.axiom[q]` 直接令命题 q 成立。
-- **一切运算符皆函数**——`1 + 1` 等价于 `+(1,1)`，二元函数即可中缀；支持自定义运算符与两参函数中缀调用。
-- **数值类型**——`Nat`（自然数）/ `Int`（整数）/ `Rat`（有理数），不丢精度的实数/复数类型留名待续。
-- **零运行时库**——源到源生成纯 JavaScript，`node` 直接运行。
-- **递归停机判定（P9）**——纯函数自递归须满足结构子项约束，否则编译期拒绝（`unchecked` 逃逸放行）。
-- **空安全（v2.0）**——`T?` 可空类型 + `?:` Elvis + `?T` 类型测 + `is T` 智能转换自动收窄。
-- **可变性控制（v2.0）**——`@mut` 显式可变 + `immutable<T>` 不可变命题 + `untouch<param>` 形参只读保证。
-- **异步（v2.0）**——`@async` 函数 + `Task` 并发 + `Channel` 通信 + 自动 `await` 挂起点；`main` 天然 async。
-- **高阶类型 HKT（v2.0）**——`[F[_]]` kind 形参、`impl Functor for List[a]` 字典占位、`F[A]~List[Nat]` kind 合一（详见《高阶类型.md》）。
+- **上下文弥散与自动证明**——函数类型携带前置/后置命题（伴生命题）：调用前必须满足什么、调用后能保证什么，写进类型本身。`∵` 从事实推导、`+∵` 验证上下文中成立后注入事实（否则 E-CANNOT-PROVE）、`∴` 求证断言；`when(n in _)` 的区间穷尽由编译器收集关键表达式（如 0,10,11,20,21,30）并应用定理自动证明，无需手工补丁。
+- **定理函数**——定理是没有注解的普通纯函数：无副作用、不修改参数、返回 `Null` 时自动登记进定理空间供证明搜索，代码照常生成（定理体内可能经 `unchecked` 逃离检查）。预置定理库 `core.logic`（区间界/传递/合取/MP 等）与 `core.logic.classic`（排中律/双重否定/换质位）。
+- **数学记号一等公民**——源码直接写 `∈` `≥` `≤`、`∀` `∃`、`n ∈ (0..30)`；每个自然数恒有自然命题 `n ≥ 0`；结构相同的表达式自动自反（`1 + 2 = 1 + 2` 可证，`1 + 2 = 3` 不自动证）。
+- **目录即模块**——一个目录 = 一个模块，`<模块名>.settings` 显式挂载（`mount core/logic`）；根目录下的 `stdlib/` 隐式挂载；跨模块定理搜索沿可见路径展开。
+- **类型类与扩展方法**——`class Show[T] { fun show(): Str }` + `impl Show for Grade { ... }` 按实参类型解析字典；`impl List[a] { ... }`（没有实现类型类的 impl）为扩展方法，成员脱糖为带 `self` 首参的自由函数，承担多形态（同作用域同名函数仅允许一个）。方法糖 `x.f()` 优先同名自由函数、其次类型类字典。
+- **容器体系**——`List`/`Set`/`Map`/`Optional`/`Result` 与 Tuple 族统一实现 `Collection`（`size`/`isEmpty`/`contains`），并提供函数式 API：`map`/`filter`/`flatMap`/`forEach`/`fold`/`any`/`all`/`head`/`last`/`zip`/`reverse`…；`listOf(1,2,3)`（`@tulpe` 可变元组）与 `emptyList()` 便捷构造。
+- **空安全**——可空值用 `Optional[T]`（`Some`/`None`）显式表示，配合安全调用与自动解构；没有裸 `null` 穿透类型系统。
+- **纯度受控**——函数默认纯；副作用显式标注 `@impure`，就地修改显式标注 `@mut`；不方便标时可以 `unchecked` 逃逸。上下文（命题、`∴`、守卫）中的表达式必须纯。
+- **真模式匹配 `when`**——解构、嵌套构造子、守卫、穷尽性判定，含区间模板 `when(n in _) { (0..10) -> ... }`（Java 式 switch 已全盘废弃）。
+- **异步（v2.0）**——`@async` 函数 + `Task { ... }` 并发 + `Channel` 通信；唯一运行时组件是 Channel 小运行时。
+- **高阶类型 HKT**——`Functor[F[_]]` kind 形参；kind 在类声明期检查。
+- **可读后端**——源到源生成纯 JavaScript，`node` 直接运行。
 
 ## 快速开始
 
@@ -52,13 +51,14 @@ gradlew.bat fatJar
 产出 `build/libs/sublimation.jar`（fat jar，含 Kotlin stdlib），随后可脱离 gradle 独立使用：
 
 ```bat
-java -jar build/libs/sublimation.jar check hello.subl
+java -jar build/libs/sublimation.jar compile hello.subl -o hello.js
+node hello.js
 ```
 
 开发期也可直接跑：
 
 ```bat
-gradlew.bat run --args="check hello.subl"
+gradlew.bat run --args="compile hello.subl"
 ```
 
 ### 命令行
@@ -66,85 +66,70 @@ gradlew.bat run --args="check hello.subl"
 ```
 parse <file.subl>        词法+语法分析，打印语法树
 tokens <file.subl>       打印 token 流
-check <file.subl> [-v]   语义分析（弥散/证明义务/纯度/可变性/impl/when 穷尽）
+check <file.subl> [-v]   语义分析（上下文弥散/证明义务/纯度/可变性/impl/when 穷尽）
 compile <file.subl> [-o out.js]   语义通过后生成 JS（默认打印到标准输出）
-check/compile <目录> [-o out.js]  目录模式 = 模块系统入口（P0）
+check/compile <目录> [-o out.js]  目录模式 = 模块系统入口
 ```
 
 ### 示例
 
-命题弥散——调用后 p 自动进入作用域，编译器检索到并通过：
+Hello World（IO 需要 `@impure`）：
 
 ```subl
-fun giveP(): Null <p> { unchecked.axiom[p] }   // 下文给出命题 p
-fun takeP()<p>: Null {}                         // 上文要求命题 p
-
+@impure
 fun main() {
-    giveP()          // 调用后 p 弥散进作用域
-    takeP()          // 编译期在作用域中检索到 p，通过
+    print("Hello, Sublimation!")
 }
 ```
 
-模式匹配 + 守卫 + 类型类：
+纯函数默认；局部可变绑定用 `@mut var`；区间穷尽由编译器证明：
 
 ```subl
-enum Grade { A(), B(), C(), D() }
+fun double(x: Nat): Nat = x * 2
 
-fun gradeOf(n: Rat): Grade = when(n) {
-    _ if n >= 90.0 -> A()
-    _ if n >= 80.0 -> B()
-    _ if n >= 70.0 -> C()
-    _ -> D()
-}
-
-class Show[T] { fun show(): Str }
-impl Show for Grade {
-    fun show(): Str = when(self) {
-        A() -> "优秀"
-        B() -> "良好"
-        C() -> "及格"
-        D() -> "挂科"
-        _ -> "?"
+fun demo(n: Nat)<n ∈ (0..30)>: Nat {
+    +∵ 15 ∈ (0..30)   // ∵/∵+ 非公理注入：必须上下文中成立，否则 E-CANNOT-PROVE
+    @mut var r = 0
+    when(n in _) {              // 编译器证明这三个区间覆盖 (0..30)
+        (0 .. 10)  -> { r = 1 }
+        (11 .. 20) -> { r = 2 }
+        (21 .. 30) -> { r = 3 }
     }
+    return r
 }
+```
 
-@unpure fun main() {
-    print(gradeOf(95.0).show())
+类型类与容器：
+
+```subl
+class Show[T] { fun show(): Str }
+
+@impure
+fun main() {
+    var xs = listOf(1, 2, 3)
+    print(xs.map({ x -> x + 1 }).size())     // 2
+    print(xs.isEmpty())                      // false
 }
+```
+
+`unchecked` 逃逸与命题注入：
+
+```subl
+fun giveP(): Null <p> { unchecked.axiom[p] }   // 无条件令命题 p 成立
 ```
 
 ## 目录结构
 
 ```
 ├── src/main/kotlin/          编译器本体（Kotlin）
-│   ├── sugared/functor/lexer/     M1 词法
-│   ├── sugared/functor/parser/    M2 语法
-│   ├── sugared/functor/checker/   M3 语义（弥散/合一/模块树/类型类）
-│   ├── sugared/functor/codegen/   M4 JS 代码生成
-│   └── sugared/functor/ast/       AST 定义
-├── src/test/kotlin/          376 项测试（8 个测试类）
-├── stdlib/                   标准库（.subl 自举：List/Set/Map/Result）
-├── examples/                 示例集（按特性拆分的单文件示例，中文文件名 + 头部注预期输出，见 examples/说明.md；含 模块系统/ 多模块）
-├── show/                     v2.0 应用示例：读 students.json → 统计成绩（自包含，双击 run.bat）
-└── doc/                      设计文档（语言简介/语法/模块系统/空安全/异步/HKT 等）
-```
-
-## 演示：`show/`
-
-`show/` 是一个**自包含**的 v2.0 应用示例包（含编译器 fat jar）：读入 `students.json`（学生姓名 + 语数英成绩）→ 纯 .subl JSON parser 解析 → 统计每人总分/平均分、班级各科平均分、最高/最低总分。拷走整个目录即可对外演示：
-
-```
-show/
-├── run.bat          双击：编译 show 目录 → show.js，运行并写 show.log
-├── show.subl        主程序（readFile → 内建 JSON 解析 → 统计 → 输出）
-├── students.json    数据文件（班级/教师/学生语数英成绩）
-├── stdlib/          隐式挂载的标准库
-└── sublimation.jar  编译器 fat jar
-```
-
-```bat
-show\run.bat          # 编译 + 运行，产物 show.js + show.log
-show\run.bat run      # 仅运行现有的 show.js
+│   └── sugared/functor/           lexer/ parser/ checker/ codegen/ ast/
+├── src/test/kotlin/          452 项测试（词法/语法/语义/类型推理/模块树/端到端/诊断）
+├── stdlib/                   标准库（.subl 自举：List/Set/Map/Optional/Result/Tuple +
+│                                        Collection 类型类 + core.logic / core.logic.classic 定理库）
+├── examples/                 示例集（见 examples/说明.md）
+├── show/                     v2.0 应用示例：读 students.json → 统计成绩（自包含）
+├── doc/                      设计文档（设计哲学/术语表/定理函数/上下文/类型类与结构体…）
+└── wiki/                     公开特性文档（Home=快速上手 + 空安全/上下文/类型类/副作用/高阶类型/证明…）
 ```
 
 ## 测试
@@ -153,23 +138,19 @@ show\run.bat run      # 仅运行现有的 show.js
 gradlew.bat test --rerun-tasks
 ```
 
-当前 **376 项全绿**（8 个测试类）：词法 / 语法 / 语义 / 类型推理 / 模块树 / 端到端 / 诊断码覆盖面体检。
+当前 **452 项全绿**：词法 / 语法 / 语义 / 类型推理 / 模块树 / 端到端 / 诊断码覆盖面体检。
 
 ## 文档
 
 | 文档 | 内容 |
 |---|---|
-| [doc/语言简介.md](doc/语言简介.md) | 定位、语言立场、编译管线、当前进度 |
-| [doc/快速上手.md](doc/快速上手.md) | 新人向心智模型 |
-| [doc/语言语法.md](doc/语言语法.md) | 详细文法 |
-| [doc/模块系统.md](doc/模块系统.md) | 目录即模块、挂载、可见性 |
-| [doc/上下文系统.md](doc/上下文系统.md) | 命题弥散、智能转换泛化 |
-| [doc/形式化规范.md](doc/形式化规范.md) | 语言核心与已实现语义的规范 |
-| [doc/空安全系统.md](doc/空安全系统.md) | v2.0 空安全（T?/?:/>:/?T） |
-| [doc/副作用与可变性控制.md](doc/副作用与可变性控制.md) | 纯度规范与 @mut/immutable/untouch |
-| [doc/异步.md](doc/异步.md) | v2.0 异步（@async/Task/Channel） |
-| [doc/高阶类型.md](doc/高阶类型.md) | v2.0 HKT（kind/字典分发/kind 合一） |
-| [doc/样式规范.md](doc/样式规范.md) | 代码风格与书写规范 |
-| [doc/术语表.md](doc/术语表.md) | 专门术语收拢 |
+| [wiki/Home.md](wiki/Home.md) | **快速上手**：编译与语法基础 |
+| [wiki/](wiki/) | 公开特性：空安全 / 上下文与自动证明 / 类型类与扩展方法 / 容器 / 副作用与可变性 / 高阶类型 / 手动证明 / 模块系统 / 数学记号与定理库 |
+| [doc/设计哲学.md](doc/设计哲学.md) | 语言设计取舍 |
+| [doc/伴生命题与命题系统.md](doc/伴生命题与命题系统.md) | 上下文系统核心 |
+| [doc/定理函数.md](doc/定理函数.md) | 定理判据与定理库 |
+| [doc/类型类与结构体.md](doc/类型类与结构体.md) | 类型类 / 扩展方法 / 结构体 / 容器 |
+| [doc/术语表.md](doc/术语表.md) | 术语收拢 |
+| [doc/纯函数与副作用.md](doc/纯函数与副作用.md) | 纯度与标注纪律 |
 
-> 内部文档（决策日志《草案思路》、阶段蓝图《v1.0 补全计划》、P11 压测报告等）位于 `doc2/`，不随公共仓库发布。
+> 历史设计草案（v2 空安全/异步/副作用等）保留在 `doc/` 同目录，顶部均标注状态，现行语义以 `wiki/` 与上表 `doc/` 文档为准；内部决策日志位于 `doc2/`，不随公共仓库发布。

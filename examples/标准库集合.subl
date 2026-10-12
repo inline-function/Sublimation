@@ -65,7 +65,7 @@ fun sortBy[T](xs: List[T], f: (T, T) => Bool): List[T] = when(xs) {
     Cons(h, t) -> insertSort(h, sortBy(t, f), f)
 }
 
-@unpure
+@impure
 fun main() {
     var xs = range(1, 5)                                          // [1,2,3,4]
     unchecked print(size(xs))                                      // 4

@@ -15,7 +15,7 @@ fun optNum(o: Optional[Json]): Rat = when(o) {
     None -> 0.0
 }
 
-@unpure
+@impure
 fun main() {
     var js = "{\"name\":\"alice\",\"pi\":3.14,\"ok\":true,\"none\":null,\"tags\":[1,2,3]}"
     when(jsonParse(js)) {

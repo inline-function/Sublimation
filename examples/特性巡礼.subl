@@ -81,7 +81,7 @@ impl Named for User {
 }
 
 // ---------- @mut 累加 + 提前 return ----------
-@unpure fun counterDemo(): Nat {
+@impure fun counterDemo(): Nat {
     @mut var sum = 0
     sum = sum + 1
     sum = sum + 41
@@ -101,18 +101,18 @@ fun get7(): Id <$ = 7> {
 fun needTagged()<tagged<7>>: Null {}
 
 // ---------- pure 命题改变代码行为（决策 54/55） ----------
-@unpure fun side(): Null {}
+@impure fun side(): Null {}
 fun pureCaller()<pure<side>>: Null {
     side()          // 上下文持 pure<side> ⇒ 纯作用域调非纯函数放行
 }
 
 // ---------- 入口：顶层不许放语句，一切执行代码在 main ----------
-@unpure
+@impure
 fun main() {
     var u1 = User("alice", 30)          // 位置式构造
     var u2 = User(name = "bob")         // 命名字段构造，age 取默认值 0
     unchecked.axiom[forall n. tagged<n>]
-    unchecked.axiom[pure<side>]          // @unpure 函数不自动注册 pure，前件需显式供给
+    unchecked.axiom[pure<side>]          // @impure 函数不自动注册 pure，前件需显式供给
 
     unchecked print(u1.name)                    // alice
     unchecked print(u2.age)                     // 0

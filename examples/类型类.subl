@@ -22,17 +22,17 @@ impl Show for Grade {
 // 隐式 self：impl 方法不写接收者；体内裸用字段名 name ≡ self.name
 struct A(name: Str = "unknown")
 class Boast {
-    @unpure
+    @impure
     fun printMyself()
 }
 impl Boast for A {
-    @unpure
+    @impure
     fun printMyself() {
         print(name)
     }
 }
 
-@unpure
+@impure
 fun main() {
     var o = A(name = "test")
     o.printMyself()                  // test（点号式：隐式 self + 字典分发）

@@ -5,7 +5,7 @@
 // 预期输出（每行一个）：child task / task joined / channel receive = 7
 // ============================================================
 
-@unpure
+@impure
 fun main() {
     var t = Task { unchecked print("child task") }  // 创建任务（不启动）
     t.start()                                       // 启动（不阻塞）

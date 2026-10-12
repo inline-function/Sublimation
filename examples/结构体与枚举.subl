@@ -26,7 +26,7 @@ fun area(s: Shape): Nat = when(s) {
 }
 
 // 入口：顶层只能写声明，执行代码全部进 main
-@unpure
+@impure
 fun main() {
     var u = User(name = "alice")      // 命名字段构造，age 取默认值 0
     unchecked print(u.name)           // alice

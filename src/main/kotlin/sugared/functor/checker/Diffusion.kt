@@ -53,10 +53,22 @@ internal fun Checker.dollarOf(body: Expr): Expr = when (body) {
     else -> body
 }
 
-/** v3.0 特性 1：常量原子命题真值判定（terms 全为数值字面量时直接求值；不动推理规则）。 */
+/** v3.0 特性 1：常量原子命题真值判定。∈/in 右端是区间（BinExpr/PAtom("..")），须先分支，不能当 IntLit 判（修复：原来第 60 行先 as? IntLit 使区间分支不可达）。 */
 internal fun constAtomValue(p: Prop): Boolean? {
     if (p !is PAtom || p.terms.size != 2) return null
     val a = (p.terms[0] as? IntLit)?.value?.toLongOrNull() ?: return null
+    if (p.head == "in" || p.head == "∈") {
+        val rg = p.terms[1]
+        val lo: Long; val hi: Long
+        if (rg is PAtom && rg.head == ".." && rg.terms.size == 2 && rg.terms[0] is IntLit && rg.terms[1] is IntLit) {
+            lo = (rg.terms[0] as IntLit).value.toLongOrNull() ?: return null
+            hi = (rg.terms[1] as IntLit).value.toLongOrNull() ?: return null
+        } else if (rg is BinExpr && rg.op == ".." && rg.left is IntLit && rg.right is IntLit) {
+            lo = (rg.left as IntLit).value.toLongOrNull() ?: return null
+            hi = (rg.right as IntLit).value.toLongOrNull() ?: return null
+        } else return null
+        return a >= lo && a <= hi
+    }
     val b = (p.terms[1] as? IntLit)?.value?.toLongOrNull() ?: return null
     return when (p.head) {
         "=", "==" -> a == b
@@ -65,18 +77,6 @@ internal fun constAtomValue(p: Prop): Boolean? {
         ">" -> a > b
         "<=", "≤" -> a <= b
         ">=", "≥" -> a >= b
-        "in", "∈" -> {
-            val rg = p.terms[1]
-            val lo: Long; val hi: Long
-            if (rg is PAtom && rg.head == ".." && rg.terms.size == 2 && rg.terms[0] is IntLit && rg.terms[1] is IntLit) {
-                lo = (rg.terms[0] as IntLit).value.toLongOrNull() ?: return null
-                hi = (rg.terms[1] as IntLit).value.toLongOrNull() ?: return null
-            } else if (rg is BinExpr && rg.op == ".." && rg.left is IntLit && rg.right is IntLit) {
-                lo = (rg.left as IntLit).value.toLongOrNull() ?: return null
-                hi = (rg.right as IntLit).value.toLongOrNull() ?: return null
-            } else return null
-            a >= lo && a <= hi
-        }
         else -> null
     }
 }

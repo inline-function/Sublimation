@@ -483,10 +483,14 @@ class Checker(
             // ---------- v3.0 特性 5：∵ / ∴ 语句（命题层，语句位） ----------
             is BecauseStmt -> {
                 val p = PropLogic.fromExpr(s.prop)
-                val proves = proveOrDeep(f.allFacts(), p) || searchTheorems(p, 0, f.localTheorems)
-                d.supplement(if (proves) "D-BECAUSE-PROVED" else "D-BECAUSE-TRUSTED", s.pos,
-                    "∵ " + PropLogic.render(p) + (if (proves) "（可证，注入 Γ）" else "（信任，注入 Γ——留痕可审计）"))
-                f.inject(p)
+                if (proveOrDeep(f.allFacts(), p) || searchTheorems(p, 0, f.localTheorems)) {
+                    f.inject(p)
+                    d.supplement("D-BECAUSE-PROVED", s.pos, "∵ " + PropLogic.render(p) + "（上下文中成立，注入 Γ）")
+                } else {
+                    val tried = if (syms.theorems.isEmpty()) "（无定理函数）" else syms.theorems.keys.joinToString(", ")
+                    d.error("E-CANNOT-PROVE", s.pos,
+                        "∵ " + PropLogic.render(p) + " 在上下文中无法成立，不能注入。尝试的定理：" + tried + "；当前 Γ：" + f.allFacts().joinToString("； ") { PropLogic.render(it) })
+                }
                 namedT("Null", emptyList())
             }
             is ThereforeStmt -> {
@@ -502,8 +506,16 @@ class Checker(
                 namedT("Null", emptyList())
             }
             is PlusBecauseStmt -> {
-                f.inject(PropLogic.fromExpr(s.prop))
-                d.supplement("D-PLUSBECAUSE", s.pos, "+∵ 注入 " + PropLogic.render(PropLogic.fromExpr(s.prop)))
+                val p = PropLogic.fromExpr(s.prop)
+                // +∵ 是「因为」的累积形式：仍须上下文中成立，否则报错（不是 unchecked/公理注入）
+                if (proveOrDeep(f.allFacts(), p) || searchTheorems(p, 0, f.localTheorems)) {
+                    f.inject(p)
+                    d.supplement("D-PLUSBECAUSE-PROVED", s.pos, "+∵ " + PropLogic.render(p) + "（上下文中成立，注入 Γ）")
+                } else {
+                    val tried = if (syms.theorems.isEmpty()) "（无定理函数）" else syms.theorems.keys.joinToString(", ")
+                    d.error("E-CANNOT-PROVE", s.pos,
+                        "+∵ " + PropLogic.render(p) + " 在上下文中无法成立，不能注入。尝试的定理：" + tried + "；当前 Γ：" + f.allFacts().joinToString("； ") { PropLogic.render(it) })
+                }
                 namedT("Null", emptyList())
             }
             // ---------- v3.0 特性 6：if[p] 排中律（语句位纯证明构造） ----------

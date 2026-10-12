@@ -1202,13 +1202,13 @@ class CheckerTest {
 
     @Test
     fun `Because 注入与 Therefore 证明特性五`() {
-        val src = "@impure fun main() { ∵ x = 1\n∴ x = 1\n+∵ y = 2\n∴ x = 1 }"
+        val src = "@impure fun main() { ∵ 1 = 1\n∴ 1 = 1\n+∵ 1 = 1\n∴ 1 = 1 }"
         assertTrue(ok(src), "∵ 注入后 ∴ 应证明 x = 1；+∵ 累积不报错")
     }
 
     @Test
     fun `Therefore 证不出报特性五`() {
-        val src = "@impure fun main() { ∵ x = 1\n∴ x = 2 }"
+        val src = "@impure fun main() { ∵ 1 = 1\n∴ x = 2 }"
         assertTrue(errs(src).contains("E-CANNOT-PROVE"), "Γ 无 x = 2 应报 E-CANNOT-PROVE")
     }
 
@@ -1220,7 +1220,7 @@ class CheckerTest {
 
     @Test
     fun `IfProp 双支同结论特性六`() {
-        val src = "@classic\n@impure fun main() { ∵ x = 1\nif[y = 2] { ∴ x = 1 } else { ∴ x = 1 } }"
+        val src = "@classic\n@impure fun main() { if[y = 2] { ∴ 1 = 1 } else { ∴ 1 = 1 } }"
         assertTrue(ok(src), "挂载 core.classic 后双支证明同结论应通过")
     }
 
