@@ -495,7 +495,7 @@ class Checker(
                     f.inject(q)   // 连续 ∴ 自动累积上文（q 成为下文事实）
                     d.supplement("D-THEREFORE", s.pos, "∴ " + PropLogic.render(q) + " 成立")
                 } else {
-                    val tried = if (syms.theorems.isEmpty()) "（无 @theorem 定理）" else syms.theorems.keys.joinToString(", ")
+                    val tried = if (syms.theorems.isEmpty()) "（无定理函数）" else syms.theorems.keys.joinToString(", ")
                     d.error("E-CANNOT-PROVE", s.pos,
                         "∴ " + PropLogic.render(q) + " 证不出。尝试的定理：" + tried + "；当前 Γ：" + f.allFacts().joinToString("； ") { PropLogic.render(it) })
                 }

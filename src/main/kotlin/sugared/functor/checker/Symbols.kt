@@ -150,8 +150,8 @@ internal fun Checker.collectDecl(decl: Decl) {
             if (decl.name !in setOf("Bool", "Null", "Optional")) registerEnum(decl)
         }
         is FunDecl -> {
-            // v3.0 特性 5：@theorem 函数登记进定理空间（∴ 搜索只搜这里）
-            if ("theorem" in decl.annotations) syms.theorems[decl.name] = decl
+            // 定理函数（纯 + 返回 Null，无 @theorem 注解）登记进定理空间（∴ 搜索只搜这里）
+            if (isTheoremFun(decl)) syms.theorems[decl.name] = decl
             // v3.0 特性 6：@classic 标注的函数 → core.classic 已挂载（if[p] 前置检查用）
             if ("classic" in decl.annotations) syms.classicMounted = true
             // `_` 是匿名占位名，不入符号表（指导§54：标注为 _ 的标识符无法被后续引用）
@@ -199,8 +199,8 @@ internal fun Checker.checkDeclTypes(decl: Decl) {
             // v2.0 @root 机制：无体函数必须标注 @root 且名字在内建白名单（编译器按名字特判出 JS 实现）
             if (decl.body == null) {
                 when {
-                    // v3.0 特性 5：@theorem 无函数体——签名即定理（参与 ∴ 搜索，不生成调用代码）
-                    "theorem" in decl.annotations -> {}
+                    // 无体定理函数 = 公理（签名即定理；有体定理照常生成运行时代码）
+                    isTheoremFun(decl) -> {}
                     "root" !in decl.annotations ->
                         d.error("E-FUN-NO-BODY", decl.pos, "函数 ${decl.name} 没有函数体。普通函数必须写出实现；内建函数请标注 @root（编译器对白名单开放）")
                     decl.name !in ROOT_WHITELIST ->

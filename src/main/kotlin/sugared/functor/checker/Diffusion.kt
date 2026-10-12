@@ -115,7 +115,16 @@ internal fun Checker.proveOrDeep(gamma: List<Prop>, goal: Prop): Boolean {
     return res
 }
 
-/** v3.0 特性 5：@theorem 定理搜索（`∴` 用）。只搜 @theorem 标记函数（普通函数不搜）。
+/** 定理判据：无 @impure、无 @mut 参数、返回 Null（缺省返回类型即 Null）——自动登记进 theorems，无需 @theorem 注解。
+ *  有体定理照常生成运行时代码（无法用 unchecked 逃过纯度检查）。 */
+internal fun isTheoremFun(d: FunDecl): Boolean {
+    if ("impure" in d.annotations) return false
+    if (d.params.any { "mut" in it.annotations }) return false
+    val rt = d.retType
+    return rt == null || (rt is NamedType && rt.name == "Null" && rt.args.isEmpty())
+}
+
+/** 定理搜索（`∴` 用）：纯函数（无 @impure/@mut）+ 返回 Null = 定理函数，自动登记进 theorems。
  *  搜索深度默认两跳——超限报 E-THEOREM-SEARCH-DEPTH（by solve 未来加深）。
  *  命中判据：定理后件（post）与目标做**结构合一**——theorem 的 theory 参数（如 @p）为元变量，
  *  可绑定到目标对应位置的任意项（实例化后 post ≡ q）。 */

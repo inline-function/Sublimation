@@ -1214,8 +1214,8 @@ class CheckerTest {
 
     @Test
     fun `theorem 合一特性五`() {
-        val src = "@theorem\nfun LawOfExcludedMiddle[@p]: <p ∨ ¬p>\n@impure fun main() { ∴ q ∨ ¬q }"
-        assertTrue(ok(src), "@theorem 后件与目标合一应证明")
+        val src = "fun LawOfExcludedMiddle[@q]: Null <q ∨ ¬q>\n@impure fun main() { ∴ q ∨ ¬q }"
+        assertTrue(ok(src), "定理函数（纯+Null）后件与目标合一应证明")
     }
 
     @Test

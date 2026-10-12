@@ -276,7 +276,8 @@ class Symbols {
     val ctors = LinkedHashMap<String, CtorInfo>()
     val classes = LinkedHashMap<String, ClassDecl>()
     val funs = LinkedHashMap<String, FunDecl>()
-    /** v3.0 特性 5：@theorem 注解标记的函数（名 → 声明），参与 `∴` 的定理搜索（普通函数不参与） */
+    /** 定理函数：无副作用（无 @impure/@mut 参数）且返回 Null 的函数（名 → 声明），参与 `∴` 的定理搜索。
+     *  无 @theorem 注解——判据即登记；有体定理照常生成运行时代码（无法用 unchecked 逃过纯度） */
     val theorems = LinkedHashMap<String, FunDecl>()
     /** v3.0 特性 6：core.classic 已挂载标志（文件内任一声明带 @classic 注解即挂载）——if[p] 排中律前置 */
     var classicMounted = false
