@@ -62,8 +62,11 @@ class DiagCoverageTest {
     @Test fun `E-IMMUT-ASSIGN`() =
         assertTrue(has("fun main() { var a = 1\na = 2 }", "E-IMMUT-ASSIGN"))
 
-    @Test fun `E-ASSIGN-TARGET 字段赋值`() =
-        assertTrue(has("struct A(x: Nat)\nfun main() { var p = A(1)\np.x = 2 }", "E-ASSIGN-TARGET"))
+    @Test fun `E-ASSIGN-TARGET 字段赋值非结构体`() =
+        assertTrue(has("fun main() { var n = 5\nn.x = 2 }", "E-ASSIGN-TARGET"))
+
+    @Test fun `E-NOT-MUT 字段赋值`() =
+        assertTrue(has("struct A(x: Nat)\nfun main() { @mut var p = A(1)\np.x = 2 }", "E-NOT-MUT"))
 
     @Test fun `E-IMPL-INCOMPLETE`() =
         assertTrue(has("class C { fun m1(): Null }\nimpl C for Nat { }", "E-IMPL-INCOMPLETE"))

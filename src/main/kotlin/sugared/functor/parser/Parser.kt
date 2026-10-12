@@ -113,8 +113,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         Kind.AT -> {
             val save = pos
             val anns = parseAnnotations()
-            if (cur().kind == Kind.FUN) DeclEntry(parseFun(anns))
-            else { pos = save; throw noTopLevel() }
+            when (cur().kind) {
+                Kind.FUN -> DeclEntry(parseFun(anns))
+                Kind.STRUCT -> if ("mut" in anns) DeclEntry(parseStruct(anns)) else { pos = save; throw noTopLevel() }
+                else -> { pos = save; throw noTopLevel() }
+            }
         }
         else -> throw noTopLevel()
     }
@@ -125,7 +128,7 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
     fun parseDecl(): Decl = when (cur().kind) {
         Kind.FUN -> parseFun(emptyList())
         Kind.CLASS -> parseClass()
-        Kind.STRUCT -> parseStruct()
+        Kind.STRUCT -> parseStruct(emptyList())
         Kind.ENUM -> parseEnum()
         Kind.IMPL -> parseImpl()
         Kind.TYPE -> parseTypeAlias()
@@ -405,6 +408,13 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
     }
 
     private fun parseType(): Type {
+        // @mut T 可变视图类型（root doc 54-61）：类型位注解前缀
+        if (peek(Kind.AT)) {
+            pos++
+            val an = at(Kind.IDENT).text
+            if (an != "mut") throw ParseFailure(fileName, cur(), "类型位注解只支持 @mut")
+            return MutType(parseType())
+        }
         // v3.0（完美函数类型）：`[T]` 前缀先试多态函数类型（`[T](T)=>T`），否则回退普通类型
         val base = if (peek(Kind.LBRACKET)) {
             parsePolyFunType()
@@ -723,7 +733,7 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         return ClassDecl(name, theory, members, parents)
     }
 
-    private fun parseStruct(): StructDecl {
+    private fun parseStruct(anns: List<String> = emptyList()): StructDecl {
         at(Kind.STRUCT)
         val name = nameToken()
         val theory = if (peek(Kind.LBRACKET)) parseTheory() else emptyList()
@@ -733,12 +743,12 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         // P3（v2.1）：无字段 struct 可省略参数括号 `struct P`，等价 `struct P()`
         if (!peek(Kind.LPAREN)) {
             // v3.0 特性 1：伴生命题 `struct P <p>`（无字段也可有命题）
-            return StructDecl(name, theory, emptyList(), if (peek(Kind.LT)) parseAngleList() else emptyList())
+            return StructDecl(name, theory, emptyList(), anns, if (peek(Kind.LT)) parseAngleList() else emptyList())
         }
         val fields = parseParams()
         // v3.0 特性 1：结构体伴生命题 `struct Test(n: Nat) <n ≠ 0>`——声明位 `<...>`（同 fun 下文位识别）
         val props = if (peek(Kind.LT)) parseAngleList() else emptyList()
-        return StructDecl(name, theory, fields, props)
+        return StructDecl(name, theory, fields, anns, props)
     }
 
     private fun parseEnum(): EnumDecl {

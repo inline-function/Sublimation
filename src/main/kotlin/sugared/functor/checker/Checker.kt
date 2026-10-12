@@ -457,7 +457,7 @@ class Checker(
                     val want = syms.expand(s.type)   // 别名展开（决策 30）
                     // v1.1：标注类型即变量类型（Kotlin 语义）；unify 只做兼容性检查，
                     // 避免泛型初值（如 setEmpty(): Set[T]）把未绑定类型参数残留进变量类型
-                    if (TypeInfer.unify(t, want) == null)
+                    if (TypeInfer.unify(t, want) == null && !compatibleView(t, want))
                         d.error("E-TYPE-MISMATCH", s.pos, "var ${s.name}: 标注 ${s.type.render()} 与初值 ${t.render()} 不可统一")
                     else t = want
                 }
@@ -504,11 +504,18 @@ class Checker(
                 t   // 声明即表达式：var 的值是初值（A3）
             }
             is AssignStmt -> {
-                val lhs = (s.target as? NameRef)?.name
-                if (lhs == null) d.error("E-ASSIGN-TARGET", s.pos, "赋值目标须为变量")
-                else {
-                    if (f.lookupVar(lhs) == null) d.error("E-UNBOUND-NAME", s.pos, "赋值目标 $lhs 未定义")
-                    if (!f.isMut(lhs) && pure) d.error("E-IMMUT-ASSIGN", s.pos, "对不可变变量 $lhs 赋值（加 @mut 或 unchecked 逃逸）")
+                when (val tgt = s.target) {
+                    is NameRef -> {
+                        val lhs = tgt.name
+                        if (f.lookupVar(lhs) == null) d.error("E-UNBOUND-NAME", s.pos, "赋值目标 $lhs 未定义")
+                        if (!f.isMut(lhs) && pure) d.error("E-IMMUT-ASSIGN", s.pos, "对不可变变量 $lhs 赋值（加 @mut 或 unchecked 逃逸）")
+                        // root doc（纯函数 P-3）：lambda 体内修改外部捕获的可变变量 → 推导该 lambda 不纯（同体内不纯表达式）。
+                        // 当前帧未声明它 + isMut 沿父链成立 → 捕获自外层可变变量（块/分支会再叠帧，不查单层 parent）
+                        else if (f.isMut(lhs) && lambdaDepth > 0 && !f.vars.containsKey(lhs))
+                            curLambdaImpure = true
+                    }
+                    is FieldExpr -> checkMutFieldWrite(tgt, f, pure)
+                    else -> d.error("E-ASSIGN-TARGET", s.pos, "赋值目标须为变量或字段")
                 }
                 checkExpr(s.value, f, pure)
             }
@@ -667,6 +674,34 @@ class Checker(
 
     /** root doc《副作用与可变性控制》第 9 行配套：表达式是否引用 @mut 变量。
      *  不可变变量以 @mut 变量为初值时，绑定等式不可靠（初值会变）——不注入相等命题。 */
+    /** M-2（root doc 可变视图）：@mut T 与 T 兼容——@mut 视图可隐式转不可变视图（转换点=拷贝点，codegen 落地）。 */
+    private fun compatibleView(got: Type, want: Type): Boolean {
+        if (typeEq(got, want)) return true
+        return when {
+            got is MutType -> typeEq(got.inner, want)   // M-2：@mut T → T（可变视图转不可变）
+            want is MutType -> typeEq(got, want.inner)  // root doc 54 行：var a : @mut T = T(0)（建立可变视图）
+            else -> false
+        }
+    }
+
+    /** root doc《副作用与可变性控制》可变结构体（54-61 行）：字段写入需满足
+     *  ① 字段是 @mut 字段；② 接收者持有 @mut 视图（变量类型 @mut T 或 @mut 变量）。诊断码 E-NOT-MUT。 */
+    private fun Checker.checkMutFieldWrite(tgt: FieldExpr, f: Frame, pure: Boolean) {
+        val rcvName = (tgt.target as? NameRef)?.name
+        val rcvType = rcvName?.let { f.lookupVar(it) }
+        if (rcvType == null) { d.error("E-UNBOUND-NAME", tgt.pos, "字段赋值目标 " + tgt.target + " 未定义"); return }
+        val innerT = if (rcvType is MutType) rcvType.inner else rcvType
+        val stName = (innerT as? NamedType)?.name
+            ?: run { d.error("E-ASSIGN-TARGET", tgt.pos, "字段赋值须作用于具名结构体"); return }
+        val st = syms.structs[stName]
+            ?: run { d.error("E-ASSIGN-TARGET", tgt.pos, "类型 " + stName + " 不是结构体，不能字段赋值"); return }
+        val fld = st.fields.firstOrNull { it.name == tgt.name }
+            ?: run { d.error("E-UNBOUND-NAME", tgt.pos, "结构体 " + stName + " 无字段 " + tgt.name); return }
+        if ("mut" !in fld.annotations) { d.error("E-NOT-MUT", tgt.pos, "字段 " + tgt.name + " 不可变（非 @mut 字段），不能赋值——把它标 @mut 或改用局部变量"); return }
+        val hasView = rcvType is MutType || f.isMut(rcvName!!)
+        if (!hasView) d.error("E-NOT-MUT", tgt.pos, "@mut 字段 " + tgt.name + " 赋值须持有 @mut 视图（变量类型 @mut " + stName + " 或 @mut 变量）")
+    }
+
     private fun Checker.refsMut(e: Expr, f: Frame): Boolean = when (e) {
         is NameRef -> f.isMut(e.name)
         is BinExpr -> refsMut(e.left, f) || refsMut(e.right, f)
@@ -1023,7 +1058,7 @@ class Checker(
                 // v1.1 修复：标注类型即变量类型（Kotlin 语义）；unify 只做兼容性检查——
                 // 过去用 unify 结果当类型，遇泛型初值（如 setEmpty(): Set[T]）会把未绑定的
                 // 类型参数 T 残留进变量类型，导致后续方法调用实参失配
-                if (TypeInfer.unify(t0, want) == null)
+                if (TypeInfer.unify(t0, want) == null && !compatibleView(t0, want))
                     d.error("E-TYPE-MISMATCH", e.pos, "var ${e.name}: 标注 ${e.type.render()} 与初值 ${t.render()} 不可统一")
                 else t = want
             }

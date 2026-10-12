@@ -1080,6 +1080,37 @@ class CheckerTest {
     }
 
     @Test
+    fun `rootdoc @mut结构体 视图字段写入放行`() {
+        val src = "@mut struct T(@mut n: Nat)\n@impure fun main() { var a : @mut T = T(0)\n a.n = 1\n print(a.n) }"
+        assertTrue(ok(src), "ES=" + errs(src).joinToString(" | ") + " WS=" + warns(src).joinToString(" | "))
+    }
+
+    @Test
+    fun `rootdoc 无视图字段写报E-NOT-MUT`() {
+        val src = "@mut struct T(@mut n: Nat)\n@impure fun main() { var b : T = T(0)\n b.n = 1 }"
+        assertTrue(errs(src).contains("E-NOT-MUT"), "ES=" + errs(src).joinToString(" | "))
+    }
+
+    @Test
+    fun `rootdoc 非mut字段写入报E-NOT-MUT`() {
+        val src = "struct T(n: Nat)\n@impure fun main() { @mut var a = T(0)\n a.n = 1 }"
+        assertTrue(errs(src).contains("E-NOT-MUT"), "ES=" + errs(src).joinToString(" | "))
+    }
+
+    @Test
+    fun `rootdoc lambda改外层@mut推导不纯`() {
+        // 纯函数 f 内 lambda 修改外部捕获的 @mut 变量 → lambda 推导不纯 → 纯上下文调用报 E-IMPURE-CALL
+        val src = "fun f() { @mut var x = 0\n var inc = fun() { x = 1 }\n inc() }"
+        assertTrue(errs(src).contains("E-IMPURE-CALL"), "ES=" + errs(src).joinToString(" | "))
+    }
+
+    @Test
+    fun `rootdoc @impure上下文lambda改外层放行`() {
+        val src = "@impure fun main() { @mut var x = 0\n var inc = fun() { x = 1 }\n inc()\n print(x) }"
+        assertTrue(ok(src), "ES=" + errs(src).joinToString(" | ") + " WS=" + warns(src).joinToString(" | "))
+    }
+
+    @Test
     fun `P9 when 解构的结构递归通过`() {
         // 验收②：len(t) 的 t 由 when(xs){Cons(_, t)} 解构而来，是 xs 的语法子项 → 放行
         val src = "enum List[T] { Nil(), Cons(T, List[T]) }\n" +

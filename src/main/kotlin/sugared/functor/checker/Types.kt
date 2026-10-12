@@ -233,6 +233,7 @@ fun typeToExpr(t: Type): Expr = when (t) {
     is FunType -> NameRef("(fn)")
     is TupleType -> NameRef("(tuple)")
     is UnionType -> NameRef("(union)")
+    is MutType -> NameRef("(mut)")
 }
 
 /** 类型相等（T1：名义类型同名义相等；函数/元组按结构相等） */
@@ -244,6 +245,7 @@ fun typeEq(a: Type, b: Type): Boolean = when {
             a.params.zip(b.params).all { typeEq(it.first, it.second) } && typeEq(a.ret, b.ret)
     a is TupleType && b is TupleType ->
         a.items.size == b.items.size && a.items.zip(b.items).all { typeEq(it.first, it.second) }
+    a is MutType && b is MutType -> typeEq(a.inner, b.inner)   // M-1：@mut T 与 T 是不同类型
     else -> false
 }
 
@@ -254,6 +256,7 @@ fun Type.containsAny(): Boolean = when (this) {
     is FunType -> params.any { it.containsAny() } || ret.containsAny()
     is TupleType -> items.any { it.containsAny() }
     is UnionType -> variants.any { it.containsAny() }
+    is MutType -> inner.containsAny()
 }
 
 data class CtorInfo(val enum: EnumDecl, val fields: List<Type>)

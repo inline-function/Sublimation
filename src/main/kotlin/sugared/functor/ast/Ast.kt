@@ -54,6 +54,8 @@ data class StructDecl(
     val name: String,
     val theory: List<TheoryParam>,
     val fields: List<Param>,
+    /** root doc：@mut struct 允许声明可变（@mut）字段 */
+    val annotations: List<String> = emptyList(),
     /** v3.0 特性 1：结构体伴生命题 `struct Test(n: Nat) <n ≠ 0>`（构造时证明，参数位自动注入） */
     val props: List<Expr> = emptyList(),
     override val pos: String = "",
@@ -164,6 +166,15 @@ data class TupleType(val items: List<Type>) : Type {
     override val args: List<Type> get() = items
     override fun render(): String = "(" + items.joinToString(", ") { it.render() } + ")"
     override fun substT(sub: Map<String, Type>): Type = TupleType(items.map { it.substT(sub) })
+}
+
+/** MutType: @mut T 可变视图类型（root doc《副作用与可变性控制》54-61 行）。
+ *  M-1：@mut T 与 T 不是子类型关系，是同一结构的两个视图；M-2：@mut T 到 T 隐式（转换点=拷贝点）。 */
+data class MutType(val inner: Type) : Type {
+    override val name: String get() = "(mut)"
+    override val args: List<Type> get() = listOf(inner)
+    override fun render(): String = "@mut " + inner.render()
+    override fun substT(sub: Map<String, Type>): Type = MutType(inner.substT(sub))
 }
 
 data class UnionType(val variants: List<Type>) : Type {

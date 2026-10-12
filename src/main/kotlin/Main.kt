@@ -37,6 +37,7 @@ val EXPLAIN: Map<String, String> = mapOf(
     "E-NON-STRUCTURAL-REC" to "递归停止性存疑：纯函数自递归须有至少一个实参是某形参的语法子项（when 解构链）。用 unchecked 放行或改写为结构递归。",
     "E-IMMUT-ASSIGN" to "对不可变变量赋值：声明加 @mut 或在纯度逃逸下赋值（unchecked）。",
     "E-ASSIGN-TARGET" to "赋值目标不是变量：赋值左侧必须是局部变量名。",
+    "E-NOT-MUT" to "@mut 字段写入须满足：字段标 @mut 且接收者持有 @mut 视图（变量类型 @mut T 或 @mut 变量）。",
     "E-IMPL-INCOMPLETE" to "impl 未实现类型类全部成员（或成员签名不匹配 E-IMPL-MISMATCH / 多实现了 E-IMPL-EXTRA）。",
     "E-NO-INSTANCE" to "类型类实例缺失：该类型的 impl 未声明，或约束字典无法解析。",
     "E-IMPURE-CALL" to "纯上下文调用了非纯函数：@impure 函数须在 @impure 函数/unchecked 中调用，或持有 pure<f> 事实。",
