@@ -54,7 +54,9 @@ class JsCodeGen {
     /** P0（M8）：全局引用的 JS 名留痕（键 = 引用表达式节点；限定方法调用 = MODULE_METHOD_MARKER） */
     private var moduleHits: Map<Expr, String> = emptyMap()
     private var funRefTargets: Map<Expr, String> = emptyMap()
-private var funRefFree: Set<Expr> = emptySet()
+    private var funRefFree: Set<Expr> = emptySet()
+    /** root doc《副作用与可变性控制》85-144：可变视图深拷贝留痕（绑定/赋值语句 → 需包 __dc） */
+    private var deepCopyHits: Map<Any, Boolean> = emptyMap()
     /** v3.0 特性 2：委托 impl 的展开方法表（checker 传参） */
     private var delegatedImpls: Map<ImplDecl, List<FunDecl>> = emptyMap()
     private var lambdaDestructKeys: Map<Expr, List<List<String>?>> = emptyMap()
@@ -81,12 +83,24 @@ private var funRefFree: Set<Expr> = emptySet()
     private var awaitHits: Map<CallExpr, Boolean> = emptyMap()
     /** v2.0 异步（§5.4）：源码用到 Channel 时注入 Channel 运行时 class（唯一的运行时组件，几十行） */
     private var channelUsed = false
+    /** v2.0 异步（root doc《异步》）：源码用到 Mutex 时注入 Mutex 运行时 class */
+    private var mutexUsed = false
+    /** v2.0 异步（root doc《异步》）：源码用到 @atomic（原子类型）时注入 atomic 注解运行时 */
+    private var atomicUsed = false
+    /** v2.0 异步（root doc《异步》）：源码用到 Flow 时注入 Flow 冷流运行时 class */
+    private var flowUsed = false
     /** v3.0 特性 3：Range 内建方法调用点 → 方法名（成员访问生成） */
     private var rangeHits: Map<CallExpr, String> = emptyMap()
     /** v3.0 特性 3：用到 `..` 值或 Range 方法 → 注入 __range 小运行时（与 Channel 同层） */
     private var rangeUsed = false
     /** v2.0 异步（CH-5）：receive 智能转换（CallExpr → true）→ codegen 解包 `(…)[0]` */
     private var receiveSmartHits: Map<CallExpr, Boolean> = emptyMap()
+    /** v2.0 空安全（变量位 Some→T）：var 声明初值被自动解构（VarStmt → 解构后表达式生成 JS） */
+    private var varUnwrapHits: Map<VarStmt, Expr> = emptyMap()
+    /** v2.0 空安全：函数表达式体 `fun f(): T = Some(x)` 解构（表达式体 Expr → 解构后表达式） */
+    private var funBodyUnwrapHits: Map<Expr, Expr> = emptyMap()
+    /** v2.0 异步（root doc《异步》）：Flow 体 emit(v) 调用点 → codegen 生成 yield v */
+    private var flowEmitHits: Map<CallExpr, Boolean> = emptyMap()
     /** HKT（《高阶类型.md》HKT-D2）：带参类型类方法调用点 → kind 应用位下标（点号式 `xs.map(f)` 的 fa 位）。
      *  字典签名 (d, f, fa) 无 __self——接收者按此重排，而非首参位。 */
     private var hktKindPosHits: Map<CallExpr, Int> = emptyMap()
@@ -96,6 +110,8 @@ private var funRefFree: Set<Expr> = emptySet()
      *  语义层（enum List 声明、when 检查、Optional 空安全）完全不动，纯 codegen 表示变换。
      *  仅按枚举名 List 收集，用户自定义 `enum Foo { Nil() }` 不受影响；单文件无 stdlib 时集合为空。 */
     private val listCtorSet = LinkedHashSet<String>()
+    /** 修复（#3）：@theorem 定理函数的 JS 顶层名（运行时擦除，值级调用 → null） */
+    private val theoremJsNames = LinkedHashSet<String>()
 
     fun generate(
         file: FileAst,
@@ -107,15 +123,22 @@ private var funRefFree: Set<Expr> = emptySet()
         sugarHits: Map<CallExpr, List<Expr>> = emptyMap(),
         awaitHits: Map<CallExpr, Boolean> = emptyMap(),
         channelUsed: Boolean = false,
+        mutexUsed: Boolean = false,
+        atomicUsed: Boolean = false,
+        flowUsed: Boolean = false,
         rangeHits: Map<CallExpr, String> = emptyMap(),
         rangeUsed: Boolean = false,
         receiveSmartHits: Map<CallExpr, Boolean> = emptyMap(),
+        varUnwrapHits: Map<VarStmt, Expr> = emptyMap(),
+        funBodyUnwrapHits: Map<Expr, Expr> = emptyMap(),
+        flowEmitHits: Map<CallExpr, Boolean> = emptyMap(),
         hktKindPosHits: Map<CallExpr, Int> = emptyMap(),
         funRefTargets: Map<Expr, String> = emptyMap(),
         funRefFree: Set<Expr> = emptySet(),
         lambdaDestructKeys: Map<Expr, List<List<String>?>> = emptyMap(),
         delegatedImpls: Map<ImplDecl, List<FunDecl>> = emptyMap(),
-    ): String = generateUnits(listOf("" to file), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, rangeHits, rangeUsed, receiveSmartHits, hktKindPosHits, funRefTargets, funRefFree, lambdaDestructKeys, delegatedImpls)
+        deepCopyHits: Map<Any, Boolean> = emptyMap(),
+    ): String = generateUnits(listOf("" to file), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, mutexUsed, atomicUsed, flowUsed, rangeHits, rangeUsed, receiveSmartHits, varUnwrapHits, funBodyUnwrapHits, flowEmitHits, hktKindPosHits, funRefTargets, funRefFree, lambdaDestructKeys, delegatedImpls, deepCopyHits)
 
     /** M8：全部模块合成一个 JS（顶层名字带模块前缀，根无前缀） */
     fun generateUnits(
@@ -128,14 +151,21 @@ private var funRefFree: Set<Expr> = emptySet()
         sugarHits: Map<CallExpr, List<Expr>> = emptyMap(),
         awaitHits: Map<CallExpr, Boolean> = emptyMap(),
         channelUsed: Boolean = false,
+        mutexUsed: Boolean = false,
+        atomicUsed: Boolean = false,
+        flowUsed: Boolean = false,
         rangeHits: Map<CallExpr, String> = emptyMap(),
         rangeUsed: Boolean = false,
         receiveSmartHits: Map<CallExpr, Boolean> = emptyMap(),
+        varUnwrapHits: Map<VarStmt, Expr> = emptyMap(),
+        funBodyUnwrapHits: Map<Expr, Expr> = emptyMap(),
+        flowEmitHits: Map<CallExpr, Boolean> = emptyMap(),
         hktKindPosHits: Map<CallExpr, Int> = emptyMap(),
         funRefTargets: Map<Expr, String> = emptyMap(),
         funRefFree: Set<Expr> = emptySet(),
         lambdaDestructKeys: Map<Expr, List<List<String>?>> = emptyMap(),
         delegatedImpls: Map<ImplDecl, List<FunDecl>> = emptyMap(),
+        deepCopyHits: Map<Any, Boolean> = emptyMap(),
     ): String {
         dicts = dictHits
         this.moduleHits = moduleHits
@@ -146,13 +176,25 @@ private var funRefFree: Set<Expr> = emptySet()
         sugarArgs = sugarHits
         this.awaitHits = awaitHits
         this.channelUsed = channelUsed
+        this.mutexUsed = mutexUsed
+        this.atomicUsed = atomicUsed
+        this.flowUsed = flowUsed
         this.rangeHits = rangeHits
         this.rangeUsed = rangeUsed
         this.receiveSmartHits = receiveSmartHits
+        this.varUnwrapHits = varUnwrapHits
+        this.funBodyUnwrapHits = funBodyUnwrapHits
+        this.flowEmitHits = flowEmitHits
         this.hktKindPosHits = hktKindPosHits
         this.funRefTargets = funRefTargets
         this.funRefFree = funRefFree
         this.lambdaDestructKeys = lambdaDestructKeys
+        this.deepCopyHits = deepCopyHits
+        theoremJsNames.clear()
+        for ((p, fa) in units) for (e in fa.entries) {
+            val fd = (e as? DeclEntry)?.decl as? FunDecl ?: continue
+            if ("theorem" in fd.annotations) theoremJsNames += moduleJsName(p, fd.name)
+        }
         currentPrefix = ""
         structFields.clear()
         overloadsByUnit.clear()
@@ -203,7 +245,12 @@ private var funRefFree: Set<Expr> = emptySet()
         line("const None = () => ({ tag: \"None\" });")
         line("const Some = (a0) => ({ tag: \"Some\", 0: a0 });")
         // v3.0：toStr——枚举纯 tag 对象（{tag: 'D'}，单键）取 tag 名成串；list/struct 其余保持 String()
-        line("const __dshtoStr = (v) => (v && typeof v === \"object\" && Object.keys(v).length === 1 && \"tag\" in v) ? String(v.tag) : String(v);")
+        line("const __dshtoStr = (v) => {")
+        line("  if (v === null || v === undefined) return String(v);")
+        line("  if (Array.isArray(v)) return \"[\" + v.map(__dshtoStr).join(\",\") + \"]\";")
+        line("  if (typeof v === \"object\" && Object.keys(v).length === 1 && \"tag\" in v) return String(v.tag);")
+        line("  return String(v);")
+        line("};")
         // v2.0 空安全结构判定（决策 88-92，§7）：基本类型用 typeof，枚举/具名用 tag，函数 typeof===
         // JS 不记录类型信息 → 结构判定（与 == 结构相等同源）；v1 纯结构、零 tag 名义区分。
         line("const __isa = (v, t) => {")
@@ -225,6 +272,17 @@ private var funRefFree: Set<Expr> = emptySet()
             line("  const ka = Object.keys(a), kb = Object.keys(b);")
             line("  if (ka.length !== kb.length) return false;")
             line("  return ka.every(k => __eq(a[k], b[k]));")
+            line("};")
+        }
+        // root doc《副作用与可变性控制》85-144：可变视图深拷贝助手——绑定/赋值触发 __dc(value)。
+        // 仅在源码用到可变视图拷贝时注入（编译器按 binderNeedsCopy 留痕 deepCopyHits）。
+        if (deepCopyHits.isNotEmpty()) {
+            line("const __dc = (v) => {")
+            line("  if (v === null || typeof v !== \"object\") return v;")
+            line("  if (Array.isArray(v)) return v.map(__dc);")
+            line("  const o = {};")
+            line("  for (const k in v) o[k] = __dc(v[k]);")
+            line("  return o;")
             line("};")
         }
         // v2.0 异步（异步 §5.4）：Channel 小运行时——唯一运行时组件（缓冲/握手/关闭状态）。
@@ -252,6 +310,32 @@ private var funRefFree: Set<Expr> = emptySet()
             line("  close() { this.closed = true; }")
             line("  isClosed() { return this.closed; }")
             line("}")
+        }
+        // v2.0 异步（root doc《异步》）：Mutex 小运行时——异步互斥锁，防数据竞争。
+        // JS 单线程，锁的意义是阻止 async 协程在临界区内互相穿插。
+        // lock() 若被占让出（等待队列）；unlock() 唤醒下一个等待者或释放锁；
+        // withLock(f) 持锁执行 f() 并在退出时释放（含异常路径）。
+        if (mutexUsed) {
+            line("class Mutex {")
+            line("  constructor() { this._locked = false; this._waiters = []; }")
+            line("  async lock() {")
+            line("    if (!this._locked) { this._locked = true; return; }")
+            line("    return new Promise((res) => this._waiters.push(res));")
+            line("  }")
+            line("  async unlock() {")
+            line("    if (this._waiters.length) { const w = this._waiters.shift(); w(); }")
+            line("    else this._locked = false;")
+            line("  }")
+            line("  async withLock(f) { await this.lock(); try { return await f(); } finally { await this.unlock(); } }")
+            line("}")
+        }
+        // v2.0 异步（root doc《异步》）：Flow 冷流小运行时——惰性冷流（collect 时执行 body 生成器）。
+        // gen 是 async generator 函数；collect(f) 逐值调 f；map(g) 返回派生冷流。
+        if (flowUsed) {
+            line("const __flow = (gen) => ({ gen,")
+            line("  collect: async (f) => { for await (const v of gen()) await f(v); },")
+            line("  map: (g) => __flow(async function* () { for await (const v of gen()) yield g(v); })")
+            line("});")
         }
         // v3.0 特性 3：Range 小运行时——惰性区间（第二个运行时组件，与 Channel 同层）。
         // 不预生成元素：in/contains O(1) 闭区间判定；map/fold 迭代；toList/length 按需展开。
@@ -506,7 +590,7 @@ private var funRefFree: Set<Expr> = emptySet()
         }
         when (body) {
             is BlockExpr -> genBlockBody(body)
-            else -> line("return ${expr(body)};")
+            else -> line("return ${funBodyUnwrapHits[body]?.let { expr(it) } ?: expr(body)};")
         }
         indent--
         line("}")
@@ -557,6 +641,10 @@ private var funRefFree: Set<Expr> = emptySet()
 
     // ---------- 语句 ----------
 
+    /** root doc《副作用与可变性控制》：绑定/赋值值是否需深拷贝包装（可变视图语义） */
+    private fun dcWrap(key: Any, valueJs: String): String =
+        if (deepCopyHits[key] == true) "__dc($valueJs)" else valueJs
+
     private fun genStmt(s: Stmt) {
         when (s) {
             // v3.0 特性 5/6：∵∴ 与 if[p] 是纯证明构造——不产生运行时代码
@@ -564,13 +652,14 @@ private var funRefFree: Set<Expr> = emptySet()
             is VarStmt -> {
                 if (s.destruct != null) {
                     val kw = if ("mut" in s.annotations) "let" else "const"
-                    line("$kw [${s.destruct.joinToString(", ") { mangle(it) }}] = ${expr(s.value)};")
+                    line("$kw [${s.destruct.joinToString(", ") { mangle(it) }}] = ${dcWrap(s, expr(s.value))};")
                 } else {
                     val kw = if ("mut" in s.annotations) "let" else "const"
-                    line("$kw ${mangle(s.name)} = ${expr(s.value)};")
+                    val initJs = varUnwrapHits[s]?.let { expr(it) } ?: expr(s.value)
+                    line("$kw ${mangle(s.name)} = ${dcWrap(s, initJs)};")
                 }
             }
-            is AssignStmt -> line("${expr(s.target)} = ${expr(s.value)};")
+            is AssignStmt -> line("${expr(s.target)} = ${dcWrap(s, expr(s.value))};")
             // 命题逃逸：擦除为注释，可 grep 审计
             is AxiomStmt -> s.props.forEach { comment("axiom: ${tag(it)}") }
             is ByStmt -> s.props.forEach { comment("by: ${tag(it)}") }
@@ -630,6 +719,7 @@ private var funRefFree: Set<Expr> = emptySet()
         // v2.0 异步（决策 93，异步 §5.3）：Task { … } → 惰性任务对象。start() 惰性创建 async 函数并执行；
         // join() 返回 Promise（await 在调用点）；isAlive() 简化为「是否已 start」。
         is TaskExpr -> taskJs(e)
+        is FlowExpr -> flowJs(e)
         is SymbolCallExpr -> symbolCall(e)
         is FieldExpr -> {
             // v3.0（完美函数类型）：方法路径作值（xs.map / x.m 无括号）→ 绑定 self 的闭包；
@@ -683,7 +773,7 @@ private var funRefFree: Set<Expr> = emptySet()
     /** var 表达式：擦除为 IIFE，内部 const 绑定并返回初值（声明即表达式） */
     private fun varExprJs(e: VarExpr): String {
         val kw = if ("mut" in e.annotations) "let" else "const"
-        return "(() => { $kw ${mangle(e.name)} = ${expr(e.value)}; return ${mangle(e.name)}; })()"
+        return "(() => { $kw ${mangle(e.name)} = ${dcWrap(e, expr(e.value))}; return ${mangle(e.name)}; })()"
     }
 
     private fun bin(e: BinExpr): String {
@@ -764,6 +854,29 @@ private var funRefFree: Set<Expr> = emptySet()
         return (lines + ret).joinToString("\n")
     }
 
+    /** v2.0 异步（root doc《异步》）：`Flow { … }` → __flow(async generator 函数)。
+     *  体是代码块（冷流）；emit(v) 生成 `yield v`，其余语句逐条生成。 */
+    private fun flowJs(e: FlowExpr): String {
+        val bodyJs = flowBodyStr(e.body)
+        return "__flow(async function* () {\n$bodyJs\n})"
+    }
+
+    /** Flow 体 → async generator 函数体字符串：emit(v)（flowEmitHits 留痕）→ `yield v`，其余语句原样。 */
+    private fun flowBodyStr(b: BlockExpr): String {
+        val lines = ArrayList<String>()
+        for (s in b.stmts) {
+            if (s is ExprStmt && s.expr is CallExpr && flowEmitHits[s.expr as CallExpr] == true) {
+                val c = s.expr as CallExpr
+                val v = if (c.args.isEmpty()) "undefined" else expr(c.args[0])
+                lines += "    yield $v;"
+            } else {
+                val t = stmtStr(s)
+                if (t.isNotEmpty()) lines += "    $t"
+            }
+        }
+        return lines.joinToString("\n")
+    }
+
     /** v2.0 异步：内建 IO/sleep 挂起点 —— 检查器若登记本调用为挂起点则包 `await`（非挂起点原样） */
     private fun awaited(e: CallExpr, js: String): String =
         if (awaitHits[e] == true) "await $js" else js
@@ -782,6 +895,11 @@ private var funRefFree: Set<Expr> = emptySet()
             is FieldExpr -> callee.name   // O2（决策 68）：接收者调用 o.m(...) 的方法名
             else -> null
         }
+        // 修复（#3）：@theorem 定理函数运行时擦除——值级调用 → null（编译期已注入后件事实）
+        if (name != null) {
+            val js = moduleHits[callee] ?: (callee as? NameRef)?.let { mangle(it.name) }
+            if (js != null && js in theoremJsNames) return "null"
+        }
         // 构造子/枚举名：Bool 的 true/false 特判
         if (name == "true") return "true"
         if (name == "false") return "false"
@@ -796,8 +914,12 @@ private var funRefFree: Set<Expr> = emptySet()
         // v2.0 异步（异步 §5.4）：Channel 创建 `Channel<T>()` / `Channel<T>(cap)` → new Channel(cap)
         if (name == "Channel")
             return "new Channel(${if (e.args.isEmpty()) "0" else expr(e.args[0])})"
+        // v2.0 异步（root doc《异步》）：Mutex 创建 `Mutex()` → new Mutex()
+        if (name == "Mutex" && e.args.isEmpty())
+            return "new Mutex()"
         if (name == "println" || name == "print") {
-            val a = e.args.joinToString(", ") { expr(it) }
+            // 修复（#8）：print 与 toStr 统一走 __dshtoStr（列表打印为 [] 形式，无空格）
+            val a = e.args.joinToString(", ") { "__dshtoStr(${expr(it)})" }
             return "console.log($a)"
         }
         // P3 IO（v1.0 计划 §5）：node 原语，内联 require('fs')（node 模块缓存，无性能问题）
@@ -1088,9 +1210,9 @@ private var funRefFree: Set<Expr> = emptySet()
     private fun stmtStr(s: Stmt): String = when (s) {
         is BecauseStmt, is ThereforeStmt, is PlusBecauseStmt, is IfPropStmt, is ExistIntroStmt, is ExistsElimStmt, is FunStmt -> ""
         is VarStmt -> if (s.destruct != null)
-            "${if ("mut" in s.annotations) "let" else "const"} [${s.destruct.joinToString(", ") { mangle(it) }}] = ${expr(s.value)};"
-        else "${if ("mut" in s.annotations) "let" else "const"} ${mangle(s.name)} = ${expr(s.value)};"
-        is AssignStmt -> "${expr(s.target)} = ${expr(s.value)};"
+            "${if ("mut" in s.annotations) "let" else "const"} [${s.destruct.joinToString(", ") { mangle(it) }}] = ${dcWrap(s, expr(s.value))};"
+        else "${if ("mut" in s.annotations) "let" else "const"} ${mangle(s.name)} = ${dcWrap(s, expr(s.value))};"
+        is AssignStmt -> "${expr(s.target)} = ${dcWrap(s, expr(s.value))};"
         is ExprStmt -> "${expr(s.expr)};"
         is UncheckedStmt -> stmtStr(s.inner)
         is AxiomStmt, is ByStmt -> ""
@@ -1138,9 +1260,9 @@ private var funRefFree: Set<Expr> = emptySet()
         when (s) {
             is BecauseStmt, is ThereforeStmt, is PlusBecauseStmt, is IfPropStmt, is ExistIntroStmt, is ExistsElimStmt, is FunStmt -> {}
             is VarStmt -> if (s.destruct != null)
-                out += "$ind${if ("mut" in s.annotations) "let" else "const"} [${s.destruct.joinToString(", ") { mangle(it) }}] = ${expr(s.value)};"
-            else out += "$ind${if ("mut" in s.annotations) "let" else "const"} ${mangle(s.name)} = ${expr(s.value)};"
-            is AssignStmt -> out += "$ind${expr(s.target)} = ${expr(s.value)};"
+                out += "$ind${if ("mut" in s.annotations) "let" else "const"} [${s.destruct.joinToString(", ") { mangle(it) }}] = ${dcWrap(s, expr(s.value))};"
+            else out += "$ind${if ("mut" in s.annotations) "let" else "const"} ${mangle(s.name)} = ${dcWrap(s, expr(s.value))};"
+            is AssignStmt -> out += "$ind${expr(s.target)} = ${dcWrap(s, expr(s.value))};"
             is ExprStmt -> if (s.expr is IfExpr) lambdaIfLines(s.expr as IfExpr, out, ind) else out += "$ind${expr(s.expr)};"
             is ReturnStmt -> out += "$ind${if (s.expr != null) "return ${expr(s.expr)};" else "return;"}"
             is UncheckedStmt -> lambdaStmtToLines(s.inner, out, ind)
@@ -1239,17 +1361,30 @@ private var funRefFree: Set<Expr> = emptySet()
                     } else binds += cn to path   // 绑定变量
                 } else {
                     conds += "$path.tag === ${q(cn)}"
-                    p.args.forEachIndexed { i, ap -> matchJs(ap, "$path[$i]", conds, binds) }
+                    // root doc《模式匹配》：结构体解构 `is T(a,b)`——结构体对象字段按**名字**存储
+                    // （工厂 `{ tag, fieldName: ... }`），枚举构造子按位置存储；这里按结构体字段名访问。
+                    val sfields = structFields[cn]
+                    if (sfields != null) {
+                        p.args.forEachIndexed { i, ap -> if (i < sfields.size) matchJs(ap, "$path.${mangle(sfields[i])}", conds, binds) }
+                    } else {
+                        p.args.forEachIndexed { i, ap -> matchJs(ap, "$path[$i]", conds, binds) }
+                    }
                 }
             }
         }
     }
 
-    private fun isCond(t: Type, subjJs: String): String = when (t.name) {
-        "Nat", "Int", "Rat" -> "(typeof $subjJs === \"number\")"
-        "Str" -> "(typeof $subjJs === \"string\")"
-        "Bool" -> "(typeof $subjJs === \"boolean\")"
-        else -> "true"   // 名义类型无法运行时判定，保守 true（v1 限制）
+    private fun isCond(t: Type, subjJs: String): String {
+        if (t.name in setOf("Nat", "Int", "Rat", "Str", "Bool")) {
+            return when (t.name) {
+                "Nat", "Int", "Rat" -> "(typeof $subjJs === \"number\")"
+                "Str" -> "(typeof $subjJs === \"string\")"
+                else -> "(typeof $subjJs === \"boolean\")"
+            }
+        }
+        // root doc《模式匹配》：`is T` 对枚举/结构体的结构判定——__isa 按 tag 判名义类型
+        // （结构体/枚举工厂均产出 { tag, ... }；List 特判 Array.isArray，见 __isa）。
+        return "__isa($subjJs, ${q(t.name)})"
     }
 
     private fun anonFun(e: AnonFunExpr): String {

@@ -9,6 +9,10 @@ internal val taskMethods = setOf("start", "join", "isAlive")
 
 /** v2.0 异步（决策 93）：Channel 对象方法名（channel 运行时 class 的方法） */
 internal val channelMethods = setOf("send", "receive", "close", "isClosed")
+/** v2.0 异步（root doc《异步》）：Mutex 对象方法名（lock/unlock/withLock，均挂起） */
+internal val mutexMethods = setOf("lock", "unlock", "withLock")
+/** v2.0 异步（root doc《异步》）：Flow 冷流对象方法名（collect 消费 / map 组合） */
+internal val flowMethods = setOf("collect", "map")
 
 /** 任务调用的目标变量名：`t.start()` → "t"（NameRef 直接取；其他形态不做跨表达追踪） */
 private fun taskTargetName(e: Expr): String? = when (e) {
@@ -44,8 +48,10 @@ internal fun Checker.checkStructCtor(e: StructCtorExpr, f: Frame, pure: Boolean)
         if (fp.name !in seen && fp.default == null)
             d.error("E-FIELD-MISSING", e.pos, "构造 ${e.struct} 缺字段 ${fp.name} 且无默认值")
     }
-    // v3.0 特性 1：命名式构造同样做伴生命题证明
-    checkStructProps(st, f, e.pos, e.assigns.toMap())
+    // v3.0 特性 1：命名式构造同样做伴生命题证明（修复 #7：缺省字段填默认值）
+    checkStructProps(st, f, e.pos, st.fields.map { fp ->
+        fp.name to (e.assigns.firstOrNull { it.first == fp.name }?.second ?: fp.default ?: NameRef("__missing"))
+    }.toMap())
     return namedT(e.struct, tps.map { inferred[it] ?: syntheticT("类型参数$it") })
 }
 
@@ -63,7 +69,7 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
     // P0（M6，impl 也要挂载）：方法名判定跨可见模块（含兄弟/挂载模块的 impl），不再只看本模块。
     // v2.0 异步（决策 93）：Task 对象方法（start/join/isAlive）需纳入方法路径——它们不是类型类方法/自由函数，
     // 但必须是接收者形态（o.start()）走 Task 特判；裸名 start(...) 不会被误解析。
-    val fieldCallee: FieldExpr? = (c.callee as? FieldExpr)?.takeIf { isMethodName(it.name) || hasFreeFun(it.name) || it.name in taskMethods || it.name in channelMethods }
+    val fieldCallee: FieldExpr? = (c.callee as? FieldExpr)?.takeIf { isMethodName(it.name) || hasFreeFun(it.name) || it.name in taskMethods || it.name in channelMethods || it.name in mutexMethods || it.name in flowMethods }
     val freeName = (c.callee as? NameRef)?.name
         ?: ((c.callee as? InstExpr)?.target as? NameRef)?.name
     // W-UNUSED（报错增强，v2.0）：callee 位置的参数引用也算使用。此前只在 checkExpr 的 NameRef 分支
@@ -127,8 +133,24 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
 
     if (selfT == null) {
         // O2：方法路径（self 已知）不参与构造子/结构体判定，避免同名截胡
-    syms.ctors[name]?.let { ci -> return checkCtorCall(ci, name, c, argTypes, modulePath) }
-    syms.structs[name]?.let { st -> return checkStructCall(st, name, c, argTypes, modulePath, f) }
+        syms.ctors[name]?.let { ci -> return checkCtorCall(ci, name, c, argTypes, modulePath) }
+        syms.structs[name]?.let { st -> return checkStructCall(st, name, c, argTypes, modulePath, f) }
+        // 修复（#4）：构造子/结构体跨模块可见——裸名 Ok/Err/… 也查可见模块（含 stdlib）
+        if (moduleTree != null) {
+            for (p in visiblePaths) {
+                val s = allSymbols[p] ?: continue
+                s.ctors[name]?.let { ci -> return checkCtorCall(ci, name, c, argTypes, p) }
+                s.structs[name]?.let { st -> return checkStructCall(st, name, c, argTypes, p, f) }
+            }
+        }
+    }
+
+    // v2.0 异步（root doc《异步》）：Flow 体内 `emit(v)` 发送数据——仅 Flow 体上下文（flowElemStack 非空）合法。
+    if (name == "emit" && flowElemStack.isNotEmpty()) {
+        val vt = checkExpr(c.args.firstOrNull() ?: return namedT("Null", emptyList()), f, pure)
+        flowElemStack.last().add(vt)   // 收集元素类型（join 出 Flow[T] 的 T）
+        flowEmitHits[c] = true         // codegen：emit(v) → yield v
+        return namedT("Null", emptyList())
     }
 
     // v2.0 异步（决策 93，异步 §3.1/§5.4）：Channel 创建 `Channel[T]()` / `Channel[T](cap)`。
@@ -145,6 +167,13 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
         if (c.args.size > 1) d.error("E-ARITY", c.pos, "Channel 创建最多一个容量实参")
         channelUsed = true   // 告诉 codegen 注入 Channel 运行时 class
         return namedT("Channel", listOf(tT))
+    }
+
+    // v2.0 异步（root doc《异步》）：Mutex 创建 `Mutex()`（无类型参数）。形态是 `callee = NameRef("Mutex")`。
+    if (name == "Mutex" && c.args.isEmpty()) {
+        for (a in c.args) checkExpr(a, f, pure)
+        mutexUsed = true   // 告诉 codegen 注入 Mutex 运行时 class
+        return namedT("Mutex", emptyList())
     }
 
     // v1.1 集合方法糖提前路径：`o.m(args)` 且 m 是「同名自由函数」（非 typeclass 方法名）→ 脱糖为 m(o, args)。
@@ -197,6 +226,52 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
                     "isClosed" -> return namedT("Bool", emptyList())
                 }
             }
+        }
+    }
+    // v2.0 异步（root doc《异步》）：Mutex 对象方法（lock/unlock/withLock）——Mutex 无类型参数（0 个），
+    // 与 Task/Channel 的单类型参数不同，单独 when 分支。均挂起：@async 上下文才允许。
+    if (fieldCallee != null && selfT is NamedType && selfT.name == "Mutex" && selfT.args.isEmpty()) {
+        when (name) {
+            "lock" -> {
+                if (curFunAsync) asyncAwaitHits[c] = true
+                else d.error("E-NEED-ASYNC", c.pos, "m.lock() 是挂起操作，需 @async 上下文")
+                return namedT("Null", emptyList())
+            }
+            "unlock" -> {
+                if (curFunAsync) asyncAwaitHits[c] = true
+                else d.error("E-NEED-ASYNC", c.pos, "m.unlock() 是挂起操作，需 @async 上下文")
+                return namedT("Null", emptyList())
+            }
+            "withLock" -> {
+                // 参数 0 是函数值（@impure ()=>Null）：仅做表达式检查，类型宽容（函数值形态）
+                checkExpr(c.args.firstOrNull() ?: return syntheticT("withLock"), f, pure)
+                if (curFunAsync) asyncAwaitHits[c] = true
+                else d.error("E-NEED-ASYNC", c.pos, "m.withLock(f) 是挂起操作，需 @async 上下文")
+                return namedT("Null", emptyList())
+            }
+            else -> { /* 其他方法名交给常规链 */ }
+        }
+    }
+    // v2.0 异步（root doc《异步》）：Flow 冷流对象方法（collect/map）——Flow 有 1 个类型参数（元素类型），
+    // 与 Task/Channel 同形。collect 挂起（消费异步流）；map 纯转换返回新 Flow。
+    if (fieldCallee != null && selfT is NamedType && selfT.name == "Flow" && selfT.args.size == 1) {
+        val elemT = selfT.args[0]
+        when (name) {
+            "collect" -> {
+                checkExpr(c.args.firstOrNull() ?: return syntheticT("collect"), f, pure)
+                if (curFunAsync) asyncAwaitHits[c] = true
+                else d.error("E-NEED-ASYNC", c.pos, "fl.collect(f) 是挂起操作，需 @async 上下文")
+                return namedT("Null", emptyList())
+            }
+            "map" -> {
+                // map 实参是函数值 f：(T) => U；返回 Flow[U]（新冷流）。
+                // 简单保守：函数值类型检查原样，返回 Flow 元素类型取函数返回类型（无法确定则保留 elemT）
+                val farg = c.args.firstOrNull()
+                val ft = farg?.let { checkExpr(it, f, pure) } ?: syntheticT("map实参")
+                val elemU = if (ft is FunType) ft.ret else elemT
+                return namedT("Flow", listOf(elemU))
+            }
+            else -> { /* 交给常规链 */ }
         }
     }
     if (fieldCallee != null && !isMethodName(fieldCallee.name)) {
@@ -502,7 +577,10 @@ internal fun Checker.checkStructCall(st: StructDecl, name: String, c: CallExpr, 
         }
     }
     // v3.0 特性 1：结构体伴生命题——构造前证明（E-STRUCT-PROP-UNPROVEN / E-STRUCT-MUT-PROP）
-    checkStructProps(st, f, c.pos, st.fields.zip(c.args).associate { it.first.name to it.second })
+    // 修复（#7）：位置式缺省字段以声明默认值替换进命题（否则默认值不会参与伴生命题证明）
+    checkStructProps(st, f, c.pos, st.fields.mapIndexed { i, fp ->
+        fp.name to (c.args.getOrNull(i) ?: fp.default ?: NameRef("__missing"))
+    }.toMap())
     return namedT(name, tps.map { inferred[it] ?: syntheticT("类型参数$it") })
 }
 
@@ -554,9 +632,7 @@ internal fun Checker.checkFnCall(
         }
     }
 
-    // @theorem 定理函数：编译期擦除，只能用于证明位（∴ 合一/前件供给），值级调用禁止
-    if ("theorem" in fn.annotations)
-        d.warn("E-THEOREM-VALUE-CALL", c.pos, "定理函数 $name 编译器擦除其代码，仅供证明使用（∴ 合一/前件），不能值级调用")
+    // 修复（#3）：@theorem 定理函数解封——值级调用正常（此处不警告；后件事实照常注入，运行时擦除为 null）
 
     // 决策 59：Any 严苛准入——实参含 Any 则调用受限；@tuple 形参只收元组字面量（裸名实参拒）
     if (fn.params.any { syms.expand(it.type).containsAny() } && effTypes.any { it.containsAny() }) {
@@ -762,7 +838,7 @@ private fun Checker.instTermsOf(c: CallExpr): List<Expr> = when (val callee = c.
  * 内部值类型与形参 want 松弛匹配 → 返回解包的内部表达式；否则 null（保持原错误）。
  * 仅作用于**字面量构造子**调用（不含变量引用——AD-4 单向、不穿透边界，变量形态后续迭代）。
  */
-private fun Checker.autoUnwrapCtor(arg: Expr, want: Type): Expr? {
+internal fun Checker.autoUnwrapCtor(arg: Expr, want: Type): Expr? {
     val ce = arg as? CallExpr ?: return null
     val cname = (ce.callee as? NameRef)?.name ?: return null
     val info = syms.ctors[cname] ?: return null

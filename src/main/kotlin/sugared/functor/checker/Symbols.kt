@@ -52,6 +52,7 @@ internal fun Checker.registerImmutableFacts() {
         is FunType -> true
         is UnionType -> t.variants.all { reprImm(it) }
         is MutType -> false   // I-7：@mut T 不是 immutable（明确可变视图）
+        is AtomicType -> reprImm(t.inner)   // @atomic T：原子性不破坏不可变性（JS 单线程按值读写）
     }
     fun declImmutable(fields: List<Param>): Boolean =
         fields.none { "mut" in it.annotations } && fields.all { reprImm(it.type) }
@@ -280,6 +281,7 @@ internal fun Checker.checkTypeResolvable(t: Type, tps: List<String>, arity: Map<
         is TupleType -> t.items.forEach { checkTypeResolvable(it, tps, arity) }
         is UnionType -> t.variants.forEach { checkTypeResolvable(it, tps, arity) }
         is MutType -> checkTypeResolvable(t.inner, tps, arity)
+        is AtomicType -> checkTypeResolvable(t.inner, tps, arity)
         is QualifiedType -> {
             // P0：跨模块限定类型——目标模块须可见且含该类型名（struct/enum/class/别名/基类型）
             val target = resolveTypeModule(t)

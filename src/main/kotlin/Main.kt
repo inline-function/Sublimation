@@ -6,6 +6,7 @@ import sugared.functor.checker.MultiModule
 import sugared.functor.checker.checkFile
 import sugared.functor.codegen.JsCodeGen
 import sugared.functor.lexer.Lexer
+import sugared.functor.parser.Parser
 import sugared.functor.parser.parseSource
 import java.io.File
 import kotlin.system.exitProcess
@@ -112,7 +113,9 @@ fun main(args: Array<String>) {
             "parse" -> println(AstPrinter.toTreeString(parseSource(src, path.name)))
             "tokens" -> Lexer(src, path.name).tokenize().forEach { println(tokenLine(it)) }
             "check" -> {
-                val bag = checkFile(parseSource(src, path.name))
+                val ast = parseSource(src, path.name)
+                val bag = checkFile(ast)
+                for ((p0, m0) in Parser.takeParseHints()) bag.hint("H-ARITH-PRECEDENCE", p0, m0)
                 val out = bag.report(includeSupplement = verbose, source = src)   // 报错增强：源码片段上下文
                 if (out.isNotEmpty()) println(out)
                 if (bag.hasError) { System.err.println("[错误] 语义检查未通过"); exitProcess(1) }
@@ -122,10 +125,11 @@ fun main(args: Array<String>) {
                 val ast = parseSource(src, path.name)
                 val chk = sugared.functor.checker.Checker(ast)
                 val bag = chk.run()
+                for ((p0, m0) in Parser.takeParseHints()) bag.hint("H-ARITH-PRECEDENCE", p0, m0)
                 val out = bag.report(includeSupplement = verbose, source = src)   // 报错增强：源码片段上下文
                 if (out.isNotEmpty()) System.err.println(out)
                 if (bag.hasError) { System.err.println("[错误] 语义检查未通过，拒绝生成 JS"); exitProcess(1) }
-                val js = JsCodeGen().generate(ast, chk.dictHits, chk.moduleHits, chk.consHits, chk.dictSubHits, chk.namedArgOrder, chk.methodSugarArgs, chk.asyncAwaitHits, chk.channelUsed, chk.rangeHits, chk.rangeUsed, chk.receiveSmartHits, chk.hktKindPosHits, chk.funRefTargets, chk.funRefFree.keys, chk.lambdaDestructKeys, chk.delegatedImpls)   // 单文件：约束槽/字典实参/命名参数/方法糖/函数引用/解构键留痕同源
+                val js = JsCodeGen().generate(ast, chk.dictHits, chk.moduleHits, chk.consHits, chk.dictSubHits, chk.namedArgOrder, chk.methodSugarArgs, chk.asyncAwaitHits, chk.channelUsed, chk.mutexUsed, chk.atomicUsed, chk.flowUsed, chk.rangeHits, chk.rangeUsed, chk.receiveSmartHits, chk.varUnwrapHits, chk.funBodyUnwrapHits, chk.flowEmitHits, chk.hktKindPosHits, chk.funRefTargets, chk.funRefFree.keys, chk.lambdaDestructKeys, chk.delegatedImpls, chk.deepCopyHits)   // 单文件：约束槽/字典实参/命名参数/方法糖/函数引用/解构键留痕同源
                 val oi = args.indexOf("-o")
                 if (oi >= 0 && oi + 1 < args.size) {
                     val target = File(args[oi + 1])

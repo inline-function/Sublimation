@@ -350,6 +350,14 @@ class Prover(private val maxRounds: Int = 3, private val maxDepth: Int = 4) {
                     PropLogic.normalizeFacts(listOf(im.b)).forEach { if (facts.add(it)) changed = true }
                 }
             }
+            // 加强：modus tollens（后件否定推前件否定）——p→q 与 ¬q 在 Γ ⇒ ¬p（经典逻辑健全）
+            for (im in facts.filterIsInstance<PImp>().toList()) {
+                val negB = PNot(im.b)
+                if (facts.any { it == negB }) {
+                    val negA = PNot(im.a)
+                    PropLogic.normalizeFacts(listOf(negA)).forEach { if (facts.add(it)) changed = true }
+                }
+            }
             // 矛盾检测：p 与 ¬p 同在 Γ → ⊥（穷尽性/不可达分支判定的基础）
             if (!facts.contains(PBot) && facts.any { p -> p !is PNot && facts.any { it is PNot && it.p == p } }) {
                 facts.add(PBot); changed = true
@@ -391,12 +399,22 @@ class Prover(private val maxRounds: Int = 3, private val maxDepth: Int = 4) {
                     prove(facts, PropLogic.substProp(goal.body, mapOf(goal.names[0] to c)), d + 1, visited, eqs)
                 }
             }
-            is PForall -> false   // v1 待证侧不支持 ∀ 引入
+            is PForall -> {
+                // 加强：∀ 引入（概括规则）——绑定名替换为新鲜常量（合法标识符不含 `#`，故必新鲜）后证 body
+                if (goal.names.isEmpty()) prove(facts, goal.body, d + 1, visited, eqs)
+                else {
+                    val fresh = HashMap<String, Expr>()
+                    goal.names.forEachIndexed { i, n -> fresh[n] = NameRef("#vg${d}_${i}") }
+                    prove(facts, PropLogic.substProp(goal.body, fresh), d + 1, visited, eqs)
+                }
+            }
             is PExists1 -> false  // v1 待证侧不支持 ∃! 引入
-            is PNot -> facts.any { it == goal } || facts.contains(PBot)
+            is PNot -> facts.any { it == goal } || facts.contains(PBot) ||
+                // 加强：双重否定引入 p ⊢ ¬¬p（直觉逻辑健全）；¬→ 载体已由 MP/closure 处理
+                (goal.p is PNot && prove(facts, (goal.p as PNot).p, d + 1, visited, eqs))
             is PAtom -> matchAtom(facts, goal, d, visited, eqs) ||
                 // P4（决策 80）：等式图可达（对称 + 传递，BFS 双向边即对称）
-                ((goal.head == "=" || goal.head == "==") && goal.terms.size == 2 &&
+                (goal.head in setOf("=", "==", "<=", "≤", ">=", "≥") && goal.terms.size == 2 &&
                     (PropLogic.termEq(goal.terms[0], goal.terms[1]) ||
                         eqReachable(eqs, goal.terms[0], goal.terms[1]))) ||
                 // P4：类型事实在等式下的传播 `e:T, e=e' ⊢ e':T`

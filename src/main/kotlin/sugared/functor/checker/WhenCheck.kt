@@ -265,10 +265,25 @@ internal fun Checker.bindPattern(p: Pattern, subj: Expr, subjT: Type, nf: Frame)
     is PatCtor -> {
         val ci = findVisibleCtor(p.name)
         if (ci == null) {
-            // 未知构造子：可能是绑定变量（无参形态），退化为具名绑定
-            if (p.args.isEmpty()) nf.declareVar(p.name, subjT)
-            else d.error("E-UNBOUND-NAME", p.pos, "未知构造子 ${p.name}")
-            PTop
+            // root doc《模式匹配》：结构体解构 `is T(a,b)`——未知构造子但可见结构体
+            val sd = findVisibleStruct(p.name)
+            if (sd != null && p.args.isNotEmpty()) {
+                if (sd.fields.size != p.args.size)
+                    d.error("E-TYPE-MISMATCH", p.pos, "结构体 ${p.name} 期望 ${sd.fields.size} 个解构分量，实际 ${p.args.size}")
+                val sub = sd.theory.filterIsInstance<TypeParam>().map { it.name }.zip(subjT.args).toMap()
+                val fieldTypes = sd.fields.map { it.type.substT(sub) }
+                // 递归绑定嵌套模式变量（按字段类型入帧）
+                p.args.forEachIndexed { i, ap -> if (i < fieldTypes.size) bindVars(ap, fieldTypes[i], nf) }
+                val (term, vars) = patternTerm(p)
+                val eq = PAtom("=", listOf(subj, term))
+                nf.inject(eq)
+                if (vars.isEmpty()) eq else PExists(vars, eq)
+            } else {
+                // 未知构造子：可能是绑定变量（无参形态），退化为具名绑定
+                if (p.args.isEmpty()) nf.declareVar(p.name, subjT)
+                else d.error("E-UNBOUND-NAME", p.pos, "未知构造子 ${p.name}")
+                PTop
+            }
         } else {
             if (ci.fields.size != p.args.size)
                 d.error("E-TYPE-MISMATCH", p.pos, "构造子 ${p.name} 期望 ${ci.fields.size} 个模式实参，实际 ${p.args.size}")
@@ -361,7 +376,16 @@ internal fun Checker.bindVars(ap: Pattern, expect: Type, nf: Frame) {
         }
         is PatCtor -> {
             val ci = findVisibleCtor(ap.name)
-            if (ci == null) { if (ap.args.isEmpty() && ap.name != "_") nf.declareVar(ap.name, expect); return }
+            if (ci == null) {
+                // root doc《模式匹配》：结构体解构 `is T(a,b)`（嵌套场景）
+                val sd = findVisibleStruct(ap.name)
+                if (sd != null && ap.args.isNotEmpty()) {
+                    val sub = sd.theory.filterIsInstance<TypeParam>().map { it.name }.zip(expect.args).toMap()
+                    val fieldTypes = sd.fields.map { it.type.substT(sub) }
+                    ap.args.forEachIndexed { i, inner -> if (i < fieldTypes.size) bindVars(inner, fieldTypes[i], nf) }
+                } else if (ap.args.isEmpty() && ap.name != "_") nf.declareVar(ap.name, expect)
+                return
+            }
             val sub = ci.enum.theory.filterIsInstance<TypeParam>().map { it.name }
                 .zip(expect.args).toMap()
             val fieldTypes = ci.fields.map { it.substT(sub) }
@@ -381,6 +405,16 @@ internal fun Checker.findVisibleCtor(name: String): CtorInfo? {
     for (path in visiblePaths) {
         if (path == modulePath) continue
         allSymbols[path]?.ctors?.get(name)?.let { return it }
+    }
+    return null
+}
+
+/** root doc《模式匹配》：结构体解构 `is T(a,b)`——按可见路径解析结构体（本模块优先，其次可见模块）。 */
+internal fun Checker.findVisibleStruct(name: String): StructDecl? {
+    syms.structs[name]?.let { return it }
+    for (path in visiblePaths) {
+        if (path == modulePath) continue
+        allSymbols[path]?.structs?.get(name)?.let { return it }
     }
     return null
 }

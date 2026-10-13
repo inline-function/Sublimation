@@ -35,6 +35,12 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
         )
         private val symbolCallStart = setOf(Kind.LT, Kind.GT, Kind.EQ, Kind.NEQ, Kind.LE, Kind.GE)
         private val asciiQuant = mapOf("forall" to "∀", "exists" to "∃", "exists1" to "∃!")
+        // 修复（#2）：算术优先级提示收集（混用不同优先级时提示加括号）
+        internal val parseHints = mutableListOf<Pair<String, String>>()
+        fun takeParseHints(): List<Pair<String, String>> {
+            // distinct：语句级声明消歧可能回溯导致同一表达式被解析两次 → 去重
+            val r = parseHints.distinct(); parseHints.clear(); return r
+        }
     }
 
     private fun cur(): Token = toks[pos]
@@ -409,12 +415,13 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
     }
 
     private fun parseType(): Type {
-        // @mut T 可变视图类型（root doc 54-61）：类型位注解前缀
+        // 类型位注解前缀：@mut T 可变视图类型（root doc 54-61）；@atomic T 原子类型（root doc《异步》）
         if (peek(Kind.AT)) {
             pos++
             val an = at(Kind.IDENT).text
-            if (an != "mut") throw ParseFailure(fileName, cur(), "类型位注解只支持 @mut")
-            return MutType(parseType())
+            if (an == "mut") return MutType(parseType())
+            if (an == "atomic") return AtomicType(parseType())
+            throw ParseFailure(fileName, cur(), "类型位注解只支持 @mut / @atomic")
         }
         // v3.0（完美函数类型）：`[T]` 前缀先试多态函数类型（`[T](T)=>T`），否则回退普通类型
         val base = if (peek(Kind.LBRACKET)) {
@@ -834,7 +841,9 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
             if (stopArrow && t.kind == Kind.LPAREN && t.precededBySpace) break
             if (t.kind == Kind.BY) { pos++; left = ByExpr(left, parseBracketList()); continue }
             if (t.kind == Kind.GT) {
-                if (angle) break
+                // 修复（#1）：angle 上下文中 `>` 作中缀须「前有空格且后有操作数」；
+                // 紧贴的 `>`（valid<7> 终止符、>> 序列、T>() 调用）仍是终止符
+                if (angle && !(t.precededBySpace && nextStartsOperand())) break
                 // v2.0 空安全：`a >: T` 安全转换。词法层不粘连 `>:`（避免 `<valid<7>>` 终止符序列误判），
                 // 由 parser 在表达式位合成：GT 后紧跟 COLON 即安全转换，右操作数是**类型**不是值。
                 val nxTok = toks.getOrNull(pos + 1)
@@ -866,6 +875,12 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                 left = TypeTestExpr(left, parseType())
                 continue
             }
+            // root doc《空安全系统》：`o as T` 内置安全转换关键词——与 `a >: T` 等价（词法层 as 是 IDENT，此处表达式中缀解析）。
+            if (t.kind == Kind.IDENT && t.text == "as") {
+                pos++
+                left = CastExpr(left, parseType())
+                continue
+            }
             // v2.0 空安全：`a ?: b` 空替代
             if (t.kind == Kind.ELVIS) {
                 pos++; left = ElvisExpr(left, parseUnary()); continue
@@ -878,6 +893,7 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                 pos++; left = BinExpr("in", left, parseRangeOperand()); continue
             }
             if (t.kind in binops) {
+                maybeArithHint(left, t.text, t)
                 pos++; left = BinExpr(t.text, left, parseUnary()); continue
             }
             // 两参解糖：带空格的符号名中缀 `q ○ p` → BinExpr("○")，左结合、无优先级
@@ -915,6 +931,35 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
             nx.kind == Kind.RBRACKET || nx.kind == Kind.SEMI || nx.kind == Kind.RPAREN ||
             nx.kind == Kind.ASSIGN || nx.kind == Kind.RET) return false
         return true
+    }
+
+    /** 修复（#1）：`>` 是「比较命题符号」还是「尖括号终止符」的消歧——后一 token 能起表达式则视为中缀 `>`。
+     *  紧邻的 `>>`（`valid<7>>`）里内层 `>` 的下一 token 仍是 `>`，不在起式集里，故仍正确终止。 */
+    private fun nextStartsOperand(): Boolean {
+        val t = toks.getOrNull(pos + 1) ?: return false
+        return t.kind in setOf(
+            Kind.INT, Kind.FLOAT, Kind.STR, Kind.DOLLAR, Kind.IDENT, Kind.SYMBOL,
+            Kind.LPAREN, Kind.MINUS, Kind.BANG, Kind.LNOT, Kind.LT,
+        )
+    }
+
+    /** 修复（#2，用户拍板「语言特性、不实现优先级」）：算术优先级提示——
+     *  仅当右侧算子优先级高于左侧已存算子（如 `a + b * c` 左结合会算成 `(a+b)*c`）时提示加括号。 */
+    private fun arithPrec(op: String): Int = when (op) {
+        "*", "/", "%" -> 2
+        "+", "-" -> 1
+        else -> 0
+    }
+
+    private fun maybeArithHint(left: Expr, op: String, tok: Token) {
+        if (left is BinExpr) {
+            val lo = arithPrec(left.op)
+            val ro = arithPrec(op)
+            if (lo > 0 && ro > lo) {
+                parseHints += ("${tok.line}:${tok.col}" to
+                    "算术表达式混用了不同优先级：右侧 `$op` 本应先于左侧 `${left.op}` 计算，但语言不做优先级（左结合），实际会算成 `(… ${left.op} …) $op …`。请手动加括号（如 `a + (b * c)`）以表达本意")
+            }
+        }
     }
 
     /** v3.0（区间 in）：`in` 的右操作数——`lo..hi`（括号 `/无括号`）*/ 
@@ -989,7 +1034,7 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                 // 尾随 lambda（含隐式单参）；`Task { … }`（决策 93）是代码块非 lambda，交给下一分支
                 // v3.0 特性 7：字面量/运算符结果后 `{` 不是尾随 lambda（`1 {` 是 ∃ 消去块的边界）；可调用结果才允许
                 t.kind == Kind.LBRACE && (braceIsLambda(pos) ||
-                    (braceHasImplicitBody(pos) && !(e is NameRef && e.name == "Task"))) && !(e is IntLit || e is StrLit || e is BinExpr || e is UniExpr) -> {
+                    (braceHasImplicitBody(pos) && !(e is NameRef && (e.name == "Task" || e.name == "Flow")))) && !(e is IntLit || e is StrLit || e is BinExpr || e is UniExpr) -> {
                     // v1.1 尾随 lambda 语法糖（Kotlin）：`f(a) { x -> … }` 追加为**最后**位置实参
                     val lam = parseBraceLambda()
                     e = if (e is CallExpr) e.copy(args = e.args + lam) else CallExpr(e, listOf(lam))
@@ -998,6 +1043,11 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
                     // v2.0 异步（决策 93）：`Task { … }` 创建任务（TASK-1）——体是代码块，非 lambda
                     val body = parseBlock()
                     e = TaskExpr(body)
+                }
+                t.kind == Kind.LBRACE && e is NameRef && e.name == "Flow" -> {
+                    // v2.0 异步（root doc《异步》）：`Flow { … }` 创建惰性冷流——体是代码块（含 emit），非 lambda
+                    val body = parseBlock()
+                    e = FlowExpr(body)
                 }
                 else -> break
             }
@@ -1448,5 +1498,7 @@ class Parser(private val toks: List<Token>, private val fileName: String) {
     }
 }
 
-fun parseSource(src: String, fileName: String = "<anon>"): FileAst =
-    Parser(Lexer(src, fileName).tokenize(), fileName).parseFile()
+fun parseSource(src: String, fileName: String = "<anon>"): FileAst {
+    Parser.parseHints.clear()
+    return Parser(Lexer(src, fileName).tokenize(), fileName).parseFile()
+}

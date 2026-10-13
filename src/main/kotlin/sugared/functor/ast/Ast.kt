@@ -179,6 +179,16 @@ data class MutType(val inner: Type) : Type {
     override fun substT(sub: Map<String, Type>): Type = MutType(inner.substT(sub))
 }
 
+/** AtomicType: @atomic T 原子类型（root doc《异步》）：对该类型的读写视为原子操作。
+ *  因编译目标是 JS 单线程，原型值/容器读写天然原子，原子性由事件循环保证——该类型主要作为
+ *  编译期声明，允许并发异步上下文安全读写；运行时无需额外包装，透明反射到内层类型。 */
+data class AtomicType(val inner: Type) : Type {
+    override val name: String get() = "(atomic)"
+    override val args: List<Type> get() = listOf(inner)
+    override fun render(): String = "@atomic " + inner.render()
+    override fun substT(sub: Map<String, Type>): Type = AtomicType(inner.substT(sub))
+}
+
 data class UnionType(val variants: List<Type>) : Type {
     override val name: String get() = "(union)"
     override val args: List<Type> get() = variants
@@ -359,6 +369,9 @@ data class TypeTestExpr(val target: Expr, val type: Type, override val pos: Stri
 
 /** `Task { ... }` 创建任务（TASK-1：仅创建不启动）。体是代码块（闭包语义，天然 @async）；类型 Task[T]。 */
 data class TaskExpr(val body: BlockExpr, override val pos: String = "") : Expr
+
+/** FlowExpr: `Flow { ... }` 惰性冷流（root doc 异步），类型 Flow[T]。 */
+data class FlowExpr(val body: BlockExpr, override val pos: String = "") : Expr
 
 /** 函数调用；尾随 lambda 已并入 args */
 data class CallExpr(

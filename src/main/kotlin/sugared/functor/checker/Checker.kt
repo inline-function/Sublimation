@@ -55,6 +55,8 @@ class Checker(
     /** v1.1 集合方法糖留痕：`xs.map(f)` → 同名自由函数 `map(xs, f)`（接收者前置）。
      *  键 = 调用点实例，值 = 重排后的实参列表（接收者 + 原实参），codegen 依此生成。 */
     internal val methodSugarArgs = java.util.IdentityHashMap<CallExpr, List<Expr>>()
+    /** root doc《副作用与可变性控制》：可变视图绑定深拷贝留痕（绑定语句 → 需拷贝）。codegen 依此包 __dc */
+    internal val deepCopyHits = java.util.IdentityHashMap<Any, Boolean>()
     /** P9（决策 44，用户授权 Max 倾向）：递归停机上下文——当前函数名/形参名/解构血缘 */
     internal var curFunName: String? = null
     internal var curFunParams: List<String> = emptyList()
@@ -79,10 +81,24 @@ class Checker(
     internal var openChannels: MutableSet<String> = LinkedHashSet()
     /** v2.0 异步（§5.4）：源码是否用到 Channel（决定 codegen 是否注入 Channel 运行时 class） */
     internal var channelUsed = false
+    /** v2.0 异步（root doc《异步》）：源码用到 Mutex → 注入 Mutex 运行时（与 channelUsed 同机制） */
+    internal var mutexUsed = false
+    /** v2.0 异步（root doc《异步》）：源码用到 @atomic（原子类型）→ 注入 atomic 运行时 */
+    internal var atomicUsed = false
+    /** v2.0 异步（root doc《异步》）：源码用到 Flow → 注入 Flow 冷流运行时 */
+    internal var flowUsed = false
     /** v3.0 特性 3：源码用到 `..` 值或 Range 内建方法 → 注入 __range 运行时（与 channelUsed 同机制） */
     internal var rangeUsed = false
     /** v2.0 异步（CH-5）：receive 智能转换留痕（CallExpr → 是否为本地未关闭通道），codegen 据此解包 */
     internal val receiveSmartHits = java.util.IdentityHashMap<CallExpr, Boolean>()
+    /** v2.0 空安全（root doc《空安全系统》：变量位 Some→T 隐式转换）：var 声明初值被自动解构（VarStmt → 解构后表达式） */
+    internal val varUnwrapHits = java.util.IdentityHashMap<VarStmt, Expr>()
+    /** v2.0 空安全：函数表达式体 `fun f(): T = Some(x)` 被解构（表达式体 → 解构后表达式） */
+    internal val funBodyUnwrapHits = java.util.IdentityHashMap<Expr, Expr>()
+    /** v2.0 异步（root doc《异步》）：Flow 冷流 -- 当前 Flow 体的 emit 值类型栈（嵌套 Flow 用栈） */
+    internal val flowElemStack = ArrayDeque<MutableList<Type>>()
+    /** v2.0 异步（root doc《异步》）：Flow 体的 emit 调用点（CallExpr -> true），codegen 据此生成 yield */
+    internal val flowEmitHits = java.util.IdentityHashMap<CallExpr, Boolean>()
     /** P9：变量血缘（子 → 父）：when 解构绑定变量 → 主题变量（`when(xs){Cons(_,t)->...}` ⇒ t→xs）。checkFun 进出清空恢复。 */
     internal var structSub: MutableMap<String, String> = LinkedHashMap()
     /**
@@ -284,7 +300,11 @@ class Checker(
             .associate { tp -> tp.name to listOf(tp.constraint!! to "d_${tp.constraint}_${tp.name}") }
         // O2（决策 68，用户拍板隐式 self）：方法体内先注入 self 与结构体字段，
         // 再声明形参（参数名与字段同名时后者覆盖 = 参数遮蔽字段，发提示 H-FIELD-SHADOW）。
-        if (selfT != null) injectSelfAndFields(f, selfT, fn)
+        if (selfT != null) {
+            // root doc《副作用与可变性控制》第 69 行：@mut 可变函数体内 self 持有可变视图（可修改实现结构体的可变属性）
+            val view = if ("mut" in fn.annotations) MutType(selfT) else selfT
+            injectSelfAndFields(f, view, fn)
+        }
         // $n 参数引用（决策 65，T6）：记录形参类型序列供体内部解析
         val savedParamTypes = paramTypes
         paramTypes = fn.params.map { syms.expand(it.type) }
@@ -362,8 +382,16 @@ class Checker(
             d.error("E-NON-SEALED-MATCH", fn.body.pos,
                 "函数 ${fn.name} 作为表达式的模式匹配没有密封（声明返回 ${effRt.render()}，但非穷尽 when 值类型为 Null）；补全分支或加 else")
         else if (!t.isSynthetic() && !typeLooseEq(t, effRt) &&
-            !(effRt.name == "Null" && fn.body is BlockExpr))
-            d.error("E-TYPE-MISMATCH", fn.body.pos, "函数 ${fn.name} 体类型 ${t.render()} 与声明 ${effRt.render()} 不符")
+            !(effRt.name == "Null" && fn.body is BlockExpr)) {
+            // v2.0 空安全（root doc《空安全系统》）：表达式体 `fun f(): T = Some(x)`——初值隐式解构（单向、不穿透函数边界）
+            val bodyUnwrap = if (fn.body !is BlockExpr) autoUnwrapCtor(fn.body, effRt) else null
+            if (bodyUnwrap != null) {
+                // 体被解构：登记 codegen 用解构后表达式；体类型按声明返回类型（effRt）
+                funBodyUnwrapHits[fn.body] = bodyUnwrap
+            } else {
+                d.error("E-TYPE-MISMATCH", fn.body.pos, "函数 ${fn.name} 体类型 ${t.render()} 与声明 ${effRt.render()} 不符")
+            }
+        }
         val tail = dollarOf(fn.body)
         for (post in postRewritten) {
             val goal = PropLogic.substDollar(PropLogic.fromExpr(post), tail)
@@ -400,7 +428,8 @@ class Checker(
     private fun injectSelfAndFields(f: Frame, selfT: Type, fn: FunDecl) {
         f.declareVar("self", selfT)
         f.inject(PAtom(":", listOf(NameRef("self"), typeToExpr(selfT))))
-        val st = (selfT as? NamedType)?.let { syms.structs[it.name] }
+        val selfInner = if (selfT is MutType) selfT.inner else selfT
+        val st = (selfInner as? NamedType)?.let { syms.structs[it.name] }
         st?.fields?.forEach { fp ->
             val ft = syms.expand(fp.type)
             f.declareVar(fp.name, ft)
@@ -460,9 +489,23 @@ class Checker(
                     val want = syms.expand(s.type)   // 别名展开（决策 30）
                     // v1.1：标注类型即变量类型（Kotlin 语义）；unify 只做兼容性检查，
                     // 避免泛型初值（如 setEmpty(): Set[T]）把未绑定类型参数残留进变量类型
-                    if (TypeInfer.unify(t, want) == null && !compatibleView(t, want))
-                        d.error("E-TYPE-MISMATCH", s.pos, "var ${s.name}: 标注 ${s.type.render()} 与初值 ${t.render()} 不可统一")
-                    else t = want
+                    var resolved = false
+                    if (TypeInfer.unify(t, want) == null && !compatibleView(t, want)) {
+                        // v2.0 空安全（root doc《空安全系统》：Some[T] 可直接赋值给 T 变量，隐式转换）——
+                        // 变量位自动解构（AD-5）：初值是单字段构造子（Some(x)/Ok(x)）且内层类型匹配时解包，
+                        // 与实参位 AD-1..4 共用同一审慎判据（单向、不穿透函数边界）。
+                        val unwrapped = autoUnwrapCtor(s.value, want)
+                        if (unwrapped != null) {
+                            varUnwrapHits[s] = unwrapped   // codegen 用解构后初值生成 JS
+                            t = want
+                            resolved = true
+                        }
+                    }
+                    if (!resolved) {
+                        if (TypeInfer.unify(t, want) == null && !compatibleView(t, want))
+                            d.error("E-TYPE-MISMATCH", s.pos, "var ${s.name}: 标注 ${s.type.render()} 与初值 ${t.render()} 不可统一")
+                        else t = want
+                    }
                 }
                 f.declareVar(s.name, t, s.pos)
                 // 深化上下文系统：自然数变量声明蕴含 x ≥ 0
@@ -491,10 +534,16 @@ class Checker(
                 if (t is NamedType && t.name == "Channel") localChannels += s.name
                 val mut = "mut" in s.annotations
                 if (mut) f.declareMut(s.name)
+                // root doc《副作用与可变性控制》@ref：登记引用别名变量
+                if ("ref" in s.annotations) f.declareRef(s.name)
+                // 可变视图绑定深拷贝留痕（root doc 85-144）：@mut T 任一侧或 @ref 可变变量绑定 → 拷贝；双侧 @ref 别名
+                if (s.value is NameRef && binderNeedsCopy(t, t0, "ref" in s.annotations, f.isRef((s.value as NameRef).name)))
+                    deepCopyHits[s] = true
                 // 指导§42：var n = 0 注入 n = 0 与 n : T；
                 // 决策35：@mut 变量仅保有自反相等，非自反相等论据（n = 初值）忽略不注入；
                 // root doc 第 9 行：初值引用 @mut 变量时绑定等式不可靠（会变）——同样不注入
-                if (isPureValue(s.value) && !mut && !refsMut(s.value, f) && !isMutStructType(t)) {
+                // root doc《副作用与可变性控制》@ref：上下文对引用变量态度与可变变量一致——不注入绑定等式
+                if (isPureValue(s.value) && !mut && "ref" !in s.annotations && !refsMut(s.value, f) && !isMutStructType(t)) {
                     f.inject(PAtom("=", listOf(NameRef(s.name), s.value)))
                 }
                 if (isPureValue(s.value) || mut) {
@@ -511,7 +560,7 @@ class Checker(
                     is NameRef -> {
                         val lhs = tgt.name
                         if (f.lookupVar(lhs) == null) d.error("E-UNBOUND-NAME", s.pos, "赋值目标 $lhs 未定义")
-                        if (!f.isMut(lhs) && pure) d.error("E-IMMUT-ASSIGN", s.pos, "对不可变变量 $lhs 赋值（加 @mut 或 unchecked 逃逸）")
+                        if (!f.isMut(lhs) && uncheckedDepth == 0) d.error("E-IMMUT-ASSIGN", s.pos, "对不可变变量 $lhs 赋值（加 @mut 或 unchecked 逃逸）")
                         // root doc（纯函数 P-3）：lambda 体内修改外部捕获的可变变量 → 推导该 lambda 不纯（同体内不纯表达式）。
                         // 当前帧未声明它 + isMut 沿父链成立 → 捕获自外层可变变量（块/分支会再叠帧，不查单层 parent）
                         else if (f.isMut(lhs) && lambdaDepth > 0 && !f.vars.containsKey(lhs))
@@ -520,7 +569,15 @@ class Checker(
                     is FieldExpr -> checkMutFieldWrite(tgt, f, pure)
                     else -> d.error("E-ASSIGN-TARGET", s.pos, "赋值目标须为变量或字段")
                 }
-                checkExpr(s.value, f, pure)
+                val vt = checkExpr(s.value, f, pure)
+                val lhs = (s.target as? NameRef)?.name
+                if (lhs != null && s.value is NameRef) {
+                    val lt = f.lookupVar(lhs) ?: return syntheticT("赋值")
+                    // 可变视图赋值深拷贝（root doc 85-144）：b = a 涉及 @mut T/@ref 任一侧 → 拷贝；双侧 @ref 别名
+                    if (binderNeedsCopy(lt, vt, f.isRef(lhs), f.isRef((s.value as NameRef).name)))
+                        deepCopyHits[s] = true
+                }
+                vt
             }
             // ---------- v3.0 特性 5：∵ / ∴ 语句（命题层，语句位） ----------
             is BecauseStmt -> {
@@ -678,6 +735,13 @@ class Checker(
     /** root doc《副作用与可变性控制》第 9 行配套：表达式是否引用 @mut 变量。
      *  不可变变量以 @mut 变量为初值时，绑定等式不可靠（初值会变）——不注入相等命题。 */
     /** M-2（root doc 可变视图）：@mut T 与 T 兼容——@mut 视图可隐式转不可变视图（转换点=拷贝点，codegen 落地）。 */
+    /** root doc《副作用与可变性控制》85-144：可变视图绑定触发深拷贝。
+     *  目标或源任一为 @mut T（视图）或 @ref（引用变量）→ 拷贝；仅当目标与源均 @ref 时为别名（共享同一对象）。 */
+    private fun binderNeedsCopy(tgt: Type, src: Type, tgtRef: Boolean, srcRef: Boolean): Boolean {
+        if (!(tgt is MutType || src is MutType || tgtRef || srcRef)) return false
+        return !(tgtRef && srcRef)
+    }
+
     private fun compatibleView(got: Type, want: Type): Boolean {
         if (typeEq(got, want)) return true
         return when {
@@ -693,7 +757,7 @@ class Checker(
         val rcvName = (tgt.target as? NameRef)?.name
         val rcvType = rcvName?.let { f.lookupVar(it) }
         if (rcvType == null) { d.error("E-UNBOUND-NAME", tgt.pos, "字段赋值目标 " + tgt.target + " 未定义"); return }
-        val innerT = if (rcvType is MutType) rcvType.inner else rcvType
+        val innerT = if (rcvType is MutType) rcvType.inner else if (rcvType is AtomicType) rcvType.inner else rcvType
         val stName = (innerT as? NamedType)?.name
             ?: run { d.error("E-ASSIGN-TARGET", tgt.pos, "字段赋值须作用于具名结构体"); return }
         val st = syms.structs[stName]
@@ -713,7 +777,8 @@ class Checker(
     }
 
     private fun Checker.refsMut(e: Expr, f: Frame): Boolean = when (e) {
-        is NameRef -> f.isMut(e.name)
+        // root doc《副作用与可变性控制》：@ref 引用变量与 @mut 同等——绑定等式不可靠（值可经别名变更）
+        is NameRef -> f.isMut(e.name) || f.isRef(e.name)
         is BinExpr -> refsMut(e.left, f) || refsMut(e.right, f)
         is UniExpr -> refsMut(e.operand, f)
         is CallExpr -> e.args.any { refsMut(it, f) }
@@ -1042,6 +1107,24 @@ class Checker(
             // Task[T]：T = 任务体尾表达式类型（块语义同 BlockExpr：尾表达式，无尾则 Null）
             namedT("Task", listOf(bt))
         }
+        is FlowExpr -> {
+            // v2.0 异步（root doc《异步》）：`Flow { … }` 创建惰性冷流——冷流（collect 才执行），
+            // 体天然 @async（可 await 挂起源）。体内 emit(v) 登记进 flowElemStack 收集元素类型；
+            // Flow[T]：T = 全部 emit 值类型 join（无 emit 则 Null）。
+            flowUsed = true
+            val savedAsync = curFunAsync
+            curFunAsync = true
+            val elemTypes = ArrayList<Type>()
+            flowElemStack.addLast(elemTypes)
+            try { checkExpr(e.body, f, pure) }
+            finally {
+                flowElemStack.removeLast()
+                curFunAsync = savedAsync
+            }
+            val elemT = if (elemTypes.isEmpty()) namedT("Null", emptyList())
+                else elemTypes.reduce { a, b -> TypeInfer.unify(a, b) ?: UnionType(listOf(a, b)) }
+            namedT("Flow", listOf(elemT))
+        }
         is ByExpr -> {
             val t = checkExpr(e.target, f, pure)
             e.props.forEach { f.inject(PropLogic.fromExpr(it)) }
@@ -1075,7 +1158,11 @@ class Checker(
             f.declareVar(e.name, t, e.pos)
             val mut = "mut" in e.annotations
             if (mut) f.declareMut(e.name)
-            if (isPureValue(e.value) && !mut && !refsMut(e.value, f) && !isMutStructType(t)) f.inject(PAtom("=", listOf(NameRef(e.name), e.value)))
+            if ("ref" in e.annotations) f.declareRef(e.name)
+            if (e.value is NameRef && binderNeedsCopy(t, t0, "ref" in e.annotations, f.isRef((e.value as NameRef).name)))
+                deepCopyHits[e] = true
+            // root doc @ref：上下文对引用变量态度与可变变量一致——不注入绑定等式
+            if (isPureValue(e.value) && !mut && "ref" !in e.annotations && !refsMut(e.value, f) && !isMutStructType(t)) f.inject(PAtom("=", listOf(NameRef(e.name), e.value)))
             if (isPureValue(e.value) || mut) f.inject(PAtom(":", listOf(NameRef(e.name), typeToExpr(t))))
             t
         }

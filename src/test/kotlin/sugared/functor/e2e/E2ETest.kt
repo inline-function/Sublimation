@@ -24,7 +24,7 @@ class E2ETest {
         val chk = Checker(ast)
         val bag = chk.run()
         assertEquals(false, bag.hasError, "语义检查应通过，实际:\n${bag.report()}")
-        val js = JsCodeGen().generate(ast, chk.dictHits, chk.moduleHits, chk.consHits, chk.dictSubHits, chk.namedArgOrder, chk.methodSugarArgs, chk.asyncAwaitHits, chk.channelUsed, chk.rangeHits, chk.rangeUsed, chk.receiveSmartHits, chk.hktKindPosHits, chk.funRefTargets, chk.funRefFree.keys, chk.lambdaDestructKeys, chk.delegatedImpls)
+        val js = JsCodeGen().generate(ast, chk.dictHits, chk.moduleHits, chk.consHits, chk.dictSubHits, chk.namedArgOrder, chk.methodSugarArgs, chk.asyncAwaitHits, chk.channelUsed, chk.mutexUsed, chk.atomicUsed, chk.flowUsed, chk.rangeHits, chk.rangeUsed, chk.receiveSmartHits, chk.varUnwrapHits, chk.funBodyUnwrapHits, chk.flowEmitHits, chk.hktKindPosHits, chk.funRefTargets, chk.funRefFree.keys, chk.lambdaDestructKeys, chk.delegatedImpls, chk.deepCopyHits)
         val f = File.createTempFile("subl-e2e-", ".js")
         f.writeText(js)
         return try {
@@ -74,6 +74,37 @@ class E2ETest {
         val src = "fun u(o: Optional[Nat], d: Nat): Nat = when(o) { is Some(x) -> x  None -> d }\n" +
             "fun main() { unchecked print(u(Some(42), 0))\nunchecked print(u(None, 7)) }"
         assertEquals("42\n7", run(src))
+    }
+
+    @Test
+    fun `rootdoc 空安全 as 安全转换关键词`() {
+        assumeTrue(nodeAvailable())
+        // root doc《空安全系统》：`o as T` 是内置关键词——若 o 是 T 的实例则转换成功（Some(o)），否则返回 None。
+        // 与 `a >: T` 等价（parser 表达式层 as / >: 双分支，语义一致：__isa 结构判定）。
+        val src = "fun f(n: Nat): Nat = when(n as Nat) { is Some(x) -> x  None -> 0 }\n" +
+            "@impure fun main() { unchecked print(f(42))\nunchecked print(f(0)) }"
+        assertEquals("42\n0", run(src))
+    }
+
+    @Test
+    fun `rootdoc 模式匹配 结构体解构`() {
+        assumeTrue(nodeAvailable())
+        // root doc《模式匹配》：`is 结构体解构`（struct T(a: Nat, b: Nat) 的 `is T(a,b)`）。
+        // struct 对象字段按名字存储（工厂 { tag, fieldName }），解构按字段名绑定。
+        val src = "struct P(x: Nat, y: Nat)\n" +
+            "@impure fun g(p: P): Nat = when(p) { is P(a, b) -> a + b  else -> 0 }\n" +
+            "@impure fun main() { unchecked print(g(P(2, 3))) }"
+        assertEquals("5", run(src))
+    }
+
+    @Test
+    fun `rootdoc 模式匹配 名义类型 is 结构判定`() {
+        assumeTrue(nodeAvailable())
+        // `is T` 对枚举/结构体是运行时结构判定（__isa 按 tag 判名义类型），非恒真。
+        val src = "struct P(x: Nat, y: Nat)\n" +
+            "@impure fun f(o: P): Str = if (o is P) { \"isP\" } else { \"no\" }\n" +
+            "@impure fun main() { unchecked print(f(P(1, 2))) }"
+        assertEquals("isP", run(src))
     }
 
     @Test
@@ -526,7 +557,7 @@ class E2ETest {
             "    var g = f(1, 2)\n" +
             "    print(g)\n" +
             "}"
-        assertEquals("[ 1, 2 ]", run(src))
+        assertEquals("[1,2]", run(src))
     }
 
     @Test
@@ -642,7 +673,7 @@ class E2ETest {
             "    print(s.map({ x => x * x }))\n" +
             "    print(s.fold(0, { (acc, x) => acc + x }))\n" +
             "}"
-        assertEquals("4\n[ 0, 1, 2, 3 ]\ntrue\nfalse\n[ 1, 4, 9, 16 ]\n10", run(src))
+        assertEquals("4\n[0,1,2,3]\ntrue\nfalse\n[1,4,9,16]\n10", run(src))
     }
 
     @Test
@@ -692,5 +723,60 @@ class E2ETest {
             "    print(\"ok\")\n" +
             "}"
         assertEquals("ok", run(src))
+    }
+
+    @Test
+    fun `rootdoc 可变视图深拷贝 - @mut结构体互拷隔离`() {
+        assumeTrue(nodeAvailable())
+        // 形式：@mut struct T(@mut n)。a,b 各持独立对象 → 修改互不影响
+        val src = "@mut struct T(@mut n: Nat)\n" +
+            "@impure fun main() {\n" +
+            "    var a : @mut T = T(0)\n" +
+            "    var b : T = a\n" +
+            "    a.n = 1\n" +
+            "    print(b.n)\n" +
+            "}"
+        assertEquals("0", run(src))
+    }
+
+    @Test
+    fun `rootdoc 可变视图深拷贝 - 双侧@ref别名共享`() {
+        assumeTrue(nodeAvailable())
+        // 双侧 @ref → 别名语义：b 与 a 指向同一对象，b 改 a 见
+        val src = "@mut struct T(@mut n: Nat)\n" +
+            "@impure fun main() {\n" +
+            "    @ref var a : @mut T = T(0)\n" +
+            "    @ref var b : @mut T = a\n" +
+            "    b.n = 1\n" +
+            "    print(a.n)\n" +
+            "}"
+        assertEquals("1", run(src))
+    }
+
+    @Test
+    fun `rootdoc 可变视图深拷贝 - ref与非ref互传拷贝`() {
+        assumeTrue(nodeAvailable())
+        // 引用变量与非引用变量互传 → 深拷贝（b 是 a 的拷贝，互不影响）
+        val src = "@mut struct T(@mut n: Nat)\n" +
+            "@impure fun main() {\n" +
+            "    @ref var a : @mut T = T(0)\n" +
+            "    var b : @mut T = a\n" +
+            "    a.n = 1\n" +
+            "    print(b.n)\n" +
+            "}"
+        assertEquals("0", run(src))
+    }
+
+    @Test
+    fun `rootdoc 可变视图深拷贝 - 非ref赋@ref拷贝`() {
+        assumeTrue(nodeAvailable())
+        val src = "@mut struct T(@mut n: Nat)\n" +
+            "@impure fun main() {\n" +
+            "    var a : @mut T = T(0)\n" +
+            "    @ref var b : @mut T = a\n" +
+            "    a.n = 1\n" +
+            "    print(b.n)\n" +
+            "}"
+        assertEquals("0", run(src))
     }
 }

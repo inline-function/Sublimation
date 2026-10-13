@@ -49,7 +49,7 @@ fun get[K, V](m: Map[K, V], k: K): Optional[V] = when(m) {
     is MapCons(k0, v0, t) -> if (k0 == k) { Some(v0) } else { get(t, k) }
 }
 
-fun put[K, V](m: Map[K, V], k: K, v: V): Map[K, V] = MapCons(k, v, m)
+fun put[K, V](m: Map[K, V], k: K, v: V): Map[K, V] = MapCons(k, v, remove(m, k))
 
 fun size[K, V](m: Map[K, V]): Nat = when(m) {
     MapNil -> 0

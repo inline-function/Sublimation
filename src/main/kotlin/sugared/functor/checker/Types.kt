@@ -10,6 +10,8 @@ val autoTraits = setOf("Any")
 val BASE_TYPES = setOf("Nat", "Int", "Rat", "Str", "Bool", "Null", "Nothing", "Any",
     "EmptyTuple", "SingleTuple", "Array",
     "Task", "Channel",   // v2.0 异步（决策 93）：内建泛类型类型（无用户声明，形如 Array）
+    "Mutex",           // v2.0 异步（root doc《异步》）：异步互斥锁（无类型参数）
+    "Flow",            // v2.0 异步（root doc《异步》）：惰性冷流（Flow[T]，形如 Channel）
     "Range",           // v3.0 特性 3：惰性区间 `..` 返回 Range[Int]
     "Json")              // v2.0 基本库（内建 JS 实现）：JSON 值（编译成 JS 原生 JSON 对象/数组/字面量）
 
@@ -234,6 +236,7 @@ fun typeToExpr(t: Type): Expr = when (t) {
     is TupleType -> NameRef("(tuple)")
     is UnionType -> NameRef("(union)")
     is MutType -> NameRef("(mut)")
+    is AtomicType -> NameRef("(atomic)")
 }
 
 /** 类型相等（T1：名义类型同名义相等；函数/元组按结构相等） */
@@ -246,6 +249,10 @@ fun typeEq(a: Type, b: Type): Boolean = when {
     a is TupleType && b is TupleType ->
         a.items.size == b.items.size && a.items.zip(b.items).all { typeEq(it.first, it.second) }
     a is MutType && b is MutType -> typeEq(a.inner, b.inner)   // M-1：@mut T 与 T 是不同类型
+    // @atomic T 是透明标记（root doc《异步》）：读写原子，运行时无额外包装 → 与内层类型等价
+    a is AtomicType && b is AtomicType -> typeEq(a.inner, b.inner)
+    a is AtomicType -> typeEq(a.inner, b)
+    b is AtomicType -> typeEq(a, b.inner)
     else -> false
 }
 
@@ -257,6 +264,7 @@ fun Type.containsAny(): Boolean = when (this) {
     is TupleType -> items.any { it.containsAny() }
     is UnionType -> variants.any { it.containsAny() }
     is MutType -> inner.containsAny()
+    is AtomicType -> inner.containsAny()
 }
 
 data class CtorInfo(val enum: EnumDecl, val fields: List<Type>)

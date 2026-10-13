@@ -1067,6 +1067,17 @@ class CheckerTest {
     }
 
     @Test
+    fun `rootdoc @ref变量不承认绑定相等`() {
+        // root doc：《副作用与可变性控制》——上下文对引用变量态度与可变变量一致，
+        // @ref 绑定的变量不注入相等命题（初值可经别名变更）。用普通结构体隔离 @ref 规则。
+        val src = "struct T(n: Nat)\n@impure fun main() { @ref var a : T = T(0)\n var b : T = a\n ∵ b = a }"
+        assertTrue(warns(src).any { it.contains("E-CANNOT-PROVE") }, "期望 b=a 不可证（@ref 仅自反），实际 WS=" + warns(src).joinToString(" | "))
+        // 对照组：普通不可变绑定应注入相等（可证）
+        val ctl = "struct T(n: Nat)\n@impure fun main() { var c : T = T(0)\n var d : T = c\n ∴ d = c }"
+        assertTrue(warns(ctl).none { it.contains("E-CANNOT-PROVE") }, "普通绑定 d=c 应可证，实际 WS=" + warns(ctl).joinToString(" | "))
+    }
+
+    @Test
     fun `rootdoc @mut自反相等可证`() {
         val src = "@impure fun main() { @mut var x = 0\n ∵ x = x }"
         assertTrue(warns(src).none { it.contains("E-CANNOT-PROVE") }, "@mut 自反应可证，WS=" + warns(src).joinToString(" | "))
@@ -1142,6 +1153,14 @@ class CheckerTest {
         assertTrue(errs(bad).contains("E-NOT-MUT"), "ES=" + errs(bad).joinToString(" | "))
         val good = "@mut struct A(@mut x: Nat)\n@mut class T { @mut fun bump(n: Nat): Nat }\nimpl T for A { @mut fun bump(n: Nat): Nat { return n } }\n@impure fun main() { var a : @mut A = A(0)\n a.bump(1)\n print(a.x) }"
         assertTrue(ok(good), "ES=" + errs(good).joinToString(" | ") + " WS=" + warns(good).joinToString(" | "))
+    }
+
+    @Test
+    fun `rootdoc @mut方法可修改self可变属性`() {
+        val good = "@mut struct A(@mut x: Nat)\n@mut class T { @mut fun set1(n: Nat): Null }\nimpl T for A { @mut fun set1(n: Nat): Null { self.x = n\n return null } }\n@impure fun main() { var a : @mut A = A(0)\n a.set1(5)\n print(a.x) }"
+        assertTrue(ok(good), "ES=" + errs(good).joinToString(" | ") + " WS=" + warns(good).joinToString(" | "))
+        val bad = "struct B(y: Nat)\n@mut class T { @mut fun set2(n: Nat): Null }\nimpl T for B { @mut fun set2(n: Nat): Null { self.y = n\n return null } }\n@impure fun main() { var b : @mut B = B(0)\n b.set2(5) }"
+        assertTrue(errs(bad).contains("E-NOT-MUT"), "ES=" + errs(bad).joinToString(" | "))
     }
 
     @Test
@@ -1321,9 +1340,10 @@ class CheckerTest {
     }
 
     @Test
-    fun `@theorem 值级调用封存为警告特性五`() {
+    fun `@theorem 值级调用解封不再警告`() {
         val src = "@theorem fun Triv[p]: Null <p> { unchecked.axiom[p] }\n@impure fun main() { Triv() }"
-        assertTrue(warns(src).contains("E-THEOREM-VALUE-CALL"), "封存：值级调用降级为警告（根文档程序风格后续重做）")
+        assertFalse(warns(src).contains("E-THEOREM-VALUE-CALL"), "解封(#3)：值级调用不再降级为警告")
+        assertTrue(ok(src), "解封(#3)：定理函数值级调用正常")
     }
 
     @Test

@@ -6,7 +6,9 @@ import sugared.functor.ast.Entry
 import sugared.functor.ast.Expr
 import sugared.functor.ast.FileAst
 import sugared.functor.ast.FunDecl
+import sugared.functor.ast.VarStmt
 import sugared.functor.codegen.JsCodeGen
+import sugared.functor.parser.Parser
 import sugared.functor.parser.parseSource
 import java.io.File
 import java.util.IdentityHashMap
@@ -33,7 +35,10 @@ class MultiModule(root: File) {
         val m = LinkedHashMap<String, FileAst>()
         for (node in tree.allModules()) {
             val entries = ArrayList<Entry>()
-            for (f in node.files) entries += parseSource(f.readText(), f.name).entries
+            for (f in node.files) {
+                entries += parseSource(f.readText(), f.name).entries
+                for ((p0, m0) in Parser.takeParseHints()) bag.hint("H-ARITH-PRECEDENCE", p0, m0)
+            }
             m[node.absPath] = FileAst(entries)
         }
         asts = m
@@ -79,13 +84,20 @@ class MultiModule(root: File) {
         val sugarHits = IdentityHashMap<CallExpr, List<Expr>>()
         val awaitHits = IdentityHashMap<CallExpr, Boolean>()
         val receiveSmarts = IdentityHashMap<CallExpr, Boolean>()
+        val varUnwrapHits = IdentityHashMap<VarStmt, Expr>()
+        val funBodyUnwrapHits = IdentityHashMap<Expr, Expr>()
+        val flowEmitHits = IdentityHashMap<CallExpr, Boolean>()
         val hktKindHits = IdentityHashMap<CallExpr, Int>()
         val funRefTargets = IdentityHashMap<Expr, String>()
         val funRefFree = IdentityHashMap<Expr, Boolean>()
         val lambdaDestructKeys = IdentityHashMap<Expr, List<List<String>?>>()
         var channelUsed = false
+        var mutexUsed = false
+        var atomicUsed = false
+        var flowUsed = false
         val rangeHits = IdentityHashMap<CallExpr, String>()
         var rangeUsed = false
+        val deepCopyHits = IdentityHashMap<Any, Boolean>()
         for (chk in checkers.values) {
             dictHits.putAll(chk.dictHits)
             funRefTargets.putAll(chk.funRefTargets)
@@ -98,11 +110,18 @@ class MultiModule(root: File) {
             sugarHits.putAll(chk.methodSugarArgs)
             awaitHits.putAll(chk.asyncAwaitHits)
             receiveSmarts.putAll(chk.receiveSmartHits)
+            varUnwrapHits.putAll(chk.varUnwrapHits)
+            funBodyUnwrapHits.putAll(chk.funBodyUnwrapHits)
+            flowEmitHits.putAll(chk.flowEmitHits)
             hktKindHits.putAll(chk.hktKindPosHits)
             if (chk.channelUsed) channelUsed = true
+            if (chk.mutexUsed) mutexUsed = true
+            if (chk.atomicUsed) atomicUsed = true
+            if (chk.flowUsed) flowUsed = true
             rangeHits.putAll(chk.rangeHits)
             if (chk.rangeUsed) rangeUsed = true
+            deepCopyHits.putAll(chk.deepCopyHits)
         }
-        return JsCodeGen().generateUnits(asts.toList(), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, rangeHits, rangeUsed, receiveSmarts, hktKindHits, funRefTargets, funRefFree.keys, lambdaDestructKeys)
+        return JsCodeGen().generateUnits(asts.toList(), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, mutexUsed, atomicUsed, flowUsed, rangeHits, rangeUsed, receiveSmarts, varUnwrapHits, funBodyUnwrapHits, flowEmitHits, hktKindHits, funRefTargets, funRefFree.keys, lambdaDestructKeys, emptyMap(), deepCopyHits)
     }
 }

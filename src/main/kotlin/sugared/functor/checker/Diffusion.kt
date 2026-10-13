@@ -13,6 +13,8 @@ class Frame(val parent: Frame?) {
     /** v3.0 特性 7：局部定理表（块内局部函数定义=∀ 引入），作用域随帧；∴ 搜索时并入定理空间 */
     val localTheorems = LinkedHashMap<String, FunDecl>()
     private val muts = LinkedHashSet<String>()
+    /** root doc《副作用与可变性控制》@ref：引用别名变量（语义同裸引用；与 muts 并列登记） */
+    private val refs = LinkedHashSet<String>()
     val children = ArrayList<Frame>()
     private val used = HashSet<String>()
     private val audited = LinkedHashMap<String, String>()   // 名字 → 声明点 pos（仅 W-UNUSED 审计目标）
@@ -23,6 +25,8 @@ class Frame(val parent: Frame?) {
     fun declareVar(n: String, t: Type, pos: String) { vars[n] = t; if (pos.isNotEmpty()) audited[n] = pos }
     fun declareMut(n: String) { muts.add(n) }
     fun isMut(n: String): Boolean = n in muts || (parent?.isMut(n) ?: false)
+    fun declareRef(n: String) { refs.add(n) }
+    fun isRef(n: String): Boolean = n in refs || (parent?.isRef(n) ?: false)
     fun markUsed(n: String) { used.add(n); parent?.markUsed(n) }
     fun isUsed(n: String): Boolean = n in used
     /** 本帧（含子树）所有审计声明：名字 + 声明点 */
@@ -218,7 +222,7 @@ internal fun Checker.proveOrDeep(gamma: List<Prop>, goal: Prop): Boolean {
     // 根文档·为命题 `e : T`：字面量类型判定
     constTypeAtom(goal)?.let { return it }
     // 根文档·纯度结构相等：不纯表达式（含 @impure 调用）不参与结构相等/自反——仅显式注入的事实可证
-    if (goal is PAtom && (goal.head == "=" || goal.head == "==") && goal.terms.size == 2 &&
+    if (goal is PAtom && goal.head in setOf("=", "==", "!=", "≠", "<", ">", "<=", "≤", ">=", "≥") && goal.terms.size == 2 &&
         (containsImpureCall(goal.terms[0]) || containsImpureCall(goal.terms[1]))) {
         return gamma.any { it == goal }
     }
@@ -232,7 +236,10 @@ internal fun Checker.proveOrDeep(gamma: List<Prop>, goal: Prop): Boolean {
     if (ArithProve.proves(gamma, goal) == true) return true
     val res = prover.proves(globalFacts + gamma, goal)
     if (prover.deepAborted) d.error("E-DEEP-SATURATION", "", "命题 ${PropLogic.render(goal)} 超出饱和深度 $maxSatDepth")
-    return res
+    if (res) return true
+    // 加强（自动证明全流程）：把定理空间（stdlib 跨模块 + 用户 @theorem）纳入任意目标的判定——
+    // 目标与某定理后件结构合一即成立。原只 ∴/∵/∃/if[p] 位查询，现前件/后件/伴生命题/构造位一律受益。
+    return searchTheorems(goal, 0)
 }
 
 /** 定理判据：**只有 `@theorem` 显式标注的函数才是定理函数**（登记进定理空间，编译器擦除其代码，只供证明位）。非 @theorem 函数即使纯+Null 也不进定理空间。 */

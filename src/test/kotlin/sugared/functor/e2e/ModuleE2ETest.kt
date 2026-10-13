@@ -711,6 +711,172 @@ class ModuleE2ETest {
         } finally { dir.deleteRecursively() }
     }
 
+    // ============ v2.0 异步 Mutex（root doc《异步》：lock/unlock/withLock） ============
+
+    @Test
+    fun `v2 异步 - Mutex lock unlock 保护临界区`() {
+        assumeTrue(nodeAvailable())
+        val main = "@mut struct Counter(@mut n: Nat)\n" +
+            "@impure @async fun inc(m: Mutex, c: @mut Counter): Null {\n" +
+            "  m.lock()\n" +
+            "  var old = c.n\n" +
+            "  c.n = old + 1\n" +
+            "  m.unlock()\n" +
+            "}\n" +
+            "@impure fun main() {\n" +
+            "  var m = Mutex()\n" +
+            "  var c : @mut Counter = Counter(0)\n" +
+            "  var t = Task { inc(m, c) }\n" +
+            "  t.start()\n" +
+            "  t.join()\n" +
+            "  print(\"n=\" + c.n)\n" +
+            "}\n"
+        assertEquals("n=1", runTree(mapOf("main.subl" to main)))
+    }
+
+    @Test
+    fun `v2 异步 - Mutex 同步函数 lock 报 E-NEED-ASYNC`() {
+        assumeTrue(nodeAvailable())
+        val main = "@impure fun helper(m: Mutex): Null {\n" +
+            "  m.lock()\n" +
+            "}\n" +
+            "@impure fun main() {\n" +
+            "  var m = Mutex()\n" +
+            "  helper(m)\n" +
+            "}\n"
+        val dir = Files.createTempDirectory("subl-mutex-sync").toFile()
+        try {
+            File(dir, "main.subl").writeText(main)
+            val mm = MultiModule(dir)
+            val bag = mm.checkAll()
+            assertTrue(bag.hasError, "应报 E-NEED-ASYNC，实际通过")
+            assertTrue(bag.report().contains("E-NEED-ASYNC"), "诊断应含 E-NEED-ASYNC，实际:\n${bag.report()}")
+        } finally { dir.deleteRecursively() }
+    }
+
+    @Test
+    fun `v2 异步 - Mutex withLock 持锁执行`() {
+        assumeTrue(nodeAvailable())
+        val main = "@mut struct Counter(@mut n: Nat)\n" +
+            "@impure @async fun bump(m: Mutex, c: @mut Counter): Null {\n" +
+            "  m.withLock(fun() { c.n = c.n + 1 })\n" +
+            "}\n" +
+            "@impure fun main() {\n" +
+            "  var m = Mutex()\n" +
+            "  var c : @mut Counter = Counter(0)\n" +
+            "  var t = Task { bump(m, c) }\n" +
+            "  t.start()\n" +
+            "  t.join()\n" +
+            "  print(\"n=\" + c.n)\n" +
+            "}\n"
+        assertEquals("n=1", runTree(mapOf("main.subl" to main)))
+    }
+
+    // ============ v2.0 异步 @atomic（root doc《异步》：原子类型注解） ============
+
+    @Test
+    fun `v2 异步 - @atomic 标量类型注解读写`() {
+        assumeTrue(nodeAvailable())
+        val main = "@impure fun main() {\n" +
+            "  @mut var x : @atomic Nat = 0\n" +
+            "  x = x + 1\n" +
+            "  print(\"x=\$x\")\n" +
+            "}\n"
+        assertEquals("x=1", runTree(mapOf("main.subl" to main)))
+    }
+
+    @Test
+    fun `v2 异步 - @atomic 作形参类型注解`() {
+        assumeTrue(nodeAvailable())
+        val main = "@impure @async fun proc(m: @atomic Nat): Null {\n" +
+            "  print(\"m=\$m\")\n" +
+            "}\n" +
+            "@impure fun main() {\n" +
+            "  var t = Task { proc(41) }\n" +
+            "  t.start()\n" +
+            "  t.join()\n" +
+            "}\n"
+        assertEquals("m=41", runTree(mapOf("main.subl" to main)))
+    }
+
+    // ============ v2.0 空安全变量位/函数返回位 Some→T（root doc《空安全系统》隐式转换） ============
+
+    @Test
+    fun `v2 空安全 - 变量位 Some 隐式转 T`() {
+        assumeTrue(nodeAvailable())
+        val main = "@impure fun main() {\n" +
+            "  var x : Nat = Some(1)\n" +
+            "  print(\"x=\$x\")\n" +
+            "}\n"
+        assertEquals("x=1", runTree(mapOf("main.subl" to main)))
+    }
+
+    @Test
+    fun `v2 空安全 - 变量位 Some 类型不匹配报错`() {
+        assumeTrue(nodeAvailable())
+        val main = "@impure fun main() {\n" +
+            "  var x : Str = Some(1)\n" +
+            "  print(\"x=\" + x)\n" +
+            "}\n"
+        val dir = Files.createTempDirectory("subl-var-unwrap-mismatch").toFile()
+        try {
+            File(dir, "main.subl").writeText(main)
+            val mm = MultiModule(dir)
+            val bag = mm.checkAll()
+            assertTrue(bag.hasError, "应报 E-TYPE-MISMATCH，实际通过")
+            assertTrue(bag.report().contains("E-TYPE-MISMATCH"), "应含 E-TYPE-MISMATCH，实际:\n${bag.report()}")
+        } finally { dir.deleteRecursively() }
+    }
+
+    @Test
+    fun `v2 空安全 - 函数返回位 Some 隐式转 T`() {
+        assumeTrue(nodeAvailable())
+        val main = "@impure fun identity(n: Nat): Nat = Some(n)\n" +
+            "@impure fun main() {\n" +
+            "  var y = identity(9)\n" +
+            "  print(\"y=\$y\")\n" +
+            "}\n"
+        assertEquals("y=9", runTree(mapOf("main.subl" to main)))
+    }
+
+    // ============ v2.0 异步 Flow 冷流（root doc《异步》emit/collect/map） ============
+
+    @Test
+    fun `v2 异步 - Flow collect 消费发射值`() {
+        assumeTrue(nodeAvailable())
+        val main = "@impure @async fun main() {\n" +
+            "  var fl = Flow { emit(1); emit(2); emit(3) }\n" +
+            "  fl.collect(fun(x: Nat) { print(x) })\n" +
+            "}\n"
+        assertEquals("1\n2\n3", runTree(mapOf("main.subl" to main)))
+    }
+
+    @Test
+    fun `v2 异步 - Flow map 派生再 collect`() {
+        assumeTrue(nodeAvailable())
+        val main = "@impure @async fun main() {\n" +
+            "  var fl = Flow { emit(1); emit(2) }\n" +
+            "  var f2 = fl.map(fun(x: Nat) = x * 10)\n" +
+            "  f2.collect(fun(y: Nat) { print(y) })\n" +
+            "}\n"
+        assertEquals("10\n20", runTree(mapOf("main.subl" to main)))
+    }
+
+    @Test
+    fun `v2 异步 - Flow 作形参类型注解 collect`() {
+        assumeTrue(nodeAvailable())
+        val main = "@impure @async fun consume(fl: Flow[Nat]): Null {\n" +
+            "  fl.collect(fun(x: Nat) { print(x) })\n" +
+            "}\n" +
+            "@impure fun main() {\n" +
+            "  var fl = Flow { emit(7); emit(8) }\n" +
+            "  var t = Task { consume(fl) }\n" +
+            "  t.start()\n" +
+            "  t.join()\n" +
+            "}\n"
+        assertEquals("7\n8", runTree(mapOf("main.subl" to main)))
+    }
+
     // ============ v2.0 可变性自然命题（副作用 §4.2 immutable + §6.2 untouch） ============
 
     @Test
@@ -940,7 +1106,7 @@ class ModuleE2ETest {
             "  print(zs)\n" +
             "}"
         val list = File("stdlib/collection.subl").readText()
-        assertEquals("[ 6, 8 ]\n10\n[ 1, 2, 3, 4 ]", runTree(mapOf(
+        assertEquals("[6,8]\n10\n[1,2,3,4]", runTree(mapOf(
             "main.subl" to src,
             "stdlib/collection.subl" to list)))
     }
@@ -955,7 +1121,7 @@ class ModuleE2ETest {
             "  print(m({x -> x * 2}))\n" +
             "}"
         val list = File("stdlib/collection.subl").readText()
-        assertEquals("[ 2, 4 ]", runTree(mapOf(
+        assertEquals("[2,4]", runTree(mapOf(
             "main.subl" to src,
             "stdlib/collection.subl" to list)))
     }
@@ -1002,6 +1168,6 @@ class ModuleE2ETest {
             "  print(xs.size())\n" +
             "}"
         val col = File("stdlib/collection.subl").readText()
-        assertEquals("[ 2, 10 ]\n2", runTree(mapOf("main.subl" to src, "stdlib/collection.subl" to col)))
+        assertEquals("[2,10]\n2", runTree(mapOf("main.subl" to src, "stdlib/collection.subl" to col)))
     }
 }

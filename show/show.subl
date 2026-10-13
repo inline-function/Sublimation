@@ -31,3 +31,4 @@ fun main() =
     )
         .map { (_.name,_.score,_.grade()) }
         .forEach { (name,score,grade) => print("$name:$score:$grade") }
+
