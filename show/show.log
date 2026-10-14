@@ -1,1 +1,3 @@
-[完成] 已生成 show.js（28087 字节）
+[错误] E-TYPE-MISMATCH: 函数 setOf 期望 1 实参，实际 4
+[错误] E-TYPE-MISMATCH: 函数 listOf 体类型 T 与声明 List[T] 不符
+[错误] 语义检查未通过

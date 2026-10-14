@@ -32,7 +32,7 @@
 - **数学记号一等公民**——源码直接写 `∈` `≥` `≤`、`∀` `∃`、`n ∈ (0..30)`；每个自然数恒有自然命题 `n ≥ 0`；结构相同的表达式自动自反（`1 + 2 = 1 + 2` 可证，`1 + 2 = 3` 不自动证）。
 - **目录即模块**——一个目录 = 一个模块，`<模块名>.settings` 显式挂载（`mount core/logic`）；根目录下的 `stdlib/` 隐式挂载；跨模块定理搜索沿可见路径展开。
 - **类型类与扩展方法**——`class Show[T] { fun show(): Str }` + `impl Show for Grade { ... }` 按实参类型解析字典；`impl List[a] { ... }`（没有实现类型类的 impl）为扩展方法，成员脱糖为带 `self` 首参的自由函数，承担多形态（同作用域同名函数仅允许一个）。方法糖 `x.f()` 优先同名自由函数、其次类型类字典。
-- **容器体系**——`List`/`Set`/`Map`/`Optional`/`Result` 与 Tuple 族统一实现 `Collection`（`size`/`isEmpty`/`contains`），并提供函数式 API：`map`/`filter`/`flatMap`/`forEach`/`fold`/`any`/`all`/`head`/`last`/`zip`/`reverse`…；`listOf(1,2,3)`（`@tulpe` 可变元组）与 `emptyList()` 便捷构造。
+- **容器体系**——`List`/`Set`/`Map`/`Optional`/`Result` 与 Tuple 族统一实现 `Collection`（`size`/`isEmpty`/`contains`），并提供函数式 API：`map`/`filter`/`flatMap`/`forEach`/`fold`/`any`/`all`/`head`/`last`/`zip`/`reverse`…；`listOf(1,2,3)`（`@list` 变长实参，Kotlin vararg 语义）与 `emptyList()` 便捷构造。
 - **空安全**——可空值用 `Optional[T]`（`Some`/`None`）显式表示，配合安全调用与自动解构；没有裸 `null` 穿透类型系统。
 - **纯度受控**——函数默认纯；副作用显式标注 `@impure`，就地修改显式标注 `@mut`；不方便标时可以 `unchecked` 逃逸。上下文（命题、`∴`、守卫）中的表达式必须纯。
 - **真模式匹配 `when`**——解构、嵌套构造子、守卫、穷尽性判定，含区间模板 `when(n in _) { (0..10) -> ... }`（Java 式 switch 已全盘废弃）。

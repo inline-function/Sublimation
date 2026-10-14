@@ -90,9 +90,9 @@ fun toMap[K, V](xs: List[(K, V)]): Map[K, V] = when(xs) {
     }
 }
 
-// ---- v3.0：可变元组（@vararg @tuple，Kotlin vararg 语义）与 Set 的函数式方法 ----
-// setOf：任意数量同型实参打包成 Set。codegen 特判生成 SetCons 链（变长元组无法结构拆解，body 仅为类型声明）。
-fun setOf[T](@vararg @tuple _items: (T)): Set[T] = SetNil()
+// ---- v3.0：变长实参（@list，Kotlin vararg 语义）与 Set 的函数式方法 ----
+// setOf：任意数量同型实参打包成 Set。codegen 特判生成 SetCons 链（body 仅为类型声明占位）。
+fun setOf[T](@list _items: T): Set[T] = SetNil()
 
 // Set.map：Kotlin 语义（Set → List）
 fun map[T, U](xs: Set[T], f: (T) => U): List[U] = when(xs) {
@@ -371,9 +371,9 @@ fun toResult[T, E](o: Optional[T], e: E): Result[T, E] = when(o) {
     None -> Err(e)
 }
 
-// 构造便利：emptyList / listOf（@tulpe 可变元组 → 实参打包为 Cons 链，codegen 特判）
+// 构造便利：emptyList / listOf（@list 变长实参 → 实参打包为 JS 数组，codegen 特判）
 fun emptyList[T](): List[T] = Nil()
-fun listOf[T](@tulpe t: T): List[T] = Cons(t, Nil())
+fun listOf[T](@list t: T): List[T] = t
 
 // ---------- v3.0 第三批 4.2：Collection 型类体系 ----------
 // 统一各容器的高阶查询：contains / size。方法式成员；扩展调用法（x.f()）优先类型类，自由函数用普通调用法 f(x)。

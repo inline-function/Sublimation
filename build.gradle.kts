@@ -1,39 +1,11 @@
-plugins {
-    kotlin("jvm") version "2.1.20"
-    application
-}
+allprojects {
+    group = "sugared.functor"
+    version = "1.1-SNAPSHOT"
 
-group = "sugared.functor"
-version = "1.1-SNAPSHOT"
-
-repositories {
-    mavenCentral()
-}
-
-dependencies {
-    testImplementation(kotlin("test"))
-}
-
-tasks.test {
-    useJUnitPlatform()
-}
-
-kotlin {
-    jvmToolchain(17)
-}
-
-application {
-    mainClass.set("sugared.functor.MainKt")
-}
-
-// Fat jar（含 Kotlin stdlib）——供 `java -jar` 独立运行，不依赖 gradle。
-tasks.register<Jar>("fatJar") {
-    archiveFileName.set("sublimation.jar")
-    manifest { attributes["Main-Class"] = "sugared.functor.MainKt" }
-    from(sourceSets.main.get().output)
-    dependsOn(configurations.runtimeClasspath)
-    from(configurations.runtimeClasspath.get().map { if (it.isDirectory) it else zipTree(it) }) {
-        exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA", "META-INF/versions/**", "module-info.class")
+    repositories {
+        mavenCentral()
     }
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
+
+// 测试工作目录统一指向仓库根，使 tests 内的相对 File("stdlib") / File("examples/...") 可解析。
+// 注意：workingDir 须在各模块的 tasks.test { } 内以 rootDir 设置（root/subprojects 的 lazy configureEach 会被 KGP 重置）。

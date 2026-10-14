@@ -59,3 +59,8 @@ tmptest/
 ### Local pressure-test / prove probe dirs (not for public repo) ###
 daily/
 prove_matrix/
+
+### 排除目录（不入库）：示例 / 游乐场 / 思路文档 ###
+playground/
+examples/
+idea doc/

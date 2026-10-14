@@ -1,0 +1,258 @@
+package sugared.functor
+
+import sugared.functor.ast.AstPrinter
+import sugared.functor.ast.tokenLine
+import sugared.functor.checker.MultiModule
+import sugared.functor.checker.checkFile
+import sugared.functor.checker.generateSingle
+import sugared.functor.lexer.Lexer
+import sugared.functor.interpreter.InterpreterError
+import sugared.functor.interpreter.Interpreter
+import sugared.functor.parser.parseSource
+import sugared.functor.parser.parseSourceWithNotes
+import java.io.File
+import kotlin.system.exitProcess
+
+const val USAGE = """sublimationc — Sublimation 编译器（M1 词法 + M2 语法 + M3 语义 + M4 代码生成）
+用法:
+  parse <file.subl>        词法+语法分析，打印语法树
+  tokens <file.subl>       打印 token 流（含邻接标记）
+  check <file.subl>        语义分析（弥散/证明义务/纯度/可变性/impl/when 穷尽），诊断分级输出
+  check <file.subl> -v     同时输出补充级诊断（类型推导结果等）
+  compile <file.subl> [-o out.js]   语义通过后生成 JS（默认打印到标准输出）
+  run-script <file.subs> [<file2.subs> ...]  脚本模式解释执行：顶层语句直接运行（无需 main）；多条脚本互不共享
+  run-script <dir>            运行目录下所有 .subs 脚本（每个独立运行）；无 .subs 时按 .subl 工程(main)执行
+  explain <CODE>           打印诊断码的含义与修复建议（如 E-TYPE-MISMATCH / W-NON-EXHAUSTIVE）
+"""
+
+/** 报错增强（2026-10-11）：诊断码解释表——`explain <CODE>` 子命令读取 */
+/** 报错增强（新手友好）：诊断码解释表——`explain <CODE>` 子命令读取 */
+val EXPLAIN: Map<String, String> = mapOf(
+    "E-TYPE-MISMATCH" to "类型不匹配。—— 你给的值的类型跟期望的不一样。检查函数声明里参数/返回值的类型标注，确保你用对了。例如函数要 Nat 你给了 Str。",
+    "E-UNBOUND-NAME" to "名字 `xxx` 没定义。—— 拼写错了？忘了先 `var xxx = …` 声明？或者它在别的模块里，需要先 `mount 模块名` 才能用。如果是跨模块构造子（如 Ok/Err），检查是否 mount 了对应模块。",
+    "E-ARITY" to "实参个数不对。—— 调函数时传的参数个数跟声明的不一样（多了或少了）。检查函数声明和调用处。",
+    "E-NAMED-ARG" to "命名实参冲突。—— 同一个参数既按位置传了又按名字传了，或者函数压根没有这个参数名。检查参数名拼写。",
+    "E-DUP-DECL" to "重复声明。—— 名字 `xxx` 在这个模块里声明了不止一次。改名，或者把两份声明合并。",
+    "E-MISSING-RETURN" to "缺 return。—— 块体函数（用 `{ … }` 的）必须显式写 `return`。如果只需要一个值，用表达式体 `= 值`（不带花括号）就行。",
+    "E-RETURN-TYPE" to "return 的类型跟声明不符。—— `return` 后面表达式的类型，跟函数声明里写的返回类型不一样。两边对齐。",
+    "E-FUN-NO-BODY" to "函数缺函数体。—— 函数声明了但没有实现。只有编译器内建的名字才允许无体（用 `@root` 声明）。如果不想自己实现，检查是否拼错了内建名字。",
+    "E-NON-SEALED-MATCH" to "when 用作表达式但没有兜底。—— 你把 when 的结果赋给了变量，但分支不穷尽，值可能是 Null。补全所有构造子分支，或者加 `else`。",
+    "W-NON-EXHAUSTIVE" to "when 可能没走完所有情况。—— 枚举/构造子类型的 when 少了一些分支，运行时可能没分支可走。把剩余构造子补上。如果是区间 when，检查端点是否衔接无缝。",
+    "E-PRE-UNPROVEN" to "函数调用的前置条件没证明。—— 函数声明了上文 `<条件>`，调用前必须证明这个条件成立。你可以在调用前用 `+∵ 条件` 注入事实，或者换个调用参数让编译器能自动证出。",
+    "E-POST-UNPROVEN" to "函数体的后置条件没证明。—— 函数声明了下文 `<\$条件>`，你的函数体必须保证返回值满足这个条件。检查 return 的值，必要时用 `by` 策略辅助证明。",
+    "E-NON-STRUCTURAL-REC" to "纯函数的递归停止性存疑。—— 纯函数自递归时，必须有一个参数在「变小」（比如列表解构：对子列表递归）。如果不是这种模式，加上 `@impure` 允许它（编译器不会检查 @impure 函数的停机性）。",
+    "E-IMMUT-ASSIGN" to "给不可变的变量赋值了。—— `xxx` 声明时没标 `@mut`，不允许重新赋值。要么改成 `@mut var xxx = …`，要么换个新变量名。",
+    "E-ASSIGN-TARGET" to "赋值目标不是变量。—— 赋值号左边必须是变量名（或可变字段）。检查你是不是把函数调用、表达式写到了左边。",
+    "E-NOT-MUT" to "字段修改需要可变视图。—— 你要修改结构体字段 `xxx`，但当前持有的是不可变视图。字段声明加 `@mut`，并且变量类型前加 `@mut T`（如 `var a: @mut T = …`）。",
+    "E-IMPURE-REQUIRED" to "参数带 @mut 必须标 @impure。—— 函数的参数类型带有 `@mut T`，说明这函数可能修改传入的可变状态。函数声明必须加 `@impure`。",
+    "E-IMPL-INCOMPLETE" to "impl 没实现完整。—— `impl C for T` 必须实现类型类 C 里的全部方法，且签名要一致。检查少了哪个方法，或者方法签名（参数类型/返回类型）是否对得上。",
+    "E-NO-INSTANCE" to "类型类实例缺失。—— 你想调用 `.f()`，但类型 `T` 没有实现对应的类型类。写一个 `impl 类型类 for T { … }` 来实现它。",
+    "E-IMPURE-CALL" to "纯函数里调了有副作用的函数。—— 纯函数不能调有副作用的函数（如 print/readLine）。要么把外层函数标 `@impure`，要么去掉这个副作用调用。",
+    "E-ANY-CALL" to "类型推导信息不足。—— 编译器推导不出这个表达式的具体类型（推导成了 Any）。手动标注类型，例如 `var x: Nat = …`。",
+    "E-NEED-ASYNC" to "异步调用需要在异步上下文。—— `readFile` 这类函数只能在 `@async` 标记的函数里用。给外层函数加 `@async`，或者把它放进 `main()`（main 天然是 async）。",
+    "E-NOT-STARTED" to "Task 还没启动。—— 在 `await`/`join` 之前要先调 `t.start()` 启动 Task。",
+    "E-CHANNEL-CLOSED" to "Channel 已关闭。—— `close()` 之后的 send/receive 无效。把操作移到 close 之前。",
+    "E-TUPLE-DESTRUCT" to "元组解构不对。—— 解构的初值不是元组，或者解构的变量个数跟元组元素数不一致。对齐个数。",
+    "E-ROOT-NOT-ALLOWED" to "@root 只能用于编译器内建名字。—— 你写的名字不在白名单里，不能用 `@root`。去掉 `@root`，或者检查是不是拼错了内建函数名。",
+    "E-DEEP-SATURATION" to "证明义务太复杂，编译器饱和了。—— 这个命题推理太深，自动证明器试完了所有路径都不行。把大结论拆成几个小步骤，先 `∴` 中间结论，再推最终结论。",
+    "W-UNUSED" to "声明后从没用过。—— 变量/参数 `xxx` 声明了但哪个地方都没用到。删掉它，或者改名加 `_` 前缀表示故意不用。",
+    "W-UNREACHABLE" to "不可达代码。—— return 之后的语句永远执行不到。删掉或上移。",
+    "W-DIV-ZERO" to "字面量除以零。—— 编译器检测到 `/0`，检查除数。",
+    "H-ROOT-BUILTIN" to "提示：你写的名字是编译器内建名，可以用 `@root` 声明成无体内建函数。",
+    "H-FIELD-SHADOW" to "提示：参数名遮蔽了 self 的同名字段。函数体内裸写这个名字时指向参数而不是字段。换个参数名更清楚。",
+    "H-PARAM-REF" to "提示：函数体内用 \$数字 引用参数——直接用参数名更可读。",
+    "D-TYPE-INFERRED" to "补充：变量类型是编译器推导出来的。你没写类型标注时，编译器自动推断（如 var x = 1 → x 是 Nat）。用 -v 查看所有补充。",
+    "D-METHOD-SUGAR" to "补充：方法糖展开。`.f(…)` 是自由函数 `f(o, …)` 的简写，编译器自动把它展开成自由函数调用。",
+    "D-AUTO-AWAIT" to "补充：异步调用自动 await。编译器检测到 @async 函数调用，会自动等待它完成（不用写 await）。",
+    "D-IMPLICIT-UNWRAP" to "补充：Some 隐式解包。`Some(x)` 在需要 T 类型的位置会自动转为内部的 x。",
+    "D-DEEP-COPY" to "补充：发生了深拷贝。绑定/赋值涉及 @mut 类型时，编译器会自动复制一份，新变量是独立副本（改它不影响源）。",
+    "D-NAT-PROP" to "补充：注入了自然命题。Nat 类型的变量自动成立 n ≥ 0，可直接用于自动证明。",
+    "D-SAFE-CALL" to "补充：安全调用展开。`?.f()` 在接收者为 None 时短路，整个表达式返回 None。",
+    "D-ELVIS" to "补充：Elvis 替换展开。`a ?: b` 在 a 为 None 时取 b 作为兜底值。",
+    "D-INFIX" to "补充：中缀糖展开。`a f b` 与 `f(a, b)` 等价，编译器把它转成自由函数调用。",
+    "D-TRAILING" to "补充：尾随 lambda。`f(a) { … }` 等价 `f(a, { … })`，lambda 作为最后一个实参传入。",
+    "D-BECAUSE-PROVED" to "补充：命题成立、已注入上下文。`+…` 引入的事实会进入后续证明的上下文。",
+    "D-THEREFORE" to "补充：命题证明成立。`∴ …` 求证成功，结果注入后续上下文。",
+    "D-PLUSBECAUSE-PROVED" to "补充：命题成立、已注入上下文。`+∵ …` 引入的事实会进入后续证明的上下文。",
+    "W-CANNOT-PROVE" to "警告：命题没证出来。`∵/∴/+∵` 里的命题在当前已知事实下推不出，检查是不是漏了前提，或换个能自动证的写法。",
+    "D-BY" to "补充：用了 `by` 证明策略辅助证明。编译器按你给的策略展开命题。",
+    "D-EXIST-INTRO" to "补充：`∃` 引入成立。你给出了满足性质的实例，编译器确认存在性。",
+    "D-LOCAL-FUN" to "补充：局部函数展开。`f = { x -> … }` 内部作为自由函数处理（等价 ∀ 引入）。",
+    "E-AMBIGUOUS-INSTANCE" to "错误：一个类型对同一方法有多个 impl 实现，编译器分不清用哪个。让它们之间存在父子类型类关系，或删掉多余的 impl。",
+    "E-ANY-STRUCT" to "错误：结构体里有 Any 类型成员，编译器推导不出具体类型。手动标注该成员的具体类型。",
+    "E-BY-UNBOUND" to "错误：`by` 委托引用了一个不存在的字段。检查字段名，或确认要委托的类型是结构体。",
+    "E-DEFAULT-PARAM" to "错误：函数/方法形参不允许默认值。只有 struct 字段支持默认值。",
+    "E-DESTRUCT" to "错误：参数解构失败。解构只支持元组或结构体，且分量个数要对上。",
+    "E-DUP-FIELD" to "错误：构造结构体时同一个字段传了两次。删掉重复的那个。",
+    "E-FIELD-MISSING" to "错误：构造结构体时少了某个字段，且它没有默认值。补上这个字段。",
+    "E-FUTURE-FUN" to "错误：引用了尚未定义的函数（前向引用）。把函数定义移到使用之前。",
+    "E-IF-CONCLUSION-MISMATCH" to "错误：`if[p]` 的 then 分支和 else 分支推导出的结论不一致。排中律要求两支结论相同。",
+    "E-IMPL-EXTRA" to "错误：impl 里实现了一个类型类里没有的方法。删掉它，或用 `@new` 标注这是新增方法。",
+    "E-IMPL-MISMATCH" to "错误：impl 方法的签名和类型类声明的不一致。逐项核对参数类型和返回类型。",
+    "E-KIND-MISMATCH" to "错误：类型构造子用错了。像 `List` 这种类型必须带类型参数（`List[Nat]`），不能裸用；参数个数也要对。",
+    "E-MAIN-PARAMS" to "错误：入口函数 main 不能有形参或类型参数。写成 `fun main() { … }`。",
+    "E-NEED-CLASSIC" to "错误：`if[p]` 需要先挂载排中律。在文件里任一声明加 `@classic` 注解即可。",
+    "E-NO-METHOD" to "错误：类型上找不到这个方法。检查拼写，或写对应类型的 impl。",
+    "E-NO-SELF" to "错误：方法调用缺接收者。写成 `接收者.方法(…)` 或 `方法(接收者, …)`。",
+    "E-NON-PATTERN-HKT" to "错误：类型参数嵌套了类型构造子（如 `F[G[Nat]]`）。类型构造子的实参必须是具体类型。",
+    "E-PARAM-REF" to "错误：匿名函数参数引用越界。函数只有 N 个形参，你却引用了第 N+1 个（如 '$1', '$2' 等）。",
+    "E-PARAM-REF-IN-BODY" to "错误：函数体里用了非法的匿名参数引用。用参数名代替。",
+    "E-PROP-AMBIGUOUS" to "错误：命题有歧义，编译器无法唯一确定。给命题加括号或显式类型标注。",
+    "E-PROP-UNBOUND" to "错误：前提命题不在当前已知事实里。先用 `∵` 或 `∃` 引入它。",
+    "E-QUANT-UNPROVEN" to "错误：`∃` 引入的实例满足不了目标性质。检查实例能否推出目标命题。",
+    "E-RETURN-OUTSIDE" to "错误：return 用在了非法位置。return 只能出现在具名函数体或 lambda 体的语句流里。",
+    "E-STRUCT-MUT-PROP" to "错误：结构体声明了普惠成立的性质，但引用了 @mut 可变字段，无法保证恒成立。",
+    "E-STRUCT-PROP-UNPROVEN" to "错误：结构体的普惠性质在构造时证不出来。检查构造实参是否满足性质。",
+    "E-THEOREM-SEARCH-DEPTH" to "错误：定理搜索超过深度限制。把大结论拆成小步骤，逐步证明。",
+    "E-TUPLE-ARITY" to "错误：解构的分量个数和元组元素个数不一致。数一下左边变量和右边元素。",
+    "E-TYPE-MISSING" to "错误：类型推导不出来，需要显式标注类型。写明类型参数或类型标注。",
+    "H-AMBIGUOUS-CTOR" to "提示：构造子名有歧义，多个枚举都有这个构造子。用 `枚举::构造子` 明确指定。",
+    "H-EMPTY-DECL" to "提示：这个声明是空的，可以省略花括号写得更简洁。",
+    "H-ARITH-PRECEDENCE" to "提示：语言不做运算符优先级（一律左结合）。混用 `+` 和 `*` 这类不同优先级时，实际计算顺序可能和你直觉不同。给想要的子表达式加括号明确本意。",
+    "E-LEX" to "词法错误：源码里有编译器不认识的字符/token。检查写错的符号、未闭合的字符串或插值，以及混入的全角标点（如中文括号）。",
+    "E-PARSE" to "语法错误：代码不符合语言文法。根据报错位置检查缺失的括号、关键字或表达式。",
+    "E-CHECK" to "语义分析内部错误：编译器在类型检查这个文件时抛出了意外异常。这通常是编译器自身的 bug，请保留源码并反馈给开发者。",
+    "E-CIRCULAR-MOUNT" to "模块挂载成环：settings 里的 mount 链形成了循环（A 挂载 B，B 又挂载 A）。检查各模块的 `.settings` 文件，把挂载关系改成无环的树状结构。",
+    "E-PARSE-SETTINGS" to "settings 文件语法错：模块的 `.settings` 文件只支持 `mount <路径> [as <别名>]` 一行一个指令。检查拼写与格式。",
+    "E-PROCESSOR-ERROR" to "注解处理器执行出错：自定义注解处理器在运行时抛出了异常。检查处理器实现的健壮性。",
+    "E-PROCESSOR-LOOP" to "注解处理器循环不收敛：处理器反复改写代码超过最大轮数仍未稳定。检查处理器是否在条件不满足时无限自我触发。",
+)
+
+fun main(args: Array<String>) {
+    if (args.isEmpty()) { System.err.println(USAGE); exitProcess(2) }
+    val cmd = args[0]
+    // 报错增强：explain <CODE> —— 打印诊断码解释（无需源文件）
+    if (cmd == "explain") {
+        if (args.size < 2) { System.err.println(USAGE); exitProcess(2) }
+        val code = args[1].uppercase()
+        val text = EXPLAIN[code]
+        if (text == null) {
+            System.err.println("[错误] 未收录诊断码 $code（现有：${EXPLAIN.keys.sorted().joinToString(" / ")}）")
+            exitProcess(2)
+        }
+        println("$code — $text")
+        return
+    }
+    if (args.size < 2) { System.err.println(USAGE); exitProcess(2) }
+    val verbose = args.contains("-v")
+    try {
+        // 脚本模式：支持多条脚本路径 / 一个目录，每个 .subs 独立执行（互不共享，无需 main）
+        if (cmd == "run-script") {
+            runScriptCmd(args.drop(1).filter { it != "-v" })
+            return
+        }
+        val path = File(args[1])
+        if (!path.exists()) { System.err.println("[错误] 文件不存在: ${args[1]}"); exitProcess(2) }
+        // P0（M7）：目录即模块——check/compile 接受目录（编译入口 = 根 /，扫全树）
+        if (path.isDirectory) {
+            if (cmd != "check" && cmd != "compile") {
+                System.err.println("[错误] 目录模式仅支持 check / compile（脚本目录请用 run-script）：$cmd")
+                exitProcess(2)
+            }
+            val mm = MultiModule(path)
+            val bag = mm.checkAll()
+            val report = bag.report(includeSupplement = verbose)
+            if (report.isNotEmpty()) println(report)
+            if (bag.hasError) {
+                System.err.println("[错误] 语义检查未通过")
+                exitProcess(1)
+            }
+            if (cmd == "check") {
+                println("[完成] 模块检查通过")
+            } else {
+                val js = mm.generateJs()
+                val oi = args.indexOf("-o")
+                if (oi >= 0 && oi + 1 < args.size) {
+                    val target = File(args[oi + 1])
+                    target.parentFile?.mkdirs()
+                    target.writeText(js)
+                    println("[完成] 已生成 ${target.path}（${js.length} 字节）")
+                } else print(js)
+            }
+            return
+        }
+        val src = path.readText()
+        when (cmd) {
+            "parse" -> println(AstPrinter.toTreeString(parseSource(src, path.name)))
+            "tokens" -> Lexer(src, path.name).tokenize().forEach { println(tokenLine(it)) }
+            "check" -> {
+                val pr = parseSourceWithNotes(src, path.name)
+                val ast = pr.ast
+                val bag = checkFile(ast)
+                for ((p0, m0) in pr.hints) bag.hint("H-ARITH-PRECEDENCE", p0, m0)
+                for ((c0, p1, m1) in pr.supplements) bag.supplement(c0, p1, m1)
+                val out = bag.report(includeSupplement = verbose, source = src)   // 报错增强：源码片段上下文
+                if (out.isNotEmpty()) println(out)
+                if (bag.hasError) { System.err.println("[错误] 语义检查未通过"); exitProcess(1) }
+                println("[完成] 语义检查通过")
+            }
+            "compile" -> {
+                val pr = parseSourceWithNotes(src, path.name)
+                val ast = pr.ast
+                val chk = sugared.functor.checker.Checker(ast)
+                val bag = chk.run()
+                for ((p0, m0) in pr.hints) bag.hint("H-ARITH-PRECEDENCE", p0, m0)
+                for ((c0, p1, m1) in pr.supplements) bag.supplement(c0, p1, m1)
+                val out = bag.report(includeSupplement = verbose, source = src)   // 报错增强：源码片段上下文
+                if (out.isNotEmpty()) System.err.println(out)
+                if (bag.hasError) { System.err.println("[错误] 语义检查未通过，拒绝生成 JS"); exitProcess(1) }
+                val js = generateSingle(chk, ast)   // 单文件：留痕字段经 compiler 模块公开入口传递（跨模块 internal 边界）
+                val oi = args.indexOf("-o")
+                if (oi >= 0 && oi + 1 < args.size) {
+                    val target = File(args[oi + 1])
+                    target.parentFile?.mkdirs()
+                    target.writeText(js)
+                    println("[完成] 已生成 ${target.path}（${js.length} 字节）")
+                } else print(js)
+            }
+            "run-script" -> {
+                // 脚本模式：Checker 类型检查 + 解释器直接求值（§6 执行模型）
+                val interp = Interpreter()
+                interp.run(src, path.name)
+                println("[完成] 脚本执行结束")
+            }
+            else -> { System.err.println(USAGE); exitProcess(2) }
+        }
+    } catch (e: RuntimeException) {
+        System.err.println("[错误] ${e.message}")
+        exitProcess(1)
+    }
+}
+
+/** 脚本模式入口：每个参数可以是 .subs 文件或目录；目录下每个 .subs 各自独立运行。 */
+private fun runScriptCmd(paths: List<String>) {
+    if (paths.isEmpty()) { System.err.println(USAGE); exitProcess(2) }
+    val interp = Interpreter()
+    var ranAny = false
+    for (p in paths) {
+        val f = File(p)
+        if (!f.exists()) {
+            System.err.println("[错误] 路径不存在: " + p)
+            exitProcess(2)
+        }
+        if (f.isDirectory) {
+            val subs = interp.subsIn(f)
+            if (subs.isNotEmpty()) {
+                for (s in subs) {
+                    println("[脚本] " + s.name)
+                    interp.runScript(s)
+                    ranAny = true
+                }
+            } else {
+                // 目录下没有 .subs：按 .subl 工程（fun main() 入口）解释执行（daily 等编译程序）
+                println("[工程] " + f.path)
+                interp.runDir(f)
+                ranAny = true
+            }
+        } else {
+            println("[脚本] " + f.name)
+            interp.runScript(f)
+            ranAny = true
+        }
+    }
+    if (!ranAny) {
+        System.err.println("[错误] 未找到可运行的脚本")
+        exitProcess(1)
+    }
+    println("[完成] 脚本执行结束")
+}
