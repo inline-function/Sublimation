@@ -17,8 +17,8 @@
 @root fun mathTan(x: Rat): Rat
 
 // ---------- 实数平方根 ----------
-// 平方根（证明位项的根基：sqrt(2) ^ 2 = 2；运行时 Math.sqrt 原生）。
-@root fun sqrt(x: Rat): Real
+// 平方根：实数参数 x 的二分之一次方（x 的 1/2 次幂），由内建 pow 定义。
+fun sqrt(x: Rat): Rat = pow(x, 0.5)
 
 // ---------- Nat 算术工具 ----------
 // 欧几里得算法：gcd(48, 18) = 6。

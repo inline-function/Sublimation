@@ -858,6 +858,9 @@
   function core_encoding__hexDecode(s) {
     return (() => { throw new Error('panic: unreachable') })();
   }
+  function core_math__sqrt(x) {
+    return Math.pow(x, 0.5);
+  }
   function core_math__gcd(a, b) {
     return (__eq(b, 0) ? (() => {
   return a;

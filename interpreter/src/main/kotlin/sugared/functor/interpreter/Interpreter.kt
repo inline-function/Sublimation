@@ -320,7 +320,6 @@ class Interpreter(
             (args[0] as Number).toDouble()
         }
         register("abs", "x" to ScriptType.Rat, retType = ScriptType.Rat) { args -> kotlin.math.abs((args[0] as Number).toDouble()) }
-        register("sqrt", "x" to ScriptType.Rat, retType = ScriptType.Rat) { args -> kotlin.math.sqrt((args[0] as Number).toDouble()) }
         register("floor", "x" to ScriptType.Rat, retType = ScriptType.Rat) { args -> kotlin.math.floor((args[0] as Number).toDouble()) }
         register("ceil", "x" to ScriptType.Rat, retType = ScriptType.Rat) { args -> kotlin.math.ceil((args[0] as Number).toDouble()) }
         register("pow", "x" to ScriptType.Rat, "y" to ScriptType.Rat, retType = ScriptType.Rat) { args ->

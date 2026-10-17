@@ -44,7 +44,6 @@
 [提示][15:7] H-ROOT-BUILTIN: @root 函数 mathSin 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
 [提示][16:7] H-ROOT-BUILTIN: @root 函数 mathCos 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
 [提示][17:7] H-ROOT-BUILTIN: @root 函数 mathTan 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
-[提示][21:7] H-ROOT-BUILTIN: @root 函数 sqrt 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
 [警告][10:1] W-UNUSED: 参数 url 声明后从未使用（可加 _ 前缀抑制）
 [警告][14:1] W-UNUSED: 参数 url 声明后从未使用（可加 _ 前缀抑制）
 [警告][14:1] W-UNUSED: 参数 body 声明后从未使用（可加 _ 前缀抑制）
@@ -83,6 +82,6 @@
 [提示][33:7] H-ROOT-BUILTIN: @root 函数 strSplit 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
 [提示][35:7] H-ROOT-BUILTIN: @root 函数 strIndexOf 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
 [提示][7:7] H-ROOT-BUILTIN: @root 函数 timeNow 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
-[完成] 已生成 show.js（32477 字节）
+[完成] 已生成 show.js（32542 字节）
 计数器=1
 证明成功!

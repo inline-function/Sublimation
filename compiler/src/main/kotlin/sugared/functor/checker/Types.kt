@@ -191,9 +191,6 @@ fun builtinPure(name: String): FunDecl? = when (name) {
     "pow" -> FunDecl("pow", emptyList(), emptyList(),
         listOf(Param("x", namedT("Rat")), Param("y", namedT("Rat"))), emptyList(),
         namedT("Rat", emptyList()), emptyList(), null)
-    // 平方根：JS Math.sqrt 原生映射（证明位项的根基：sqrt(2)^2 = 2）。
-    "sqrt" -> FunDecl("sqrt", emptyList(), emptyList(),
-        listOf(Param("x", namedT("Rat"))), emptyList(), namedT("Real", emptyList()), emptyList(), null)
     // ---- v2.0 标准库补全（本会话加）：字符串扩展 / Math 扩展——JS 原生映射，codegen 特判 ----
     "strUpper" -> FunDecl("strUpper", emptyList(), emptyList(),
         listOf(Param("s", namedT("Str"))), emptyList(), namedT("Str"), emptyList(), null)
@@ -293,7 +290,7 @@ val ROOT_WHITELIST: Set<String> = setOf(
     "concat", "length", "charAt", "substring", "strCmp", "toStr", "parseNat",
     "strUpper", "strLower", "strTrim", "startsWith", "endsWith", "strReplace", "strSplit", "strIndexOf",
     "mathMin", "mathMax", "mathClamp", "mathRound", "mathSin", "mathCos", "mathTan",
-    "toReal", "toRat", "parseRat", "abs", "floor", "ceil", "pow", "sqrt",
+    "toReal", "toRat", "parseRat", "abs", "floor", "ceil", "pow",
     "jsonParse", "jsonGet", "jsonAt", "jsonLen", "jsonStr", "jsonNum", "jsonBool",
     "jsonIsNull", "jsonIsArr", "jsonToStr", "jsonToList",
 )

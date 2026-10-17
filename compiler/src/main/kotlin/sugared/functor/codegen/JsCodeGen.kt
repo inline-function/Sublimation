@@ -1036,7 +1036,6 @@ class JsCodeGen {
             return "Number(${expr(e.args[0])})"
         if (name == "parseRat" && e.args.size == 1)
             return "(() => { const v = Number(String(${expr(e.args[0])})); return Number.isNaN(v) ? None() : Some(v); })()"
-        if (name == "sqrt" && e.args.size == 1) return "Math.sqrt(${expr(e.args[0])})"
         if (name == "abs" && e.args.size == 1) return "Math.abs(${expr(e.args[0])})"
                 if (name == "floor" && e.args.size == 1) return "Math.floor(${expr(e.args[0])})"
         if (name == "ceil" && e.args.size == 1) return "Math.ceil(${expr(e.args[0])})"
