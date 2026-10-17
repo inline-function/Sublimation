@@ -1,0 +1,35 @@
+// 脚本5：递归数学 + 自动定理证明
+fun choose(n: Nat, k: Nat): Nat =
+    if (k == 0) { 1 }
+    else {
+        if (n == k) { 1 }
+        else { unchecked var a = choose(n - 1, k); unchecked var b = choose(n - 1, k - 1); a + b }
+    }
+
+fun power(base: Nat, exp: Nat): Nat =
+    if (exp == 0) { 1 }
+    else { unchecked var r = power(base, exp - 1); base * r }
+
+fun doubleCap(n: Nat)<n ≤ 100>: Nat = n * 2
+
+fun gradeChar(n: Nat)<n ≤ 100>: Str =
+    when(n in _) {
+        (0..59) -> "不及格"
+        (60..79) -> "及格"
+        (80..100) -> "优秀"
+    }
+
+@theorem
+fun identity[p]: Null <p -> p>
+
+print("C(5,2)=" + toStr(choose(5, 2)))
+print("幂(2,10)=" + toStr(power(2, 10)))
+print("doubleCap(30)=" + toStr(doubleCap(30)))
+print("gradeChar(88)=" + gradeChar(88))
+print("gradeChar(55)=" + gradeChar(55))
+
+∵ 3 >= 0
+∴ 3 >= 0
+∴ (1 + (2 * 3)) = 7
+∃ k = 9 . k = 9
+print("证明-ok")

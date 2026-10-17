@@ -1,0 +1,29 @@
+// 脚本6：字符串 + 数学 + 类型转换
+var s = "Hello Sublimation"
+print("大写=" + strUpper(s))
+print("小写=" + strLower(s))
+print("长度=" + toStr(length(s)))
+print("拼接=" + concat("foo", "bar"))
+print("子串=" + substring("hello", 0, 3))
+print("开头he=" + toStr(startsWith("hello", "he")))
+print("结尾lo=" + toStr(endsWith("hello", "lo")))
+print("拆分=" + toStr(strSplit("a,b,c", ",")))
+print("替换=" + strReplace("aXbXc", "X", "-"))
+
+print("parseNat=" + toStr(parseNat("42").getOrElse(0)))
+print("parseNat败=" + toStr(parseNat("abc").getOrElse(-1)))
+print("parseRat=" + toStr(parseRat("3.14").getOrElse(0.0)))
+print("parseRat败=" + toStr(parseRat("x").getOrElse(-1.0)))
+
+print("abs(-7)=" + toStr(abs(-7.0)))
+print("floor(3.9)=" + toStr(floor(3.9)))
+print("sqrt(16)=" + toStr(sqrt(16.0)))
+print("max=" + toStr(mathMax(3.0, 9.0)))
+
+var nn = 5
+var rr = toRat(nn)
+print("toRat+0.5=" + toStr(rr + 0.5))
+when(parseNat("7")) {
+    is Some(v) -> print("as=" + toStr(v))
+    None -> print("as失败")
+}

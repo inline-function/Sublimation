@@ -1,15 +1,16 @@
 @echo off
 setlocal
 rem ============================================================
-rem  Sublimation v4 app example builder (standalone jar)
+rem  Sublimation v4 终版 - 编译器演示（独立目录）
 rem  Self-contained: run.bat + show.subl + core\ + apt\ + sublimation.jar
+rem  编译模式：check + 注解处理器（apt\）+ 代码生成 -> show.js，再由 node 运行
 rem  App: @classic 经典定理证明 + @allMut 注解处理器演示
 rem  Processors: apt\allMut.subs（@allMut 注解处理）+ apt\twice.subs
 rem  Usage:
-rem    run.bat         compile this show dir -> show.js, run it,
-rem                    compile+run output -> show.log (UTF-8)
-rem    run.bat run     run existing show.js only
-rem    run.bat np      same as default but no pause (script use)
+rem     run.bat         compile this dir -> show.js, run it,
+rem                     compile+run output -> show.log (UTF-8)
+rem     run.bat run     run existing show.js only
+rem     run.bat np      same as default but no pause (script use)
 rem  Requires: java (JRE 17+) and node.
 rem ============================================================
 cd /d "%~dp0"
@@ -19,7 +20,7 @@ if defined JAVA_HOME if exist "%JAVA_HOME%\bin\java.exe" set "JAVA_CMD=%JAVA_HOM
 if not exist "%JAR%" goto :nojar
 if /i "%~1"=="run" goto :runonly
 echo.
-echo [1/3] Compiling this show dir (show.subl + core + apt processors) ...
+echo [1/3] Compiling this dir (show.subl + core + apt processors) ...
 if exist show.js del show.js
 "%JAVA_CMD%" -jar "%JAR%" compile . -p apt -o show.js > show.log 2>&1
 if errorlevel 1 goto :compilefail
@@ -34,7 +35,7 @@ pause
 exit /b 0
 :compilefail
 echo.
-echo [X] COMPILE FAILED - open show.log (Notepad) for details
+echo [X] COMPILE FAILED - open show.log for details
 if /i "%~1"=="np" exit /b 1
 pause
 exit /b 1

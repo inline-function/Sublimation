@@ -1,0 +1,31 @@
+// 脚本2：几何图形（enum 多态 + 类型类多 impl + 构造子解构）
+enum Shape {
+    Circle(Rat),
+    Rect(Rat, Rat),
+    Triangle(Rat, Rat),
+}
+
+class Geom {
+    fun area() : Rat
+    fun describe() : Str
+}
+
+impl Geom for Shape {
+    fun area() : Rat = when(self) {
+        is Circle(r) -> 3.14 * r * r
+        is Rect(w, h) -> w * h
+        is Triangle(b, h) -> 0.5 * b * h
+    }
+    fun describe() : Str = when(self) {
+        is Circle(r) -> "圆(半径$r)"
+        is Rect(w, h) -> "矩形($w x $h)"
+        is Triangle(b, h) -> "三角形(底$b 高$h)"
+    }
+}
+
+var shapes = listOf(Circle(1.0), Rect(2.0, 3.0), Triangle(4.0, 5.0))
+shapes.forEach { s -> print(s.describe() + " 面积=" + toStr(s.area())) }
+var total = shapes.map { s -> s.area() }.fold(0.0, { x, acc -> acc + x })
+print("总面积=" + toStr(total))
+print("形状数=" + toStr(shapes.size()))
+print("最大面积=" + toStr(shapes.map { s -> s.area() }.sortBy { a, b -> a > b }.head().getOrElse(0.0)))

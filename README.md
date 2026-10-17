@@ -124,10 +124,11 @@ fun giveP(): Null <p> { unchecked.axiom[p] }   // 无条件令命题 p 成立
 ├── src/main/kotlin/          编译器本体（Kotlin）
 │   └── sugared/functor/           lexer/ parser/ checker/ codegen/ ast/
 ├── src/test/kotlin/          511 项测试（词法/语法/语义/类型推理/模块树/端到端/诊断）
-├── test/core/                统一标准库 core 包（子包目录即模块：collection/string/math/logic/
+├── core/                统一标准库 core 包（子包目录即模块：collection/string/math/logic/
 │                                        io/json/random/regex/time/real/net/async/classic/encoding…）
 ├── examples/                 示例集（见 examples/说明.md）
-├── show/                     v2.0 应用示例：读 students.json → 统计成绩（自包含）
+├── show/                     v4.0 终版演示：编译器/（compile + apt → show.js，node 运行）与
+│                             解释器/（run-script 脚本模式直接求值）两个自包含目录
 ├── root doc/                 根文档（上下文系统/副作用/空安全/异步/模式匹配——最高权威）
 └── wiki/                     公开特性文档（Home=快速上手 + 样式规范/模式匹配/上下文/结构体与类型类/副作用/空安全/容器/异步/模块系统）
 ```

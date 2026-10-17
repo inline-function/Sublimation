@@ -1,0 +1,39 @@
+// 脚本3：集合算法（List / Set / Map / Range 全覆盖）
+var xs = listOf(1, 2, 3, 4, 5, 6, 7, 8)
+print("偶数=" + toStr(xs.filter { x -> x % 2 == 0 }))
+print("翻倍=" + toStr(xs.map { x -> x * 2 }))
+print("平方>10=" + toStr(xs.map { x -> x * x }.filter { x -> x > 10 }))
+print("flatMap=" + toStr(listOf(1, 2, 3).flatMap { x -> listOf(x, x * 10) }))
+var pairs = zip(listOf("甲", "乙", "丙"), listOf(1, 2, 3))
+print("zip对数=" + toStr(pairs.size()))
+print("fold总和=" + toStr(fold(xs, 0, { x, acc -> acc + x })))
+print("前3=" + toStr(take(xs, 3)))
+print("去后5=" + toStr(drop(xs, 5)))
+print("切片=" + toStr(slice(xs, 1, 4)))
+print("去重=" + toStr(distinct(listOf(1, 1, 2, 2, 2, 3))))
+print("反转=" + toStr(reverse(listOf(1, 2, 3))))
+print("排序=" + toStr(sortBy(listOf(9, 3, 7, 1), { a, b -> a < b })))
+
+var s1 = toSet(listOf(1, 2, 3, 4))
+var s2 = toSet(listOf(3, 4, 5, 6))
+print("并集=" + toStr(toList(union(s1, s2))))
+print("交集=" + toStr(toList(intersect(s1, s2))))
+print("Set含3=" + toStr(contains(s1, 3)))
+
+@mut var m = toMap(listOf(("小明", 90), ("小红", 85), ("小刚", 95)))
+m = put(m, "小红", 88)
+print("Map小红=" + toStr(get(m, "小红").getOrElse(0)))
+print("Map键=" + toStr(keys(m)))
+print("Map值=" + toStr(values(m)))
+print("Map含小明=" + toStr(containsKey(m, "小明")))
+
+var r = 1..5
+print("Range长度=" + toStr(r.length()))
+print("Range列表=" + toStr(r.toList()))
+print("Range含3=" + toStr(r.contains(3)))
+print("Range map=" + toStr(r.map { x => x * x }))
+
+when((10, 20)) {
+    (a, b) -> print("元组和=" + toStr(a + b))
+    else -> print("?")
+}
