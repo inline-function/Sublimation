@@ -47,8 +47,8 @@ class InterpreterTest {
         val out = capture { i -> i.run("""
             var v: Nat = 5
             when (v) {
-                5 -> capture("five")
-                else -> capture("other")
+                5 => capture("five")
+                else => capture("other")
             }
         """.trimIndent()) }
         assertEquals(listOf<Any?>("five"), out)
@@ -207,8 +207,8 @@ class InterpreterTest {
         val out = capture { i -> i.run("""
             var a = Some(42)
             var b = None
-            capture(when (a) { is Some(x) -> x; None -> 0 })
-            capture(when (b) { is Some(x) -> x; None -> -1 })
+            capture(when (a) { is Some(x) => x; None => 0 })
+            capture(when (b) { is Some(x) => x; None => -1 })
         """.trimIndent()) }
         assertEquals(listOf<Any?>(42L, -1L), out)
     }
@@ -232,8 +232,8 @@ class InterpreterTest {
         val out = capture { i -> i.run("""
             var ok = Ok(10)
             var err = Err("fail")
-            capture(when (ok) { is Ok(v) -> v; is Err(e) -> "bad" })
-            capture(when (err) { is Ok(v) -> v; is Err(e) -> e })
+            capture(when (ok) { is Ok(v) => v; is Err(e) => "bad" })
+            capture(when (err) { is Ok(v) => v; is Err(e) => e })
         """.trimIndent()) }
         assertEquals(listOf<Any?>(10L, "fail"), out)
     }
@@ -255,8 +255,8 @@ class InterpreterTest {
         val out = capture { i -> i.run("""
             fun sumList(xs: List[Nat]): Nat {
                 return when (xs) {
-                    Nil -> 0
-                    is Cons(h, t) -> h + sumList(t)
+                    Nil => 0
+                    is Cons(h, t) => h + sumList(t)
                 }
             }
             var xs = Cons(1, Cons(2, Cons(3, Nil)))
@@ -278,21 +278,21 @@ class InterpreterTest {
             }
             fun sumList(xs: List[Nat]): Nat {
                 return when (xs) {
-                    Nil -> 0
-                    is Cons(h, t) -> h + sumList(t)
+                    Nil => 0
+                    is Cons(h, t) => h + sumList(t)
                 }
             }
             fun firstDiv(xs: List[Nat], d: Nat): Result[Nat, Str] {
                 return when (xs) {
-                    Nil -> Err("empty list")
-                    is Cons(h, t) -> safeDiv(h, d)
+                    Nil => Err("empty list")
+                    is Cons(h, t) => safeDiv(h, d)
                 }
             }
             var xs = Cons(6, Cons(4, Cons(2, Nil)))
             capture(sumList(xs))
-            capture(when (firstDiv(xs, 2)) { is Ok(v) -> v; is Err(e) -> e })
-            capture(when (firstDiv(xs, 0)) { is Ok(v) -> v; is Err(e) -> e })
-            capture(when (firstDiv(Nil, 1)) { is Ok(v) -> v; is Err(e) -> e })
+            capture(when (firstDiv(xs, 2)) { is Ok(v) => v; is Err(e) => e })
+            capture(when (firstDiv(xs, 0)) { is Ok(v) => v; is Err(e) => e })
+            capture(when (firstDiv(Nil, 1)) { is Ok(v) => v; is Err(e) => e })
         """.trimIndent())
         assertEquals(listOf<Any?>(12L, 3.0, "division by zero", "empty list"), out)
     }
@@ -302,9 +302,9 @@ class InterpreterTest {
         // 字符串 / parse / Math 内建函数的运行时（Checker builtinPure 与 Evaluator 实现对齐）
         // 空安全 `?:` 已移除——parse 的 Optional 改用 when 解构取值/兜底
         val out = capture { i -> i.run("""
-            fun natOr(s: Str, fallback: Nat): Nat = when(parseNat(s)) { is Some(n) -> n  None -> fallback }
+            fun natOr(s: Str, fallback: Nat): Nat = when(parseNat(s)) { is Some(n) => n  None => fallback }
             // core 标准库 real 自带 ratOr，本地改名 myRatOr 避开 E-DUP-DECL
-            fun myRatOr(s: Str, fallback: Rat): Rat = when(parseRat(s)) { is Some(r) -> r  None -> fallback }
+            fun myRatOr(s: Str, fallback: Rat): Rat = when(parseRat(s)) { is Some(r) => r  None => fallback }
             capture(natOr("42", 0))
             capture(natOr("abc", -1))
             capture(length("hello"))
@@ -330,7 +330,7 @@ class InterpreterTest {
             capture(p.x + p.y)
 
             enum Color { Red(), Green(), Blue() }
-            fun show(c: Color): Str = when (c) { Red -> "red"; Green -> "green"; else -> "blue" }
+            fun show(c: Color): Str = when (c) { Red => "red"; Green => "green"; else => "blue" }
             capture(show(Red()))
             capture(show(Green()))
         """.trimIndent()) }
@@ -343,7 +343,7 @@ class InterpreterTest {
         // Optional 仍是普通容器：when 解构 + is Some(v) 绑定取内部值
         val out = capture { i -> i.run("""
             var s: Optional[Str] = Some("ab")
-            when (s) { is Some(v) -> capture("Some:" + toStr(length(v))); else -> capture("BAD") }
+            when (s) { is Some(v) => capture("Some:" + toStr(length(v))); else => capture("BAD") }
         """.trimIndent()) }
         assertEquals(listOf<Any?>("Some:2"), out)
     }

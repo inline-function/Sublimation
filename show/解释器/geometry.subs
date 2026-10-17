@@ -12,14 +12,14 @@ class Geom {
 
 impl Geom for Shape {
     fun area() : Rat = when(self) {
-        is Circle(r) -> 3.14 * r * r
-        is Rect(w, h) -> w * h
-        is Triangle(b, h) -> 0.5 * b * h
+        is Circle(r) => 3.14 * r * r
+        is Rect(w, h) => w * h
+        is Triangle(b, h) => 0.5 * b * h
     }
     fun describe() : Str = when(self) {
-        is Circle(r) -> "圆(半径$r)"
-        is Rect(w, h) -> "矩形($w x $h)"
-        is Triangle(b, h) -> "三角形(底$b 高$h)"
+        is Circle(r) => "圆(半径$r)"
+        is Rect(w, h) => "矩形($w x $h)"
+        is Triangle(b, h) => "三角形(底$b 高$h)"
     }
 }
 

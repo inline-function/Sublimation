@@ -157,7 +157,7 @@ class ParserTest {
 
     @Test
     fun `when 字面量分支与 else 兜底`() {
-        val w = (stmtsOf("var odd = when(n) { 1 -> true() else -> false() }")[0] as VarStmt).value as WhenExpr
+        val w = (stmtsOf("var odd = when(n) { 1 => true() else => false() }")[0] as VarStmt).value as WhenExpr
         assertEquals(2, w.arms.size)
         assertTrue(w.arms[0].pattern is PatLit)
         assertTrue(w.arms[1].pattern is PatElse)
@@ -165,7 +165,7 @@ class ParserTest {
 
     @Test
     fun `when 解构与守卫`() {
-        val w = (stmtsOf("when(o) { is Some(x) -> { 1 } is Nat if o < 1 -> 2 _ -> 0 }")[0] as ExprStmt).expr as WhenExpr
+        val w = (stmtsOf("when(o) { is Some(x) => { 1 } is Nat if o < 1 => 2 _ => 0 }")[0] as ExprStmt).expr as WhenExpr
         val p0 = w.arms[0].pattern as PatCtor
         assertEquals("Some", p0.name)
         assertEquals(listOf("x"), p0.args.map { (it as PatCtor).name })   // 裸名由语义层裁定为绑定
@@ -177,7 +177,7 @@ class ParserTest {
 
     @Test
     fun `when 绑定主题与 is as`() {
-        val w = (stmtsOf("when(var e = 0) { is Nat as m -> m }")[0] as ExprStmt).expr as WhenExpr
+        val w = (stmtsOf("when(var e = 0) { is Nat as m => m }")[0] as ExprStmt).expr as WhenExpr
         assertEquals("e", w.subjectBinding)
         assertEquals("m", (w.arms[0].pattern as PatIs).bind)
     }
@@ -253,7 +253,7 @@ class ParserTest {
 
     @Test
     fun `T3 元组字面量与元组模式解析`() {
-        val f = parseSource("fun g(p: (Nat,Nat)): Nat = when(p) { (a, b) -> a }\nfun main() { var t = (1, 2) }", "t")
+        val f = parseSource("fun g(p: (Nat,Nat)): Nat = when(p) { (a, b) => a }\nfun main() { var t = (1, 2) }", "t")
         val g = (f.entries[0] as DeclEntry).decl as FunDecl
         assertTrue((g.body as WhenExpr).arms[0].pattern is PatTuple)              // 单表达式体
         assertTrue((stmtsOf("var t = (1, 2)")[0] as VarStmt).value is TupleExpr)  // 元组字面量

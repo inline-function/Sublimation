@@ -13,9 +13,9 @@ class AccountOps {
 impl AccountOps for Account {
     fun show() : Str = "$owner($country) 余额=¥$balance"
     fun level() : Str = when {
-        balance >= 1000 -> "VIP"
-        balance >= 500 -> "金卡"
-        else -> "普通"
+        balance >= 1000 => "VIP"
+        balance >= 500 => "金卡"
+        else => "普通"
     }
 }
 
@@ -31,8 +31,8 @@ print("等级=" + acc.level())
 acc.balance = acc.balance + 500
 print("存款后=" + acc.show())
 when(tryWithdraw(acc.balance, 300)) {
-    is Ok(b) -> print("取300后余额=$b")
-    is Err(e) -> print("取300失败：$e")
+    is Ok(b) => print("取300后余额=$b")
+    is Err(e) => print("取300失败：$e")
 }
 print("取9999=" + toStr(tryWithdraw(acc.balance, 9999).unwrapOr(0)))
 print("取200=" + tryWithdraw(acc.balance, 200).mapOk { b -> "余$b" }.unwrapOr("失败"))

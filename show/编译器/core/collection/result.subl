@@ -11,43 +11,43 @@ enum Result[T, E] {
 
 // ---------- 判定 ----------
 fun isOk[T, E](r: Result[T, E]): Bool = when(r) {
-    is Ok(_) -> true
-    is Err(_) -> false
+    is Ok(_) => true
+    is Err(_) => false
 }
 
 fun isErr[T, E](r: Result[T, E]): Bool = when(r) {
-    is Ok(_) -> false
-    is Err(_) -> true
+    is Ok(_) => false
+    is Err(_) => true
 }
 
 // ---------- 取值 ----------
 // 解包兜底：Err 回退默认值（成功路径透传）。
 fun unwrapOr[T, E](r: Result[T, E], d: T): T = when(r) {
-    is Ok(v) -> v
-    is Err(_) -> d
+    is Ok(v) => v
+    is Err(_) => d
 }
 
 // ---------- 成功路径映射（Functor/Monad 等价物） ----------
 // mapOk：只变换 Ok 的内容（U 由 lambda 返回类型反推）。
 fun mapOk[T, E, U](r: Result[T, E], f: (T) => U): Result[U, E] = when(r) {
-    is Ok(v) -> Ok(f(v))
-    is Err(e) -> Err(e)
+    is Ok(v) => Ok(f(v))
+    is Err(e) => Err(e)
 }
 
 // mapErr：只变换 Err 的内容（错误信息映射）。
 fun mapErr[T, E, F](r: Result[T, E], f: (E) => F): Result[T, F] = when(r) {
-    is Ok(v) -> Ok(v)
-    is Err(e) -> Err(f(e))
+    is Ok(v) => Ok(v)
+    is Err(e) => Err(f(e))
 }
 
 // flatMapOk：成功路径链式组合（Err 短路透传）。
 fun flatMapOk[T, E, U](r: Result[T, E], f: (T) => Result[U, E]): Result[U, E] = when(r) {
-    is Ok(v) -> f(v)
-    is Err(e) -> Err(e)
+    is Ok(v) => f(v)
+    is Err(e) => Err(e)
 }
 
 // ---------- 转换 ----------
 fun toList[T, E](r: Result[T, E]): List[T] = when(r) {
-    is Ok(v) -> Cons(v, Nil())
-    is Err(_) -> Nil()
+    is Ok(v) => Cons(v, Nil())
+    is Err(_) => Nil()
 }

@@ -101,8 +101,8 @@ class ScriptProcessorTest {
         interp.run(
             "var hits = structsWithAnnotation(\"allMut\")\n" +
             "fun countAll(xs: List[Str]): Nat = when(xs) {\n" +
-            "    Nil -> 0\n" +
-            "    is Cons(s, rest) -> 1 + countAll(rest)\n" +
+            "    Nil => 0\n" +
+            "    is Cons(s, rest) => 1 + countAll(rest)\n" +
             "}\n" +
             "print(toStr(countAll(hits)) + toStr(structHasAnnotation(\"Point\", \"allMut\")))\n" +
             "addStructAnnotation(\"Point\", \"mut\")\n" +

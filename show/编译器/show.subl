@@ -1,32 +1,17 @@
-
-// @allMut 演示（注解处理器 apt/allMut.subs）：标在结构体上，
-// 等价于 struct 全部字段可变（@mut struct Counter(@mut score: Nat)）。
-@allMut
-struct Counter(score: Nat)
-
 @impure
-fun bump(c: @mut Counter): Null {
-    c.score = c.score + 1
-}
-
-@impure
-fun main() {
-    var c : @mut Counter = Counter(0)
-    bump(c)
-    print("计数器=" + toStr(c.score))
+fun main() =
     print("证明成功!")
-}
 @classic
 @theorem
 fun `irrational to irrational power irrationality`<
-    rational<2>,
+    rational<toReal(2)>,
     irrational<sqrt(2)>,
     toReal(2) : Real,
     sqrt(2) : Real,
     sqrt(2) > 0,
     ∀a b c.((a : Real) ∧ (a > 0) ∧ (b : Real) ∧ (c : Real)) → (((a ^ b) ^ c) = (a ^ (b * c))),
     ∀a.(a : Real) → (sqrt(a) * sqrt(a) = a),
-    ∀a.(a : Real) → (sqrt(a) ^ 2 = a),
+    ∀a.(a : Real) → (sqrt(a) ^ toReal(2) = a),
     ∀n.¬<irrational<n>> ↔ rational<n>
 > : <∃a b.irrational<a> ∧ irrational<b> ∧ rational<a ^ b>> {
     var power = sqrt(2) ^ sqrt(2)
@@ -36,13 +21,13 @@ fun `irrational to irrational power irrationality`<
         ∴ ((sqrt(2) ^ sqrt(2)) ^ sqrt(2)) = (sqrt(2) ^(sqrt(2) * sqrt(2)))
         ∵ ∀a.(a : Real) → (sqrt(a) * sqrt(a) = a),
           sqrt(2) : Real
-        ∴ sqrt(2) * sqrt(2) = 2
-        ∵ ∀a.(a : Real) → (sqrt(a) ^ 2 = a),
+        ∴ sqrt(2) * sqrt(2) = toReal(2)
+        ∵ ∀a.(a : Real) → (sqrt(a) ^ toReal(2) = a),
           toReal(2) : Real
-        ∴ sqrt(2) ^ 2 = 2
-        @subst[((sqrt(2) ^ sqrt(2)) ^ sqrt(2)) = (sqrt(2) ^ 2)]
-        @subst[((sqrt(2) ^ sqrt(2)) ^ sqrt(2)) = 2]
-        @subst[power ^ sqrt(2) = 2]
+        ∴ sqrt(2) ^ toReal(2) = toReal(2)
+        @subst[((sqrt(2) ^ sqrt(2)) ^ sqrt(2)) = (sqrt(2) ^ toReal(2))]
+        @subst[((sqrt(2) ^ sqrt(2)) ^ sqrt(2)) = toReal(2)]
+        @subst[power ^ sqrt(2) = toReal(2)]
         @subst[rational<power ^ sqrt(2)>]
         ∃a = power,b = sqrt(2) .irrational<a> ∧ irrational<b> ∧ rational<a ^ b>
     }else{

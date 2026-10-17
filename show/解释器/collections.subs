@@ -34,6 +34,6 @@ print("Range含3=" + toStr(r.contains(3)))
 print("Range map=" + toStr(r.map { x => x * x }))
 
 when((10, 20)) {
-    (a, b) -> print("元组和=" + toStr(a + b))
-    else -> print("?")
+    (a, b) => print("元组和=" + toStr(a + b))
+    else => print("?")
 }

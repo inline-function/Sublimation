@@ -640,8 +640,8 @@ private var ifIsCond: Boolean = false
         val arms = ArrayList<WhenPropArm>()
         while (!peek(Kind.RBRACE)) {
             val cond = parseExpr(angle = false)
-            // 允许可选的箭头 ->
-            if (peek(Kind.ARROW)) pos++
+            // 允许可选的分支箭头 =>（v4 终版由 -> 改为 =>）
+            if (peek(Kind.DARROW)) pos++
             val body = parseBlock().stmts
             arms += WhenPropArm(cond, body)
             if (peek(Kind.COMMA)) pos++
@@ -954,7 +954,7 @@ private var ifIsCond: Boolean = false
             // 无空格调用 `print(1)` / `f(x)` 不受影响。
             // HKT 标准库：if-then-else 命题形态的停止词边界（then/else 作 IDENT 时不得被 infix 糖吞）
             if (t.kind == Kind.IDENT && t.text in stopIdents) break
-            if (stopArrow && t.kind == Kind.ARROW) break
+            if (stopArrow && (t.kind == Kind.ARROW || t.kind == Kind.DARROW)) break
             if (stopArrow && t.kind == Kind.LPAREN && t.precededBySpace) break
             if (t.kind == Kind.BY) { pos++; left = ByExpr(left, parseBracketList()); continue }
             if (t.kind == Kind.GT) {
@@ -1030,15 +1030,15 @@ private var ifIsCond: Boolean = false
     }
 
     /** P0 补全（决策 88）：标识符中缀要求右操作数也带空格前缀，且 f 与左右操作数同在一行（`a f b` 成立；`f(x)` 与跨行 `1\nx` 不是中缀）。
-     *  右操作数还必须是合法表达式起始 token——排除 `->`（when 分支分隔/蕴含）、`,`、`}` 等，
-     *  避免把 when 分支体的下一个模式名（`x None -> d`）误当中缀。 */
+     *  右操作数还必须是合法表达式起始 token——排除 `->`（蕴含）与 `=>`（when 分支分隔）、`,`、`}` 等，
+     *  避免把 when 分支体的下一个模式名（`x None => d`）误当中缀。 */
     private fun infixOperandAhead(): Boolean {
         val nx = toks.getOrNull(pos + 1) ?: return false
         if (!nx.precededBySpace) return false
         if (cur().line != nx.line) return false
         val prev = toks.getOrNull(pos - 1)
         if (prev != null && prev.line != cur().line) return false
-        if (nx.kind == Kind.ARROW || nx.kind == Kind.COMMA || nx.kind == Kind.RBRACE ||
+        if (nx.kind == Kind.ARROW || nx.kind == Kind.DARROW || nx.kind == Kind.COMMA || nx.kind == Kind.RBRACE ||
             nx.kind == Kind.RBRACKET || nx.kind == Kind.SEMI || nx.kind == Kind.RPAREN ||
             nx.kind == Kind.ASSIGN || nx.kind == Kind.RET) return false
         return true
@@ -1469,7 +1469,8 @@ private var ifIsCond: Boolean = false
                 pat = parsePattern()
                 guard = if (peek(Kind.IF)) { pos++; parseExpr(angle = false, stopArrow = true) } else null
             }
-            at(Kind.ARROW)
+            // v4 终版：when 分支分隔符 `=>`（原 `->` 改为 `=>`——与蕴含 infix `->` 彻底解耦，无需 stopArrow 消歧）
+            at(Kind.DARROW)
             // 模板 when：body 在 stopArrow 停（防后缀括号调用吞掉后续 arm）
             arms += WhenArm(pat, guard, parseBranchBody(stopArrow = templateBase != null), "$al:$ac", cond = cond)
             skipSemis()

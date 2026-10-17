@@ -82,6 +82,5 @@
 [提示][33:7] H-ROOT-BUILTIN: @root 函数 strSplit 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
 [提示][35:7] H-ROOT-BUILTIN: @root 函数 strIndexOf 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
 [提示][7:7] H-ROOT-BUILTIN: @root 函数 timeNow 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
-[完成] 已生成 show.js（32542 字节）
-计数器=1
+[完成] 已生成 show.js（32296 字节）
 证明成功!

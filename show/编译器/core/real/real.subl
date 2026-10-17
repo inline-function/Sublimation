@@ -22,6 +22,6 @@
 // ---------- 解析兜底 ----------
 // 字符串解析为 Rat 的默认值版本：失败回退 fallback（ratOr("2.5", 0.0) = 2.5）。
 fun ratOr(s: Str, fallback: Rat): Rat = when(parseRat(s)) {
-    is Some(r) -> r
-    None -> fallback
+    is Some(r) => r
+    None => fallback
 }

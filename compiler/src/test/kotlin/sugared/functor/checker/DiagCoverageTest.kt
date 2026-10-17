@@ -29,7 +29,7 @@ class DiagCoverageTest {
         assertTrue(has("struct A(x: Nat)\nfun main() { var a = A(\"s\") }", "E-TYPE-MISMATCH"))
 
     @Test fun `E-NON-SEALED-MATCH`() =
-        assertTrue(has("enum C { Red(), Green() }\nfun f(c: C): Nat = when(c) { Red() -> 1 }", "E-NON-SEALED-MATCH"))
+        assertTrue(has("enum C { Red(), Green() }\nfun f(c: C): Nat = when(c) { Red() => 1 }", "E-NON-SEALED-MATCH"))
 
     // ---------- 命题层 ----------
 
@@ -128,7 +128,7 @@ class DiagCoverageTest {
     // ---------- P9 递归停机（决策 44/85） ----------
 
     @Test fun `E-NON-STRUCTURAL-REC`() =
-        assertTrue(has("fun f(n: Nat): Nat = when(n) { 0 -> 0\n_ -> f(n + 1) }", "E-NON-STRUCTURAL-REC"))
+        assertTrue(has("fun f(n: Nat): Nat = when(n) { 0 => 0\n_ => f(n + 1) }", "E-NON-STRUCTURAL-REC"))
 
     // ---------- P8 命名参数（决策 84） ----------
 
@@ -192,7 +192,7 @@ class DiagCoverageTest {
         assertTrue(has("fun f(n: Nat): Nat { if (n > 0) { return 1 } else { return 2 } }", "E-RETURN-OUTSIDE") == false)
 
     @Test fun `提前return - 语句位when分支合法`() =
-        assertTrue(has("enum E { A(), B() }\nfun f(e: E): Nat { when (e) { A -> { return 1 }\nelse -> { return 2 } } }", "E-RETURN-OUTSIDE") == false)
+        assertTrue(has("enum E { A(), B() }\nfun f(e: E): Nat { when (e) { A => { return 1 }\nelse => { return 2 } } }", "E-RETURN-OUTSIDE") == false)
 
     @Test fun `E-RETURN-OUTSIDE lambda 体内`() =
         assertTrue(has("fun f(): Nat { var g = fun _(x: Nat): Nat { return x }\nreturn 0 }", "E-RETURN-OUTSIDE"))
@@ -209,7 +209,7 @@ class DiagCoverageTest {
     // ---------- 警告/提示/补充 ----------
 
     @Test fun `W-NON-EXHAUSTIVE`() =
-        assertTrue(has("enum C { Red(), Green(), Blue() }\nfun f(c: C): Null { when(c) { Red() -> null } }", "W-NON-EXHAUSTIVE"))
+        assertTrue(has("enum C { Red(), Green(), Blue() }\nfun f(c: C): Null { when(c) { Red() => null } }", "W-NON-EXHAUSTIVE"))
 
     @Test fun `W-UNREACHABLE Nothing 之后`() =
         assertTrue(has("fun die(): Nothing { return die() }\nfun f(): Null { die()\nunchecked print(1) }", "W-UNREACHABLE"))

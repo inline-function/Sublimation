@@ -213,7 +213,7 @@ class ModuleE2ETest {
         assumeTrue(nodeAvailable())
         val main = "@impure fun main() {\n" +
             "var xs = range(1, 5)\n" +
-            "when(xs.indexOf(2)) { is Some(i) -> print(i); None -> print(\"x\") }\n" +
+            "when(xs.indexOf(2)) { is Some(i) => print(i); None => print(\"x\") }\n" +
             "print(xs.slice(1, 3).joinToString(\",\"))\n" +
             "print(xs.sortBy({ a, b -> a > b }).joinToString(\",\"))\n" +
             "print(xs.sortBy({ a, b -> a < b }).joinToString(\",\"))\n" +
@@ -232,10 +232,10 @@ class ModuleE2ETest {
                 "writeFile(\"$p1\", \"x\")\n" +
                 "appendFile(\"$p1\", \"y\")\n" +
                 "var r = readFile(\"$p1\")\n" +
-                "when(r) { is Ok(s) -> print(s); is Err(e) -> print(e) }\n" +
+                "when(r) { is Ok(s) => print(s); is Err(e) => print(e) }\n" +
                 "print(fileExists(\"$p1\"))\n" +
                 "var rd = readDir(\"$d\")\n" +
-                "when(rd) { is Ok(xs) -> print(xs.size()); is Err(e) -> print(e) }\n" +
+                "when(rd) { is Ok(xs) => print(xs.size()); is Err(e) => print(e) }\n" +
                 "}"
             assertEquals("xy\ntrue\n1", runTree(coreSpec() + mapOf("main.subl" to main)))
         } finally { dir.deleteRecursively() }
@@ -258,7 +258,7 @@ class ModuleE2ETest {
         val p = f.absolutePath.replace("\\", "\\\\")
         // P5：readFile 返回 Result<Str,Str>，解构 Ok/Err 取内容
         val main = "@impure fun main() {\nwriteFile(\"$p\", \"hi\")\nvar r = readFile(\"$p\")\n" +
-            "when(r) {\n    is Ok(s) -> print(s)\n    is Err(e) -> print(e)\n}\n}"
+            "when(r) {\n    is Ok(s) => print(s)\n    is Err(e) => print(e)\n}\n}"
         try {
             assertEquals("hi", runTree(coreSpec() + mapOf("main.subl" to main)))
         } finally { f.delete() }
@@ -269,7 +269,7 @@ class ModuleE2ETest {
         assumeTrue(nodeAvailable())
         // P5：readLine 返回 Result<Str,Str>，解构 Ok/Err 取该行
         val main = "@impure fun main() {\nvar r = readLine()\n" +
-            "when(r) {\n    is Ok(s) -> print(s)\n    is Err(e) -> print(e)\n}\n}"
+            "when(r) {\n    is Ok(s) => print(s)\n    is Err(e) => print(e)\n}\n}"
         assertEquals("hello", runTreeIn(coreSpec() + mapOf("main.subl" to main), "hello\n"))
     }
 
@@ -280,7 +280,7 @@ class ModuleE2ETest {
         assumeTrue(nodeAvailable())
         // 读不存在的文件 → Err 分支（平台无关，只断言命中 Err 分支）
         val main = "@impure fun main() {\nvar r = readFile(\"C:/no/such/subl-file.txt\")\n" +
-            "when(r) {\n    is Ok(_) -> print(\"ok\")\n    is Err(e) -> print(\"err\")\n}\n}"
+            "when(r) {\n    is Ok(_) => print(\"ok\")\n    is Err(e) => print(\"err\")\n}\n}"
         assertEquals("err", runTree(coreSpec() + mapOf("main.subl" to main)))
     }
 
@@ -290,7 +290,7 @@ class ModuleE2ETest {
         val f = File.createTempFile("subl-p5-rf", ".txt")
         val p = f.absolutePath.replace("\\", "\\\\")
         val main = "@impure fun main() {\nwriteFile(\"$p\", \"ok content\")\nvar r = readFile(\"$p\")\n" +
-            "when(r) {\n    is Ok(s) -> print(s)\n    is Err(e) -> print(\"err \" + e)\n}\n}"
+            "when(r) {\n    is Ok(s) => print(s)\n    is Err(e) => print(\"err \" + e)\n}\n}"
         try {
             assertEquals("ok content", runTree(coreSpec() + mapOf("main.subl" to main)))
         } finally { f.delete() }
@@ -571,8 +571,8 @@ class ModuleE2ETest {
         val main = "@impure @async fun consume(ch: Channel[Nat]): Null {\n" +
             "  var x = ch.receive()\n" +   // 参数位 → T?（保守，CH-5 表）
             "  when (x) {\n" +
-            "    is Some(v) -> print(\"val=\$v\")\n" +
-            "    None -> print(\"closed\")\n" +
+            "    is Some(v) => print(\"val=\$v\")\n" +
+            "    None => print(\"closed\")\n" +
             "  }\n" +
             "}\n" +
             "@impure fun main() {\n" +
@@ -924,9 +924,9 @@ class ModuleE2ETest {
         assumeTrue(nodeAvailable())
         val src = "fun grade(score: Nat): Str =\n" +
             "    when {\n" +
-            "        score in (90..100) -> \"A\"\n" +
-            "        score in (60..79) -> \"C\"\n" +
-            "        else -> \"D\"\n" +
+            "        score in (90..100) => \"A\"\n" +
+            "        score in (60..79) => \"C\"\n" +
+            "        else => \"D\"\n" +
             "    }\n" +
             "@impure fun main() {\n" +
             "  var s = setOf(54, 75, 100)\n" +
@@ -956,10 +956,10 @@ class ModuleE2ETest {
             "impl Gradable for Student {\n" +
             "    fun grade<score <= 100> : Grade =\n" +
             "        when {\n" +
-            "            score in (90..100) -> Grade::A\n" +
-            "            score in (80..89) -> Grade::B\n" +
-            "            score in (60..79) -> Grade::C\n" +
-            "            else -> Grade::D\n" +
+            "            score in (90..100) => Grade::A\n" +
+            "            score in (80..89) => Grade::B\n" +
+            "            score in (60..79) => Grade::C\n" +
+            "            else => Grade::D\n" +
             "        }\n" +
             "}\n" +
             "@impure\n" +
@@ -1057,8 +1057,8 @@ class ModuleE2ETest {
         val src = "enum List[T] { Nil(), Cons(T, List[T]) }\n" +
             "@mut struct Counter(@mut n: Nat)\n" +
             "fun firstOr[T](xs: List[T], d: T): T = when(xs) {\n" +
-            "    Nil -> d\n" +
-            "    is Cons(h, _) -> h\n" +
+            "    Nil => d\n" +
+            "    is Cons(h, _) => h\n" +
             "}\n" +
             "@impure fun main() {\n" +
             "    var ch = channelFromList(Cons(1, Cons(2, Cons(3, Nil()))))\n" +

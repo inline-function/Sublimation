@@ -25,17 +25,8 @@
     if (ka.length !== kb.length) return false;
     return ka.every(k => __eq(a[k], b[k]));
   };
-  const Counter = (score) => ({ tag: "Counter", score: score });
-  function bump(c) {
-    c.score = (c.score + 1);
-    return null;
-  }
   async function main() {
-    const c = Counter(0);
-    bump(c);
-    console.log(__dshtoStr(("计数器=" + __dshtoStr(c.score))));
-    console.log(__dshtoStr("证明成功!"));
-    return null;
+    return console.log(__dshtoStr("证明成功!"));
   }
   const dict_core_collection_Functor_List = {
     map: (d, fa, f) => (() => {

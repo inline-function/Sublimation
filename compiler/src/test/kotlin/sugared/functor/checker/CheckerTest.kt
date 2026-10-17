@@ -45,8 +45,8 @@ class CheckerTest {
         val src =
             "enum List[T] { Nil(), Cons(T, List[T]) }\n" +
             "fun filter[T](xs: List[T], f: (T) => Bool): List[T] = when(xs) {\n" +
-            "    Nil -> Nil()\n" +
-            "    is Cons(h, t) -> if (f(h)) { Cons(h, filter(t, f)) } else { filter(t, f) }\n" +
+            "    Nil => Nil()\n" +
+            "    is Cons(h, t) => if (f(h)) { Cons(h, filter(t, f)) } else { filter(t, f) }\n" +
             "}\n" +
             "fun notZero(list : List[Nat]) : List[Nat]\n" +
             "   <∀ e . e ∈ \$ → (e ≠ 0)> =\n" +
@@ -210,8 +210,8 @@ class CheckerTest {
         val src = "enum Shape[T] { Circle(T) Dot }\n" +
             "@impure fun test(o: Shape[Nat]): Nat =\n" +
             "    when(o) {\n" +
-            "        is Shape::Circle(_) -> 1\n" +
-            "        is Shape::Dot -> 0\n" +
+            "        is Shape::Circle(_) => 1\n" +
+            "        is Shape::Dot => 0\n" +
             "    }\n" +
             "fun main() { var a: Shape[Nat] = Shape::Circle(1)\nvar b: Shape[Nat] = Shape::Dot }"
         assertTrue(ok(src), "枚举双冒号访问 构造、is 解构分支、无 else 密封应通过")
@@ -353,7 +353,7 @@ class CheckerTest {
 
     @Test
     fun `Bool when 分支穷尽`() {
-        val src = "fun f(b: Bool): Null { when(b) { true -> null false -> null } }"
+        val src = "fun f(b: Bool): Null { when(b) { true => null false => null } }"
         assertTrue(ok(src))
     }
 
@@ -380,20 +380,20 @@ class CheckerTest {
 
     @Test
     fun `A2 Optional带字段枚举穷尽`() {
-        val src = "fun unwrap(o: Optional[Nat]): Nat = when(o) { None -> 0 is Some(x) -> x }"
+        val src = "fun unwrap(o: Optional[Nat]): Nat = when(o) { None => 0 is Some(x) => x }"
         assertTrue(warns(src).none { it == "W-NON-EXHAUSTIVE" }, "Optional 两分支应穷尽")
         assertTrue(ok(src))
     }
 
     @Test
     fun `A2 Optional缺分支非穷尽`() {
-        val src = "fun f(o: Optional[Nat]): Null { when(o) { is Some(x) -> 1 } }"
+        val src = "fun f(o: Optional[Nat]): Null { when(o) { is Some(x) => 1 } }"
         assertTrue(warns(src).contains("W-NON-EXHAUSTIVE"), "缺 None 分支应判非穷尽")
     }
 
     @Test
     fun `A2 带字面量构造子模式保守非穷尽`() {
-        val src = "fun f(o: Optional[Nat]): Null { when(o) { None -> 0 is Some(0) -> 1 } }"
+        val src = "fun f(o: Optional[Nat]): Null { when(o) { None => 0 is Some(0) => 1 } }"
         assertTrue(warns(src).contains("W-NON-EXHAUSTIVE"), "Some(0) 不覆盖所有 Some，应判非穷尽")
     }
 
@@ -404,7 +404,7 @@ class CheckerTest {
 
     @Test
     fun `A2 非密封when流向非Null返回报专属错误`() {
-        val src = "fun f(b: Bool): Nat = when(b) { true -> 1 }"
+        val src = "fun f(b: Bool): Nat = when(b) { true => 1 }"
         val codes = errs(src)
         assertTrue(codes.contains("E-NON-SEALED-MATCH"), "应报非密封专属错误，实际: $codes")
         assertFalse(codes.contains("E-TYPE-MISMATCH"))
@@ -412,7 +412,7 @@ class CheckerTest {
 
     @Test
     fun `A2 非密封when返回Null只警告不报错`() {
-        val src = "fun f(b: Bool): Null = when(b) { true -> 1 }"
+        val src = "fun f(b: Bool): Null = when(b) { true => 1 }"
         assertTrue(errs(src).isEmpty())
         assertTrue(warns(src).contains("W-NON-EXHAUSTIVE"))
     }
@@ -436,7 +436,7 @@ class CheckerTest {
 
     @Test
     fun `决策30 参数化别名`() {
-        val src = "type NatOpt = Optional[Nat]\nfun f(o: NatOpt): Nat = when(o) { is Some(x) -> x None -> 0 }\nfun main() { f(Some(1)) }"
+        val src = "type NatOpt = Optional[Nat]\nfun f(o: NatOpt): Nat = when(o) { is Some(x) => x None => 0 }\nfun main() { f(Some(1)) }"
         assertTrue(ok(src))
     }
 
@@ -453,14 +453,14 @@ class CheckerTest {
     @Test
     fun `T0 嵌套构造子模式穷尽无假阳性`() {
         val src = "fun depth(o: Optional[Optional[Nat]]): Nat = " +
-            "when(o) { is Some(is Some(y)) -> y  is Some(None) -> 0  None -> 0 }"
+            "when(o) { is Some(is Some(y)) => y  is Some(None) => 0  None => 0 }"
         val bad = checkFile(parseSource(src, "t")).diags.filter { it.severity == Severity.ERROR || it.code == "W-NON-EXHAUSTIVE" }
         assertTrue(bad.isEmpty(), "三层分支应判穷尽，实际: ${bad.map { it.render() }}")
     }
 
     @Test
     fun `T0 嵌套模式仍保守 - 缺内层分支`() {
-        val src = "fun f(o: Optional[Optional[Nat]]): Null { when(o) { is Some(is Some(y)) -> 0  None -> 0 } }"
+        val src = "fun f(o: Optional[Optional[Nat]]): Null { when(o) { is Some(is Some(y)) => 0  None => 0 } }"
         assertTrue(warns(src).contains("W-NON-EXHAUSTIVE"), "缺 Some(None) 分支应判非穷尽")
     }
 
@@ -468,7 +468,7 @@ class CheckerTest {
     fun `T0 绑定式分支吸收多字段枚举 - 无假阳性`() {
         val src = "enum Tree { Leaf(Nat), Node(Tree, Tree) }\n" +
             "enum Box[T] { B(T) }\n" +
-            "fun f(b: Box[Tree]): Null { when(b) { is B(t) -> 1 } }"
+            "fun f(b: Box[Tree]): Null { when(b) { is B(t) => 1 } }"
         assertTrue(warns(src).none { it == "W-NON-EXHAUSTIVE" }, "B(t) 绑定式吸收 B 全部值（含 Leaf/Node 细分），应穷尽")
     }
 
@@ -476,20 +476,20 @@ class CheckerTest {
     fun `T0 嵌套模式仍不吸收 - 缺内层细分分支`() {
         val src = "enum Tree { Leaf(Nat), Node(Tree, Tree) }\n" +
             "enum Box[T] { B(T) }\n" +
-            "fun f(b: Box[Tree]): Null { when(b) { is B(is Leaf(x)) -> 1 } }"
+            "fun f(b: Box[Tree]): Null { when(b) { is B(is Leaf(x)) => 1 } }"
         assertTrue(warns(src).contains("W-NON-EXHAUSTIVE"), "B(Leaf(x)) 嵌套不吸收 Node，应判非穷尽")
     }
 
     @Test
     fun `T0 绑定式分支缺构造子仍非穷尽`() {
         val src = "enum Tree { Leaf(Nat), Node(Tree, Tree) }\n" +
-            "fun g(t: Tree): Null { when(t) { is Node(l, r) -> 1 } }"
+            "fun g(t: Tree): Null { when(t) { is Node(l, r) => 1 } }"
         assertTrue(warns(src).contains("W-NON-EXHAUSTIVE"), "Node 绑定式吸收 Node，但缺 Leaf 分支，应判非穷尽")
     }
 
     @Test
     fun `T0 嵌套模式等式保留完整结构`() {
-        val src = "fun f(o: Optional[Optional[Nat]]): Nat = when(o) { is Some(is Some(y)) -> y else -> 0 }"
+        val src = "fun f(o: Optional[Optional[Nat]]): Nat = when(o) { is Some(is Some(y)) => y else => 0 }"
         assertTrue(ok(src))
     }
 
@@ -537,19 +537,19 @@ class CheckerTest {
 
     @Test
     fun `T3 元组解构`() {
-        assertTrue(ok("fun fst(p: (Nat,Nat)): Nat = when(p) { (a, b) -> a else -> 0 }"))
+        assertTrue(ok("fun fst(p: (Nat,Nat)): Nat = when(p) { (a, b) => a else => 0 }"))
     }
 
     @Test
     fun `决策66 元组主题判不出穷尽时静默退化不警告`() {
-        val src = "fun f(p: (Nat,Nat)): Null { when(p) { (a, b) -> null } }"
+        val src = "fun f(p: (Nat,Nat)): Null { when(p) { (a, b) => null } }"
         assertTrue(ok(src), "元组主题无兜底应无错误")
         assertTrue(warns(src).isEmpty(), "无覆盖律的主题不应发 W-NON-EXHAUSTIVE")
     }
 
     @Test
     fun `决策66 枚举主题非穷尽仍警告`() {
-        val src = "enum Color { Red(), Green(), Blue() }\nfun g(c: Color): Null { when(c) { Red() -> null } }"
+        val src = "enum Color { Red(), Green(), Blue() }\nfun g(c: Color): Null { when(c) { Red() => null } }"
         assertTrue(warns(src).contains("W-NON-EXHAUSTIVE"), "有覆盖律却覆盖不全应提示用户")
     }
 
@@ -560,7 +560,7 @@ class CheckerTest {
 
     @Test
     fun `T3 元组分量数不符报错`() {
-        assertTrue(errs("fun f(p: (Nat,Nat)): Nat = when(p) { (a, b, c) -> a }").contains("E-TYPE-MISMATCH"))
+        assertTrue(errs("fun f(p: (Nat,Nat)): Nat = when(p) { (a, b, c) => a }").contains("E-TYPE-MISMATCH"))
     }
 
     @Test
@@ -616,7 +616,7 @@ class CheckerTest {
 
     @Test
     fun `T4 元组形参（无注解）收元组字面量`() {
-        val head = "fun sum(t: (Nat, Nat)): Nat = when(t) { (a, b) -> a + b else -> 0 }\n"
+        val head = "fun sum(t: (Nat, Nat)): Nat = when(t) { (a, b) => a + b else => 0 }\n"
         assertTrue(ok(head + "fun main() { sum((1, 2)) }"))
     }
 
@@ -631,7 +631,7 @@ class CheckerTest {
 
     @Test
     fun `v30 - 无主题 when 布尔条件分支 + 尾随逗号`() {
-        val src = "fun g(x: Nat): Str = when { x in (90 .. 100) -> \"A\"; x > 10 -> \"B\"; else -> \"C\" }\n"
+        val src = "fun g(x: Nat): Str = when { x in (90 .. 100) => \"A\"; x > 10 => \"B\"; else => \"C\" }\n"
         assertTrue(ok(src + "fun main() { g(95,) }"))
         assertTrue(ok("fun g(x: Nat): Str = \"a\"\nfun main() { var t = (1, 2,)\n g(1,) }"))
     }
@@ -683,8 +683,8 @@ class CheckerTest {
         "class Functor[F[_]] { fun map[A, B](f: (A) => B, fa: F[A]): F[B] }\n" +
         "impl Functor for List[a] {\n" +
         "  fun map[A, B](f: (A) => B, fa: List[A]): List[B] = when (fa) {\n" +
-        "    Nil -> Nil\n" +
-        "    is Cons(h, t) -> Cons(f(h), map(f, t))\n" +
+        "    Nil => Nil\n" +
+        "    is Cons(h, t) => Cons(f(h), map(f, t))\n" +
         "  }\n" +
         "}\n"
 
@@ -767,8 +767,8 @@ class CheckerTest {
             "        <(fa = Nil()) → (\$ = init),\n" +
             "         (∀h t. fa = Cons(h, t)) → (\$ = fold(t, f(init, h), f))>\n" +
             "        = when(fa) {\n" +
-            "            Nil -> init\n" +
-            "            is Cons(h, t) -> fold(t, f(init, h), f)\n" +
+            "            Nil => init\n" +
+            "            is Cons(h, t) => fold(t, f(init, h), f)\n" +
         "        }\n" +
         "}\n" +
         "@axiom fun size[F[_]: Foldable, A](fa: F[A]): Nat\n" +
@@ -785,8 +785,8 @@ class CheckerTest {
             "class Functor[F[_]] { fun map[A, B](fa: F[A], f: (A) => B): F[B] }\n" +
             "impl Functor[Result[_, E]] {\n" +
             "  fun map[A, B](fa: Result[A, E], f: (A) => B): Result[B, E] = when (fa) {\n" +
-    "    is Ok(v) -> Ok(f(v))\n" +
-    "    is Err(e) -> Err(e)\n" +
+    "    is Ok(v) => Ok(f(v))\n" +
+    "    is Err(e) => Err(e)\n" +
     "  }\n" +
     "}\n" +
     "fun main() { }"))
@@ -800,8 +800,8 @@ class CheckerTest {
             "impl Functor[Map[K, _]] {\n" +
             "  @axiom fun map[A, B](fa: Map[K, A], f: (A) => B): Map[K, B]\n" +
         "        = when(fa) {\n" +
-        "            MapNil -> MapNil()\n" +
-        "            is MapCons(k, v, t) -> MapCons(k, f(v), map(t, f))\n" +
+        "            MapNil => MapNil()\n" +
+        "            is MapCons(k, v, t) => MapCons(k, f(v), map(t, f))\n" +
         "        }\n" +
     "}\n" +
     "fun main() { }"))
@@ -1109,14 +1109,14 @@ class CheckerTest {
     @Test
     fun `P9 数值递归（n-1 递减）放行`() {
         // root doc《副作用与可变性控制》「停机」第二法：参数向某数值靠拢（n-1 → 0）是合法递归
-        val src = "fun fact(n: Nat): Nat = when(n) { 0 -> 1\n_ -> n * fact(n - 1) }"
+        val src = "fun fact(n: Nat): Nat = when(n) { 0 => 1\n_ => n * fact(n - 1) }"
         assertTrue(ok(src), "数值递减（n-1）应按数值递归放行")
     }
 
     @Test
     fun `P9 递增递归仍报 E-NON-STRUCTURAL-REC`() {
         // n + 1 是递增（不向 0 靠拢）——不承认数值进展，仍须报错
-        val src = "fun up(n: Nat): Nat = when(n) { 0 -> 0\n_ -> up(n + 1) }"
+        val src = "fun up(n: Nat): Nat = when(n) { 0 => 0\n_ => up(n + 1) }"
         assertTrue(errs(src).contains("E-NON-STRUCTURAL-REC"), "递增（n+1）不是数值递减，应报错")
     }
 
@@ -1236,8 +1236,8 @@ class CheckerTest {
         // 验收②：len(t) 的 t 由 when(xs){Cons(_, t)} 解构而来，是 xs 的语法子项 → 放行
         val src = "enum List[T] { Nil(), Cons(T, List[T]) }\n" +
             "fun len[T](xs: List[T]): Nat = when(xs) {\n" +
-            "    Nil -> 0\n" +
-            "    is Cons(_, t) -> 1 + len(t)\n" +
+            "    Nil => 0\n" +
+            "    is Cons(_, t) => 1 + len(t)\n" +
             "}"
         assertTrue(ok(src), "解构变量的结构递归应通过")
     }
@@ -1249,8 +1249,8 @@ class CheckerTest {
         assertTrue(errs(self).contains("E-NON-STRUCTURAL-REC"))
         val map = "enum List[T] { Nil(), Cons(T, List[T]) }\n" +
             "fun map[T, U](f: (T) => U, xs: List[T]): List[U] = when(xs) {\n" +
-            "    Nil -> Nil()\n" +
-            "    is Cons(h, t) -> Cons(f(h), map(f, t))\n" +
+            "    Nil => Nil()\n" +
+            "    is Cons(h, t) => Cons(f(h), map(f, t))\n" +
             "}"
         assertTrue(ok(map), "多参数递归至少一个实参为子项（map(f, t) 的 t）应放行")
     }
@@ -1290,21 +1290,21 @@ class CheckerTest {
     fun `和类型 when is 分支密封穷尽`() {
         // Kotlin 风格 when(o) { is Str -> ..; is Nat -> .. }：无 else、is 覆盖全部变体 → 密封，
         // 作为表达式返回分支类型（: Str 注解要求 when 值类型不是 Null）
-        val src = "@impure\nfun test(o: Str | Nat): Str =\n    when(o) {\n        is Str -> strUpper(o)\n        is Nat -> \"\${o + 1}\"\n    }"
+        val src = "@impure\nfun test(o: Str | Nat): Str =\n    when(o) {\n        is Str => strUpper(o)\n        is Nat => \"\${o + 1}\"\n    }"
         assertTrue(ok(src), "is 分支覆盖联合全部变体应判密封，且分支内收窄生效")
     }
 
     @Test
     fun `和类型 when else 分支反收窄`() {
         // else 分支联合主题排除已测 is 变体：o 收窄为 Nat，数值运算通过
-        val src = "@impure\nfun probe2(o: Str | Nat): Nat =\n    when(o) {\n        is Str -> 0\n        else   -> o + 1\n    }"
+        val src = "@impure\nfun probe2(o: Str | Nat): Nat =\n    when(o) {\n        is Str => 0\n        else   => o + 1\n    }"
         assertTrue(ok(src), "else 分支应反收窄为剩余变体 Nat")
     }
 
     @Test
     fun `和类型 when is 分支必须命中联合变体`() {
         // is Bool 不在 Str|Nat 中 → E-TYPE-MISMATCH（联合成员校验）
-        val src = "@impure\nfun test(o: Str | Nat) =\n    when(o) {\n        is Bool -> print(o)\n        else -> print(0)\n    }"
+        val src = "@impure\nfun test(o: Str | Nat) =\n    when(o) {\n        is Bool => print(o)\n        else => print(0)\n    }"
         assertTrue(errs(src).contains("E-TYPE-MISMATCH"), "is 非联合成员应报 E-TYPE-MISMATCH")
     }
     @Test
@@ -1659,7 +1659,7 @@ class CheckerTest {
     fun `自动证明 12-函数类型上下文`() {
         val src = "enum List[T] { Nil(), Cons(T, List[T]) }\n" +
             "fun forEach[T](xs: List[T], f: (T)<\$1 ∈ xs> => Null) {\n" +
-            "    when(xs) { Nil -> null\n is Cons(h, t) -> { f(h); forEach(t, f) } }\n" +
+            "    when(xs) { Nil => null\n is Cons(h, t) => { f(h); forEach(t, f) } }\n" +
             "    return null\n" +
             "}\n" +
             "fun needNotZero(n: Nat)<n ≠ 0> { }\n" +
@@ -1701,10 +1701,10 @@ class CheckerTest {
             "class Gradable { fun grade(): Grade }\n" +
             "impl Gradable for Student {\n" +
             "  fun grade(): Grade = when {\n" +
-            "    score in (90..100) -> Grade::A\n" +
-            "    score in (80..89) -> Grade::B\n" +
-            "    score in (60..79) -> Grade::C\n" +
-            "    score in (0..59) -> Grade::D\n" +
+            "    score in (90..100) => Grade::A\n" +
+            "    score in (80..89) => Grade::B\n" +
+            "    score in (60..79) => Grade::C\n" +
+            "    score in (0..59) => Grade::D\n" +
             "  }\n" +
             "}\n" +
             "fun main() { }"

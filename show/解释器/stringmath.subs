@@ -24,6 +24,6 @@ var nn = 5
 var rr = toRat(nn)
 print("toRat+0.5=" + toStr(rr + 0.5))
 when(parseNat("7")) {
-    is Some(v) -> print("as=" + toStr(v))
-    None -> print("as失败")
+    is Some(v) => print("as=" + toStr(v))
+    None => print("as失败")
 }

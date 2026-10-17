@@ -63,7 +63,7 @@ class E2ETest {
     @Test
     fun `when 字面量分支`() {
         assumeTrue(nodeAvailable())
-        val src = "fun f(n: Nat): Str = when(n) { 0 -> \"z\" else -> \"nz\" }\n" +
+        val src = "fun f(n: Nat): Str = when(n) { 0 => \"z\" else => \"nz\" }\n" +
             "fun main() { unchecked print(f(0))\nunchecked print(f(9)) }"
         assertEquals("z\nnz", run(src))
     }
@@ -113,7 +113,7 @@ class E2ETest {
     @Test
     fun `Optional 解构与默认值`() {
         assumeTrue(nodeAvailable())
-        val src = "fun u(o: Optional[Nat], d: Nat): Nat = when(o) { is Some(x) -> x  None -> d }\n" +
+        val src = "fun u(o: Optional[Nat], d: Nat): Nat = when(o) { is Some(x) => x  None => d }\n" +
             "fun main() { unchecked print(u(Some(42), 0))\nunchecked print(u(None, 7)) }"
         assertEquals("42\n7", run(src))
     }
@@ -134,7 +134,7 @@ class E2ETest {
         // root doc《模式匹配》：`is 结构体解构`（struct T(a: Nat, b: Nat) 的 `is T(a,b)`）。
         // struct 对象字段按名字存储（工厂 { tag, fieldName }），解构按字段名绑定。
         val src = "struct P(x: Nat, y: Nat)\n" +
-            "@impure fun g(p: P): Nat = when(p) { is P(a, b) -> a + b  else -> 0 }\n" +
+            "@impure fun g(p: P): Nat = when(p) { is P(a, b) => a + b  else => 0 }\n" +
             "@impure fun main() { unchecked print(g(P(2, 3))) }"
         assertEquals("5", run(src))
     }
@@ -154,7 +154,7 @@ class E2ETest {
         assumeTrue(nodeAvailable())
         // 决策 64：嵌套 ∃ 展开后三层分支已可判穷尽，无需 else 兜底
         val src = "fun depth(o: Optional[Optional[Nat]]): Nat = " +
-            "when(o) { is Some(is Some(y)) -> y  is Some(None) -> 0  None -> 0 }\n" +
+            "when(o) { is Some(is Some(y)) => y  is Some(None) => 0  None => 0 }\n" +
             "fun main() { unchecked print(depth(Some(Some(5))))\nunchecked print(depth(Some(None))) }"
         assertEquals("5\n0", run(src))
     }
@@ -184,7 +184,7 @@ class E2ETest {
     @Test
     fun `Bool 枚举 when`() {
         assumeTrue(nodeAvailable())
-        val src = "fun b2s(b: Bool): Str = when(b) { true -> \"yes\" false -> \"no\" }\n" +
+        val src = "fun b2s(b: Bool): Str = when(b) { true => \"yes\" false => \"no\" }\n" +
             "fun main() { unchecked print(b2s(true))\nunchecked print(b2s(false)) }"
         assertEquals("yes\nno", run(src))
     }
@@ -201,7 +201,7 @@ class E2ETest {
     @Test
     fun `元组解构`() {
         assumeTrue(nodeAvailable())
-        val src = "fun fst(p: (Nat,Nat)): Nat = when(p) { (a, b) -> a else -> 0 }\n" +
+        val src = "fun fst(p: (Nat,Nat)): Nat = when(p) { (a, b) => a else => 0 }\n" +
             "fun main() { unchecked print(fst((3, 4)))\nunchecked print(fst((9, 1))) }"
         assertEquals("3\n9", run(src))
     }
@@ -256,7 +256,7 @@ class E2ETest {
     fun `when 守卫引用绑定变量端到端`() {
         assumeTrue(nodeAvailable())
         // 守卫修复回归：`m if !=(m,0)` 必须先绑定 m 再判守卫
-        val src = "fun range(n: Nat): Str = when(n) {\n  0 -> \"zero\"\n  m if !=(m, 0) & !=(m, 1) -> \"many\"\n  else -> \"small\"\n}\n" +
+        val src = "fun range(n: Nat): Str = when(n) {\n  0 => \"zero\"\n  m if !=(m, 0) & !=(m, 1) => \"many\"\n  else => \"small\"\n}\n" +
             "fun main() { unchecked print(range(0))\nunchecked print(range(7))\nunchecked print(range(1)) }"
         assertEquals("zero\nmany\nsmall", run(src))
     }
@@ -297,8 +297,8 @@ class E2ETest {
         // @list 形参声明元素类型 T，函数体内即 List[T]；调用端剩余位置实参打包成 JS 数组（数组化 List）。
         val src =
             "enum List[T] { Nil(), Cons(T, List[T]) }\n" +
-            "fun sumList(xs: List[Nat]): Nat = when(xs) { Nil -> 0  is Cons(h, t) -> h + sumList(t) }\n" +
-            "fun prodList(xs: List[Nat]): Nat = when(xs) { Nil -> 1  is Cons(h, t) -> h * prodList(t) }\n" +
+            "fun sumList(xs: List[Nat]): Nat = when(xs) { Nil => 0  is Cons(h, t) => h + sumList(t) }\n" +
+            "fun prodList(xs: List[Nat]): Nat = when(xs) { Nil => 1  is Cons(h, t) => h * prodList(t) }\n" +
             "fun sum(@list xs: Nat): Nat = sumList(xs)\n" +
             "fun prod(@list xs: Nat): Nat = prodList(xs)\n" +
             "@impure fun main() {\n" +
@@ -319,7 +319,7 @@ class E2ETest {
             "print(startsWith(\"hello\", \"he\"))\n" +
             "print(endsWith(\"hello\", \"lo\"))\n" +
             "print(strReplace(\"a-b-c\", \"-\", \"+\"))\n" +
-            "when(strIndexOf(\"hello\", \"ll\")) { is Some(i) -> print(i); None -> print(\"-\") }\n" +
+            "when(strIndexOf(\"hello\", \"ll\")) { is Some(i) => print(i); None => print(\"-\") }\n" +
             "}"
         assertEquals("ABC\nabc\nx\ntrue\ntrue\na+b+c\n2", run(src))
     }
@@ -361,14 +361,14 @@ class E2ETest {
     fun `P1 parseNat 解构分支`() {
         assumeTrue(nodeAvailable())
         // when 分支体是表达式位，print 需 @impure main（决策 74/77）；主语直接是调用
-        val src = "@impure fun main() { when(parseNat(\"12\")) { is Some(n) -> print(n)  None -> print(\"bad\") } }"
+        val src = "@impure fun main() { when(parseNat(\"12\")) { is Some(n) => print(n)  None => print(\"bad\") } }"
         assertEquals("12", run(src))
     }
 
     @Test
     fun `P1 parseNat 非法输入落 None`() {
         assumeTrue(nodeAvailable())
-        val src = "@impure fun main() { when(parseNat(\"x\")) { is Some(n) -> print(n)  None -> print(\"bad\") } }"
+        val src = "@impure fun main() { when(parseNat(\"x\")) { is Some(n) => print(n)  None => print(\"bad\") } }"
         assertEquals("bad", run(src))
     }
 
@@ -432,8 +432,8 @@ class E2ETest {
     fun `P10 parseRat 与向量混合`() {
         assumeTrue(nodeAvailable())
         val src = "@impure fun main() {\n" +
-            "when(parseRat(\"2.5\")) { is Some(x) -> print(x)  None -> print(\"none\") }\n" +
-            "when(parseRat(\"abc\")) { is Some(x) -> print(x)  None -> print(\"none\") }\n" +
+            "when(parseRat(\"2.5\")) { is Some(x) => print(x)  None => print(\"none\") }\n" +
+            "when(parseRat(\"abc\")) { is Some(x) => print(x)  None => print(\"none\") }\n" +
             "}"
         assertEquals("2.5\nnone", run(src))
     }
@@ -449,9 +449,9 @@ class E2ETest {
             "impl Show for Nat { fun show(): Str = toStr(self) }\n" +
             "enum L[T] { LNil(), LCons(T, L[T]) }\n" +
             "fun joinAll[T: Show](xs: L[T]): Str = when(xs) {\n" +
-            "    is LNil() -> \"\"\n" +
-            "    is LCons(h, t) -> concat(h.show(), joinAll(t))\n" +
-            "    _ -> \"\"\n" +
+            "    is LNil() => \"\"\n" +
+            "    is LCons(h, t) => concat(h.show(), joinAll(t))\n" +
+            "    _ => \"\"\n" +
             "}\n" +
             "@impure fun main() {\n" +
             "print(joinAll(LCons(1, LCons(2, LNil()))))\n" +
@@ -467,17 +467,17 @@ class E2ETest {
         // 语言风格验证：jsonParse 失败返回 None 而非异常（空安全）；纯函数无需 unchecked；Optional 解构
         val src = "@impure fun main() {\n" +
             "when(jsonParse(\"{\\\"name\\\":\\\"alice\\\",\\\"age\\\":30,\\\"tags\\\":[1,2,3]}\")) {\n" +
-            "    is Some(j) -> {\n" +
-            "        when(jsonGet(j, \"name\")) { is Some(v) -> print(\"name=\" + jsonToStr(v))  None -> print(\"no-name\") }\n" +
-            "        when(jsonGet(j, \"age\")) { is Some(v) -> when(jsonNum(v)) { is Some(n) -> print(toStr(n))  None -> print(\"age-not-num\") }  None -> print(\"no-age\") }\n" +
+            "    is Some(j) => {\n" +
+            "        when(jsonGet(j, \"name\")) { is Some(v) => print(\"name=\" + jsonToStr(v))  None => print(\"no-name\") }\n" +
+            "        when(jsonGet(j, \"age\")) { is Some(v) => when(jsonNum(v)) { is Some(n) => print(toStr(n))  None => print(\"age-not-num\") }  None => print(\"no-age\") }\n" +
             "        when(jsonGet(j, \"tags\")) {\n" +
-            "            is Some(t) -> when(jsonAt(t, 1)) { is Some(v) -> when(jsonNum(v)) { is Some(n) -> print(\"tag1=\" + toStr(n))  None -> print(\"tag1-not-num\") }  None -> print(\"no-tag1\") }\n" +
-            "            None -> print(\"no-tags\")\n" +
+            "            is Some(t) => when(jsonAt(t, 1)) { is Some(v) => when(jsonNum(v)) { is Some(n) => print(\"tag1=\" + toStr(n))  None => print(\"tag1-not-num\") }  None => print(\"no-tag1\") }\n" +
+            "            None => print(\"no-tags\")\n" +
             "        }\n" +
             "    }\n" +
-            "    None -> print(\"parse-fail\")\n" +
+            "    None => print(\"parse-fail\")\n" +
             "}\n" +
-            "when(jsonParse(\"not json\")) { is Some(_) -> print(\"should-not\")  None -> print(\"parse-fail-ok\") }\n" +
+            "when(jsonParse(\"not json\")) { is Some(_) => print(\"should-not\")  None => print(\"parse-fail-ok\") }\n" +
             "}"
         assertEquals("name=\"alice\"\n30\ntag1=2\nparse-fail-ok", run(src))
     }
@@ -487,14 +487,14 @@ class E2ETest {
         assumeTrue(nodeAvailable())
         val src = "@impure fun main() {\n" +
             "when(jsonParse(\"[true, false, null, 1.5, \\\"x\\\"]\")) {\n" +
-            "    is Some(j) -> {\n" +
+            "    is Some(j) => {\n" +
             "        print(\"isArr=\" + toStr(jsonIsArr(j)))\n" +
-            "        when(jsonAt(j, 0)) { is Some(v) -> when(jsonBool(v)) { is Some(b) -> print(\"b0=\" + toStr(b))  None -> print(\"not-bool\") }  None -> print(\"no-0\") }\n" +
-            "        when(jsonAt(j, 2)) { is Some(v) -> print(\"null=\" + toStr(jsonIsNull(v)))  None -> print(\"no-2\") }\n" +
-            "        when(jsonAt(j, 3)) { is Some(v) -> when(jsonNum(v)) { is Some(n) -> print(\"n3=\" + toStr(n))  None -> print(\"no-3\") }  None -> print(\"no-3\") }\n" +
+            "        when(jsonAt(j, 0)) { is Some(v) => when(jsonBool(v)) { is Some(b) => print(\"b0=\" + toStr(b))  None => print(\"not-bool\") }  None => print(\"no-0\") }\n" +
+            "        when(jsonAt(j, 2)) { is Some(v) => print(\"null=\" + toStr(jsonIsNull(v)))  None => print(\"no-2\") }\n" +
+            "        when(jsonAt(j, 3)) { is Some(v) => when(jsonNum(v)) { is Some(n) => print(\"n3=\" + toStr(n))  None => print(\"no-3\") }  None => print(\"no-3\") }\n" +
             "        print(\"dump=\" + jsonToStr(j))\n" +
             "    }\n" +
-            "    None -> print(\"parse-fail\")\n" +
+            "    None => print(\"parse-fail\")\n" +
             "}\n" +
             "}"
         assertEquals("isArr=true\nb0=true\nnull=true\nn3=1.5\ndump=[true,false,null,1.5,\"x\"]", run(src))
@@ -509,8 +509,8 @@ class E2ETest {
             "@root fun jsonNum(j: Json): Optional[Rat]\n" +
             "@impure fun main() {\n" +
             "when(jsonParse(\"{\\\"age\\\":30}\")) {\n" +
-            "    is Some(j) -> when(jsonGet(j, \"age\")) { is Some(v) -> when(jsonNum(v)) { is Some(n) -> print(toStr(n))  None -> print(\"not-num\") }  None -> print(\"no-field\") }\n" +
-            "    None -> print(\"parse-fail\")\n" +
+            "    is Some(j) => when(jsonGet(j, \"age\")) { is Some(v) => when(jsonNum(v)) { is Some(n) => print(toStr(n))  None => print(\"not-num\") }  None => print(\"no-field\") }\n" +
+            "    None => print(\"parse-fail\")\n" +
             "}\n" +
             "}"
         assertEquals("30", run(src))
