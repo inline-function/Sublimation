@@ -911,7 +911,7 @@ internal fun Checker.checkFnCall(
     for (pre in fn.preps) {
         val goal = substAll(PropLogic.fromExpr(substThisExpr(substDollarNExpr(pre, fn.params), fn.name)), binding, tsub, envSub)
         if (!proveOrDeep(f.allFacts(), goal))
-            d.error("E-PRE-UNPROVEN", c.pos, "调用 `$name` 前必须先证明它的上文 `${PropLogic.render(goal)}`，但编译器没证出。调用前用 `+∵ …` 注入事实，或换个参数让编译器能自动证出")
+            d.error("E-PRE-UNPROVEN", c.pos, "调用 `$name` 前必须先证明它的上文 `${PropLogic.render(goal)}`，但编译器没证出。可换参数让编译器自动证出，或用 `witness<命题>()` 显式供给前置事实")
     }
 
     f.inject(PAtom(name, c.args))   // 伴生记录

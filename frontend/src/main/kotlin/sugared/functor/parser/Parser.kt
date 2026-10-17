@@ -570,7 +570,7 @@ private var ifIsCond: Boolean = false
         if (peek(Kind.FUN)) { val fn = parseFun(if (peek(Kind.AT)) parseAnnotations() else emptyList()); return FunStmt(fn, fn.pos) }
         // v3.0 特性 6：`if[p]` 命题层排中律（IF 后紧跟 [ 与值层 if ( 区分）
         if (peek(Kind.IF) && toks.getOrNull(pos + 1)?.kind == Kind.LBRACKET) return parseIfProp()
-        // 根文档《手动证明》：分类讨论 when[p ∨ q] { p -> {…} q -> {…} }
+        // 根文档《手动证明》：分类讨论 when[p ∨ q] { p => {…} q => {…} }
         if (peek(Kind.WHEN) && toks.getOrNull(pos + 1)?.kind == Kind.LBRACKET) return parseWhenProp()
         // v3.0 特性 5 旧形兼容：裸 ∴ q（自动填入 ⊤ 作为形式）——等价于 ∵ ⊤, ∴ q
         // （根文档《手动证明》只保留复合 ∵ form, p₁…pₙ ∴ conclusion 形态，旧则移除。）
