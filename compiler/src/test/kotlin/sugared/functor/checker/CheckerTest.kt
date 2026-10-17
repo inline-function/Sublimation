@@ -441,6 +441,22 @@ class CheckerTest {
     }
 
     @Test
+    fun `决策30 泛型别名头（type F〈a〉 = T〈a〉）实例化替换`() {
+        val src = "type Box[a] = Optional[a]\nfun unwrap(x: Box[Nat]): Nat = when(x) { is Some(v) => v None => 0 }\nfun main() { unwrap(Some(7)) }"
+        assertTrue(ok(src), "泛型别名头实参替换后与目标类型互相匹配")
+    }
+
+    @Test
+    fun `决策30 泛型别名头参数在右值未使用仍合法`() {
+        assertTrue(ok("type Const[a, b] = Optional[b]\nfun f(x: Const[Str, Nat]): Nat = when(x) { is Some(v) => v None => 0 }\nfun main() { f(Some(1)) }"))
+    }
+
+    @Test
+    fun `决策30 泛型别名实参数不符按目标类型判定`() {
+        assertTrue(errs("type F[a] = Bar[a]\nfun main() { }").contains("E-UNBOUND-NAME"))
+    }
+
+    @Test
     fun `决策30 别名与既有类型重名报错`() {
         assertTrue(errs("type Nat = Int").contains("E-DUP-DECL"))
     }

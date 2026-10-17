@@ -267,6 +267,8 @@ internal fun Checker.tpNamesOf(decl: Decl): List<String> = when (decl) {
     is EnumDecl -> decl.theory.filterIsInstance<TypeParam>().map { it.name }
     is ClassDecl -> decl.theory.filterIsInstance<TypeParam>().map { it.name }
     is FunDecl -> decl.theory.filterIsInstance<TypeParam>().map { it.name }
+    // 泛型别名头（type F[a] = Optional[a]）：头参是右值合法的类型变量
+    is TypeAliasDecl -> decl.theory.filterIsInstance<TypeParam>().map { it.name }
     else -> emptyList()
 }
 
@@ -277,6 +279,7 @@ internal fun Checker.tpArityOf(decl: Decl): Map<String, Int> = when (decl) {
     is EnumDecl -> decl.theory.filterIsInstance<TypeParam>().associate { it.name to it.arity }
     is ClassDecl -> decl.theory.filterIsInstance<TypeParam>().associate { it.name to it.arity }
     is FunDecl -> decl.theory.filterIsInstance<TypeParam>().associate { it.name to it.arity }
+    is TypeAliasDecl -> decl.theory.filterIsInstance<TypeParam>().associate { it.name to it.arity }
     else -> emptyMap()
 }
 
