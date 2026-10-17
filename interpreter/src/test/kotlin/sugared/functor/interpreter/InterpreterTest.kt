@@ -163,13 +163,13 @@ class InterpreterTest {
     fun testMapFilterFold() {
         // map/filter/fold 泛型高阶函数（配合 range 构造列表）
         val out = capture { i -> i.run("""
+            // core 标准库自带 isEven（math），本地不再重声明（同名 E-DUP-DECL）
             fun square(n: Nat): Nat = n * n
-            fun isEven(n: Nat): Bool = n % 2 == 0
             fun add(a: Nat, b: Nat): Nat = a + b
             var xs = range(1, 6)
-            capture(map(xs, square))
+            capture(xs.map { n -> square(n) })
             capture(filter(xs, isEven))
-            capture(fold(xs, 0, add))
+            capture(xs.fold(0) { acc, x => add(acc, x) })
         """.trimIndent()) }
         // map: [1,4,9,16,25], filter: [2,4], fold: 1+2+3+4+5=15
         assertEquals(listOf<Any?>(
@@ -211,6 +211,19 @@ class InterpreterTest {
             capture(when (b) { is Some(x) -> x; None -> -1 })
         """.trimIndent()) }
         assertEquals(listOf<Any?>(42L, -1L), out)
+    }
+
+    @Test
+    fun testIfIsDestruct() {
+        // ifis 智能解构：`if (m is Some(v)) …` 脱糖为 when——枚举/结构体/嵌套通用，解构变量在分支内可见
+        val out = capture { i -> i.run("""
+            var m: Optional[Nat] = Some(8)
+            if (m is Some(v)) { capture(v) }
+            if (m is None()) { capture(100) }
+            var n: Optional[Nat] = None
+            if (n is Some(v)) { capture(-1) } else { capture(9) }
+        """.trimIndent()) }
+        assertEquals(listOf<Any?>(8L, 9L), out)
     }
 
     @Test
@@ -285,17 +298,21 @@ class InterpreterTest {
     }
 
     @Test
-    fun testStringElvisParseBuiltins() {
-        // 字符串 / Elvis / parse / Math 内建函数的运行时（Checker builtinPure 与 Evaluator 实现对齐）
+    fun testStringParseMathBuiltins() {
+        // 字符串 / parse / Math 内建函数的运行时（Checker builtinPure 与 Evaluator 实现对齐）
+        // 空安全 `?:` 已移除——parse 的 Optional 改用 when 解构取值/兜底
         val out = capture { i -> i.run("""
-            capture(parseNat("42") ?: 0)
-            capture(parseNat("abc") ?: -1)
+            fun natOr(s: Str, fallback: Nat): Nat = when(parseNat(s)) { is Some(n) -> n  None -> fallback }
+            // core 标准库 real 自带 ratOr，本地改名 myRatOr 避开 E-DUP-DECL
+            fun myRatOr(s: Str, fallback: Rat): Rat = when(parseRat(s)) { is Some(r) -> r  None -> fallback }
+            capture(natOr("42", 0))
+            capture(natOr("abc", -1))
             capture(length("hello"))
             capture(concat("foo", "bar"))
             capture(substring("hello", 1, 3))
             capture(strUpper("ab"))
-            capture(parseRat("2.5") ?: 0.0)
-            capture(parseRat("x") ?: -1.0)
+            capture(myRatOr("2.5", 0.0))
+            capture(myRatOr("x", -1.0))
             capture(abs(-3.0))
             capture(floor(2.7))
             capture(sqrt(16.0))
@@ -321,24 +338,14 @@ class InterpreterTest {
     }
 
     @Test
-    fun testSafeCallWrapsSome() {
-        // H1：s?.length() 必须包 Some（编译模式 Some(f(x))，脚本模式不得裸返回）
+    fun testOptionalWhenDestruct() {
+        // 空安全糖（?. / ?: / var x: Nat = Some(1) 自动解构）已移除——
+        // Optional 仍是普通容器：when 解构 + is Some(v) 绑定取内部值
         val out = capture { i -> i.run("""
             var s: Optional[Str] = Some("ab")
-            var n = s?.length()
-            when (n) { is Some(v) -> capture("Some:" + toStr(v)); else -> capture("BAD") }
+            when (s) { is Some(v) -> capture("Some:" + toStr(length(v))); else -> capture("BAD") }
         """.trimIndent()) }
         assertEquals(listOf<Any?>("Some:2"), out)
-    }
-
-    @Test
-    fun testAutoUnwrapVar() {
-        // H3：var x: Nat = Some(1) 变量位空安全自动解构——x 存 1（Nat），不是 Some(1)
-        val out = capture { i -> i.run("""
-            var x: Nat = Some(1)
-            when (x) { 1 -> capture("num"); else -> capture("OTHER") }
-        """.trimIndent()) }
-        assertEquals(listOf<Any?>("num"), out)
     }
 
     @Test
@@ -394,8 +401,8 @@ class InterpreterTest {
             "并集=[1,2,3,4,5,6]",              // Set union
             "Map小红=88",                      // Map put/get
             "Range map=[1,4,9,16,25]",         // Range 惰性 map
-            "邮箱长度=5",                      // ?. 安全调用
-            "自动解构=42",                     // var x: Nat = Some(42) 空安全自动解构
+            "邮箱长度=5",                      // when 解构 Optional 取内部值
+            "解构=42",                        // when 解构 Some(42) 取内部值
             "方法路径作值=[11,12,13]",         // 方法路径作值 xs.map
             "C(5,2)=10",                       // 递减递归
             "gradeChar(88)=优秀",              // 区间穷尽 when(n in _) + 前置条件证明

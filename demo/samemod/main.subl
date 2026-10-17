@@ -1,0 +1,10 @@
+﻿@allMut
+struct Box(v: Nat)
+
+@impure
+fun main() {
+    var b: @mut Box = Box(3)
+    b.v = 9
+    print(toStr(b.v))
+}
+

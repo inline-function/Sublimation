@@ -20,7 +20,7 @@ internal data class CoverShape(val vars: List<String>, val conjs: List<Prop>)
  * 与分支命题的 ∃ 变量名不同，靠 PropLogic.alphaEq 匹配（I-5）。
  */
 internal fun Checker.enumCoverageDisj(subj: Expr, subjT: Type): Prop? {
-    if (findVisibleEnum(subjT.name) == null) return null   // M3：跨模块枚举（stdlib.List 等）同样参与覆盖律，与 coverShapes/findVisibleEnum 一致
+    if (findVisibleEnum(subjT.name) == null) return null   // M3：跨模块枚举（core.collection.List 等）同样参与覆盖律，与 coverShapes/findVisibleEnum 一致
     covCounter = 0
     val shapes = coverShapes(subj, subjT, COVER_DEPTH)
     if (shapes.isEmpty()) return null
@@ -302,6 +302,14 @@ internal fun Checker.bindPattern(p: Pattern, subj: Expr, subjT: Type, nf: Frame)
             nf.inject(eq)
             nf.inject(PAtom(":", listOf(subj, typeToExpr(subjT.takeUnless { it.isSynthetic() }
                 ?: namedT(ci.enum.name, emptyList())))))
+            // 列表/集合构造子：头元素绑定注入 x in subj（forEach 的 f(h) 上下文证 in<h,xs> 依赖此事实）
+            if (p.name == "Cons" || p.name == "SetCons") {
+                p.args.firstOrNull()?.let { head ->
+                    collectPatBinds(head).forEach { hb ->
+                        nf.inject(PAtom("in", listOf(NameRef(hb), subj)))
+                    }
+                }
+            }
             // 返回命题 ∃ 封闭全部量化位点（I-14），与覆盖律形状同构
             if (vars.isEmpty()) eq else PExists(vars, eq)
         }
@@ -401,7 +409,7 @@ internal fun Checker.bindVars(ap: Pattern, expect: Type, nf: Frame) {
 
 /**
  * P5（决策 81）：跨可见模块解析构造子（本模块优先，其次按当前模块可见路径集合）。
- * 补完 P0 文档化的限制「跨模块 when 模式」——调用点解构 `Ok(x)`/`Err(e)`（stdlib 的 Result）需要。
+ * 补完 P0 文档化的限制「跨模块 when 模式」——调用点解构 `Ok(x)`/`Err(e)`（core.collection 的 Result）需要。
  * 歧义（多个可见模块同名构造子）取可见集合中第一个命中的（文档记限制；most visible 语义留后续）。
  */
 internal fun Checker.findVisibleCtor(name: String): CtorInfo? {

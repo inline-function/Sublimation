@@ -109,8 +109,9 @@ class DiagCoverageTest {
         assertTrue(has("@classic\n@impure fun main() { ∵ y = 1\nif[z = 2] { ∴ y = 1 } }", "E-IF-CONCLUSION-MISMATCH"))
 
     // v3.0 特性 5：∴ q 证不出 → W-CANNOT-PROVE
-    @Test fun `W-CANNOT-PROVE`() =
-        assertTrue(has("@impure fun main() { ∵ x = 1\n∴ x = 2 }", "W-CANNOT-PROVE"))
+    // v3.0 特性 5：∴ q 证不出 → E-CANNOT-PROVE（证明失败报错）
+    @Test fun `E-CANNOT-PROVE`() =
+        assertTrue(has("@impure fun main() { ∵ x = 1\n∴ x = 2 }", "E-CANNOT-PROVE"))
 
     // v3.0 特性 4：类方法带体=默认实现，E-SELF-UNKNOWN 不再产生（原为该码唯一触发场景，语义被特性 4 取代）
     @Test fun `E-SELF-UNKNOWN 类型类成员带体合法(缺陷4)`() =
@@ -248,4 +249,26 @@ class DiagCoverageTest {
 
     @Test fun `H-ROOT-BUILTIN @root 命中白名单发提示`() =
         assertTrue(has("@root fun jsonParse(s: Str): Optional[Json]", "H-ROOT-BUILTIN"))
+
+    // ---------- core.async 内建运行时层（@root 白名单扩展：14 个 async 内建）----------
+
+    @Test fun `H-ROOT-BUILTIN core async 任务层白名单（delay runBoth runSeq）`() {
+        assertTrue(has("@root @impure @async fun delay(ms: Nat): Null", "H-ROOT-BUILTIN"))
+        assertTrue(has("@root @impure @async fun runBoth(f: () => Null, g: () => Null): Null", "H-ROOT-BUILTIN"))
+        assertTrue(has("@root @impure @async fun runSeq(f: () => Null, g: () => Null): Null", "H-ROOT-BUILTIN"))
+    }
+
+    @Test fun `H-ROOT-BUILTIN core async Flow 收集白名单`() {
+        assertTrue(has("@root @impure @async fun collectToList[T](fl: Flow[T]): List[T]", "H-ROOT-BUILTIN"))
+        assertTrue(has("@root @impure @async fun collectCount[T](fl: Flow[T]): Nat", "H-ROOT-BUILTIN"))
+        assertTrue(has("@root @impure @async fun collectAll[T](fl: Flow[T], p: (T) => Bool): Bool", "H-ROOT-BUILTIN"))
+    }
+
+    @Test fun `H-ROOT-BUILTIN core async Mutex 与 Channel 白名单`() {
+        assertTrue(has("@root @impure @async fun withMutex(m: Mutex, f: () => Null): Null", "H-ROOT-BUILTIN"))
+        assertTrue(has("@root @impure @async fun channelFromList[T](xs: List[T]): Channel[T]", "H-ROOT-BUILTIN"))
+        assertTrue(has("@root @impure @async fun channelDrain[T](ch: Channel[T]): List[T]", "H-ROOT-BUILTIN"))
+        assertTrue(has("@root @impure @async fun sendAll[T](ch: Channel[T], xs: List[T]): Null", "H-ROOT-BUILTIN"))
+        assertTrue(has("@root @impure @async fun channelPipe[T](src: Channel[T], dst: Channel[T]): Null", "H-ROOT-BUILTIN"))
+    }
 }

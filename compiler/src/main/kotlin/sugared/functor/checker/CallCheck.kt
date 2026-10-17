@@ -55,6 +55,33 @@ internal fun Checker.checkStructCtor(e: StructCtorExpr, f: Frame, pure: Boolean)
     return namedT(e.struct, tps.map { inferred[it] ?: syntheticT("类型参数$it") })
 }
 
+/** HKT-D1 调用核对补丁：实参检查位的 kind 形参应用（`F[A]`）经 unifyInto 绑定 F:=具体构造子（零实参头）后，
+ *  substT 不替换应用形态——此处手动把头换成绑定构造子、实参位递归 substT（形参 F[A] → Set[T]）。 */
+private fun applyKindHead(pt: Type, want0: Type, tsub: Map<String, Type>): Type {
+    if (pt !is NamedType || pt.args.isEmpty()) return want0
+    val bound = tsub[pt.name] as? NamedType ?: return want0
+    if (bound.args.isNotEmpty()) return want0
+    return NamedType(bound.name, pt.args.map { it.substT(tsub) })
+}
+
+/** 约束方法调用（consSlot）的签名-实参合一：把类成员形参里的类型变量解成调用实参类型。
+ *  只解零实参类型变量（fold 的 R ← init 实参）与同名同结构容器（F[A] vs F[A'] 递归实参位）、
+  函数类型（(R, A) => R vs 实参函数值）——kind 形参本体（F）保持约束位不实例化。 */
+private fun unifySigType(sigT: Type, argT: Type, sub: MutableMap<String, Type>) {
+    when {
+        sigT is NamedType && sigT.args.isEmpty() ->
+            if (sigT.name !in sub) sub[sigT.name] = argT
+        sigT is NamedType && argT is NamedType && sigT.name == argT.name && sigT.args.size == argT.args.size ->
+            sigT.args.zip(argT.args).forEach { (a, b) -> unifySigType(a, b, sub) }
+        sigT is FunType && argT is FunType -> {
+            sigT.params.zip(argT.params).forEach { (a, b) -> unifySigType(a, b, sub) }
+            unifySigType(sigT.ret, argT.ret, sub)
+        }
+        sigT is TupleType && argT is TupleType && sigT.items.size == argT.items.size ->
+            sigT.items.zip(argT.items).forEach { (a, b) -> unifySigType(a, b, sub) }
+    }
+}
+
 internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
     val argTypes = c.args.map { checkExpr(it, f, pure) }
     // P0（M3/M5/M6）：跨模块限定调用 `core.gcd(...)` / `c.Point(...)` / `core.show(p)`
@@ -74,14 +101,23 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
         ?: ((c.callee as? InstExpr)?.target as? NameRef)?.name
     // W-UNUSED（报错增强，v2.0）：callee 位置的参数引用也算使用。此前只在 checkExpr 的 NameRef 分支
     // markUsed（实参/主体位），callee 位被直接按名字解析、从不 markUsed —— 导致 `fun f(x:..)=f(x)` 里
-    // 的函数型参数 f 被误报「从未使用」（stdlib Result.map/flatMap 等全部中招）。
+    // 的函数型参数 f 被误报「从未使用」（core 标准库 Result.mapOk/flatMapOk 等全部中招）。
     if (freeName != null && f.lookupVar(freeName) != null) f.markUsed(freeName)
     // P12：findCallable 遍历可见模块较重——只算一次，isFreeFormMethod 与后续 fc 复用同一结果。
-    val fcEarly: Pair<FunDecl, String>? = if (fieldCallee != null) null else freeName?.let { findCallable(it, argTypes) }
+    var fcEarly: Pair<FunDecl, String>? = if (fieldCallee != null) null else freeName?.let { findCallable(it, argTypes) }
+    // HKT 标准库：自由函数命中但首形参与首实参不匹配（Set 的自由 flatMap 遇 List 实参），而名字同时是
+    // 类型类方法（impl 可按字典分发）→ 弃自由函数命中，转方法形态（isFreeFormMethod → resolveDict）。
+    // 否则按 Set 版 flatMap 检查 List 实参，误报 E-TYPE-MISMATCH（impl Monad[List] 体内递归 flatMap）。
+    var freeFunDropped = false
+    if (fcEarly != null && freeName != null && isMethodName(freeName) && argTypes.isNotEmpty()) {
+        val p0 = fcEarly.first.params.firstOrNull()?.type
+        if (p0 != null && !paramMatchesRecv(syms.expand(p0), argTypes[0])) { fcEarly = null; freeFunDropped = true }
+    }
     val isFreeFormMethod = fieldCallee == null && freeName != null &&
-        isMethodName(freeName) &&
+        (freeFunDropped || (isMethodName(freeName) &&
         syms.findFun(freeName) == null && !syms.ctors.containsKey(freeName) && !syms.structs.containsKey(freeName) &&
-        fcEarly == null   // 扩展调用法规则：普通调用法 f(x,..) 有可见自由函数时优先自由函数（类型类方法仅兜底）
+        fcEarly == null))   // 扩展调用法规则：普通调用法 f(x,..) 有可见自由函数时优先自由函数（类型类方法仅兜底）；
+        // freeFunDropped：自由函数首形参不匹配而名字是类型类方法 → 亦按方法形态走字典分发
     // HKT（《高阶类型.md》§7.1，方案 A）：带参类型类方法（`map(f, fa)`）的字典键是 **kind 应用位**（fa，含
     // arity>0 形参应用的那一参），不是首实参；且 fn 需要全部实参（self 即 fa 位，不 drop）。
     val hktKindPos = when {
@@ -137,7 +173,7 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
         // O2：方法路径（self 已知）不参与构造子/结构体判定，避免同名截胡
         syms.ctors[name]?.let { ci -> return checkCtorCall(ci, name, c, argTypes, modulePath) }
         syms.structs[name]?.let { st -> return checkStructCall(st, name, c, argTypes, modulePath, f) }
-        // 修复（#4）：构造子/结构体跨模块可见——裸名 Ok/Err/… 也查可见模块（含 stdlib）
+        // 修复（#4）：构造子/结构体跨模块可见——裸名 Ok/Err/… 也查可见模块（含 core 标准库）
         if (moduleTree != null) {
             for (p in visiblePaths) {
                 val s = allSymbols[p] ?: continue
@@ -281,9 +317,12 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
         if (sugarFn != null)
             return checkFnCall(sugarFn, fieldCallee.name, c, f, pure,
                 methodSugarArgs[c]!!, listOfNotNull(selfT) + argTypes, isMethodPath = true)
+        // 接收者类型未知（lambda 未定类型首查，arg 先于期望类型检查）→ 方法糖无法按接收者分派，
+        // 静默推迟到「带期望类型的二次检查」（checkFnCall lambda 反查）再定，避免首查误报 E-UNBOUND-NAME。
+        if (selfT != null && selfT.isSynthetic()) return syntheticT("方法糖推迟")
     }
 
-    val fc = fcEarly   // 已在 checkCall 开头计算（P12）；v3.0 跨可见模块（含 stdlib）
+    val fc = fcEarly   // 已在 checkCall 开头计算（P12）；v3.0 跨可见模块（含 core 标准库）
     val fn: FunDecl = fc?.first
         ?: run {
             // 类型类方法调用（决策 60，T5；O2 双形态）：按 self 类型解析字典，按调用点留痕给 codegen
@@ -301,10 +340,17 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
                 } else null
                 if (consSlot != null) {
                     consHits[c] = consSlot.second
-                    // 返回类型取类成员签名（约束类型类方法通常返回具体类型，如 show → Str）
                     val sig = syms.classes[consSlot.first]?.members?.firstOrNull { it.name == name }
                     checkMutMethodView(name, selfT, sig?.annotations ?: emptyList(), c)
-                    return sig?.retType ?: syntheticT("约束方法${consSlot.first}.$name")
+                    // HKT 标准库：返回类型按调用实参合一——类成员签名含类型变量（fold 的 R / A、
+                    // fa 的 F[A]），裸返会与外层声明的返回类型不一致（size: Nat 体内 fold 返 R）。
+                    // R ← init 实参类型；A ← fa 应用实参；kind 形参 F 保持（约束位，不再实例化）。
+                    if (sig != null) {
+                        val sub = LinkedHashMap<String, Type>()
+                        sig.params.zip(effTypes).forEach { (p, at) -> unifySigType(p.type, at, sub) }
+                        return sig.retType?.substT(sub) ?: syntheticT("约束方法${consSlot.first}.$name")
+                    }
+                    return syntheticT("约束方法${consSlot.first}.$name")
                 }
                 // v3.0：优先自由函数方法糖（含 ext 扩展方法；typeclass 声明的同名成员不再劫持——只有 class 无 impl 时报 E-NO-INSTANCE），
                 // 未命中再走类型类字典（dict）。两者都无 → 报告无实例。
@@ -334,7 +380,7 @@ internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
         moduleHits[c.callee] = jsOverloadName(modulePath, fn)   // P0：同模块全局调用按模块前缀留痕；v2.0 重载带首参标签
     else if (!isMethodPath && fc != null && fc.second != modulePath)
         moduleHits[c.callee] = jsOverloadName(fc.second, fn)   // v3.0：裸名跨模块（std）调用按来源模块留痕
-    if (!isMethodPath && fc != null) noteListMethod(c, fn, fc.second)   // P9：stdlib List 方法留痕
+    if (!isMethodPath && fc != null) noteListMethod(c, fn, fc.second)   // P9：core 标准库 List 方法留痕
     // v1.1 方法糖：接收者前置重排 `xs.map(f)` → `map(xs, f)`（实参类型首项为接收者类型）
     val sugar = methodSugarArgs[c]
     if (sugar != null)
@@ -352,7 +398,7 @@ private fun Checker.checkMutMethodView(name: String, selfT: Type, fnAnnos: List<
 
 // ============ v1.1 集合方法糖：`o.m(args)` → 同名自由函数 m(o, args) ============
 
-/** 方法糖命中：找「同名自由函数」（本模块 / 内置 / 可见模块含 stdlib），且其**第一个形参**类型与接收者匹配。
+/** 方法糖命中：找「同名自由函数」（本模块 / 内置 / 可见模块含 core 标准库），且其**第一个形参**类型与接收者匹配。
  *  命中后登记实参重排（methodSugarArgs）与跨模块 JS 名（moduleHits），返回该函数供正常调用检查。 */
 private fun Checker.methodSugar(name: String, selfT: Type?, fieldCallee: FieldExpr?, c: CallExpr): FunDecl? {
     if (fieldCallee == null || selfT == null) return null
@@ -371,15 +417,15 @@ internal fun Checker.jsOverloadName(mod: String, fn: FunDecl): String {
     return if (hasOver) "${moduleJsName(mod, fn.name)}\$${fnTag(fn)}" else moduleJsName(mod, fn.name)
 }
 
-/** P9：标记 stdlib 数组化 List 方法调用（调用点 → 方法名）。codegen 据此把 map/size/… 映射成 JS 原生数组方法，
- *  免去在 codegen 里硬编码 stdlib__ 前缀字符串比较；仅 stdlib 模块 + 首形参为 List 才算（用户自定义 List 函数不误中）。 */
+/** P9：标记 core 标准库数组化 List 方法调用（调用点 → 方法名）。codegen 据此把 map/size/… 映射成 JS 原生数组方法，
+ *  免去在 codegen 里硬编码模块前缀字符串比较；仅 core 标准库 collection 模块 + 首形参为 List 才算（用户自定义 List 函数不误中）。 */
 internal fun Checker.noteListMethod(c: CallExpr, fn: FunDecl, mod: String) {
-    if (mod != "stdlib") return
+    if (mod != "core/collection") return
     val p0 = fn.params.firstOrNull() ?: return
     if (syms.expand(p0.type).name == "List") listMethodHits[c] = fn.name
 }
 
-/** 在「本模块 + 内置 + 可见模块（含 stdlib）」中找同名自由函数且首参类型匹配接收者；返回 (函数, 模块路径)。
+/** 在「本模块 + 内置 + 可见模块（含 core 标准库）」中找同名自由函数且首参类型匹配接收者；返回 (函数, 模块路径)。
  *  v2.0：候选含同名的**重载**（不同首参类型）——按接收者类型挑选正确分派。 */
 internal fun Checker.findCollectionMethod(name: String, selfT: Type): Pair<FunDecl, String>? {
     val cands = ArrayList<Pair<FunDecl, String>>()
@@ -430,12 +476,37 @@ private fun Checker.checkInlineFunCall(
     // V1（本轮第一刀）不做 arity/参数核对——保留 v2 对变量函数调用的宽容（`f(v)` 单元组实参形态等）；
     // 参数配对与诊断后续轮次收紧（与 checkFnCall 的宽严对齐另行设计）。
     // v3.0（完美函数类型）：函数值纯度随类型传递——体内含 impure 调用的 lambda 作值，纯上下文调用报 E-IMPURE-CALL
+    // HKT 标准库（借用效应，forEach 的 f: @impure (A)=>Null）：callee 是本函数**声明的 @impure 函数值形参**时放行——
+    // 形参即显式效应能力（能写出 impure lambda 的调用方本身必非纯，纯洁性不破）；lambda 层 impure 标记仍传递。
     if (ft.purity == "impure") {
         if (lambdaDepth > 0) curLambdaImpure = true
-        if (pure && uncheckedDepth == 0)
+        val calleeName = (c.callee as? NameRef)?.name
+        val pIdx = curFunParams.indexOf(calleeName)
+        val borrowed = pIdx >= 0 && (paramTypes.getOrNull(pIdx) as? FunType)?.purity == "impure" &&
+            (calleeName == null || f.lookupVar(calleeName) != null)
+        if (pure && uncheckedDepth == 0 && !borrowed)
             d.error("E-IMPURE-CALL", c.pos, "纯作用域内调用非纯函数值 ${ft.render()}（该函数体含 impure 调用）")
     }
+    // 根文档·上下文系统：函数值调用前须证明其类型携带的上下文（(T)<$1 in xs> => Null 之 $1 in xs）
+    ft.context?.forEach { ctxExpr ->
+        val rewritten = substParamRefToArg(ctxExpr, c.args)
+        val goal = PropLogic.fromExpr(rewritten)
+        if (!proveOrDeep(f.allFacts(), goal))
+            d.error("E-CTX-UNPROVEN", c.pos, "调用函数值前须证明上下文 " + PropLogic.render(goal) + "，但编译器没证出（Γ：" +
+                f.allFacts().joinToString("; ") { PropLogic.render(it) } + "）")
+    }
     return ft.ret.substT(tsub)
+}
+
+/** \$n -> 第 n 个实参表达式（函数值调用点上下文的 \$1 in xs 内联为 arg1 in xs） */
+internal fun Checker.substParamRefToArg(e: Expr, args: List<Expr>): Expr = when (e) {
+    is ParamRefExpr -> args.getOrNull(e.index - 1) ?: e
+    is BinExpr -> e.copy(left = substParamRefToArg(e.left, args), right = substParamRefToArg(e.right, args))
+    is UniExpr -> e.copy(operand = substParamRefToArg(e.operand, args))
+    is CallExpr -> e.copy(callee = substParamRefToArg(e.callee, args), args = e.args.map { substParamRefToArg(it, args) })
+    is InstExpr -> e.copy(target = substParamRefToArg(e.target, args), terms = e.terms.map { substParamRefToArg(it, args) })
+    is TupleExpr -> e.copy(items = e.items.map { substParamRefToArg(it, args) })
+    else -> e
 }
 
 /** 类型实参表达式 → 类型（V1：具名类型与实例化应用，如 `Nat` / `List[Nat]`；`(T)=>U` 形态后续） */
@@ -449,7 +520,7 @@ internal fun Checker.typeOfTerm(e: Expr): Type? = when (e) {
 }
 
 /** v2.0：普通（自由函数）调用按**实参首类型**从重载里挑选匹配项；无重载则退回主声明（保留原诊断路径）。
- *  v3.0：先查本模块；未命中再按可见路径（含 stdlib 挂载）跨模块找——Kotlin 默认导入风格，裸名可直接调用 stdlib 函数。
+ *  v3.0：先查本模块；未命中再按可见路径（含 core 标准库挂载）跨模块找——Kotlin 默认导入风格，裸名可直接调用 core 函数。
  *  返回 (函数, 模块路径)；mod 供调用点 moduleHits 留痕。 */
 private fun Checker.findCallable(name: String, argTypes: List<Type>): Pair<FunDecl, String>? {
     findCallableIn(syms, name, argTypes)?.let { return it to modulePath }
@@ -461,7 +532,7 @@ private fun Checker.findCallable(name: String, argTypes: List<Type>): Pair<FunDe
     return null
 }
 
-/** 按目标模块符号表 + 实参首类型挑重载（限定调用 `stdlib.filter(xs, f)` 也须路由到 List 版，
+/** 按目标模块符号表 + 实参首类型挑重载（限定调用 `core.collection.filter(xs, f)` 也须路由到 List 版，
  *  否则主声明先注册（如 Set 版）导致检查阶段选错版本报「List[Nat] 与 Set[T] 不符」）。 */
 private fun Checker.findCallableIn(s: Symbols, name: String, argTypes: List<Type>): FunDecl? {
     val main = s.findFun(name)
@@ -481,15 +552,38 @@ private fun Checker.findCallableIn(s: Symbols, name: String, argTypes: List<Type
  *  类声明签名里含 arity>0 形参应用的那一参下标（如 Functor[F[_]] 的 map 里 `fa: F[A]` 是第 1 位）。
  *  无 kind 形参（普通类型类如 Show）→ -1，调用方按旧「首参即 self」逻辑。 */
 private fun Checker.hktKindParamIndex(name: String): Int {
-    val entries = syms.methods[name] ?: return -1
+    // v4（core 标准库 HKT 类型类）：类型类方法常声明在可见模块（core/collection 等挂载）——
+    // 本模块 methods 表没有时，跨可见模块查 entries 与类声明，否则用户侧 `xs.map(f)` 取不到 kind 位、
+    // 接收者不入参，误报 E-ARITY/E-TYPE-MISMATCH。
+    val entries = syms.methods[name] ?: visibleMethodEntries(name) ?: return -1
     if (entries.isEmpty()) return -1
     // 取任一 impl 条目的类型类，读类声明的成员签名（impl 方法形参已实例化如 List[A]，看不出 kind 位）
     val trait = entries.first().trait
-    val cls = syms.classes[trait] ?: return -1
+    val cls = syms.classes[trait] ?: visibleClass(trait) ?: return -1
     val arity = tpArityOf(cls)
     if (arity.isEmpty() || arity.values.none { it > 0 }) return -1
     val msig = cls.members.firstOrNull { it.name == name } ?: return -1
     return msig.params.indexOfFirst { p -> containsKindApp(syms.expand(p.type), arity) }
+}
+
+/** 跨可见模块按名字找类型类方法 impl 条目（hktKindParamIndex / 方法路径作值用；任一声明模块的表即可）。 */
+internal fun Checker.visibleMethodEntries(name: String): List<MethodEntry>? {
+    if (moduleTree == null) return null
+    for (p in visiblePaths) {
+        val s = allSymbols[p] ?: continue
+        s.methods[name]?.let { return it }
+    }
+    return null
+}
+
+/** 跨可见模块按名字找类型类声明（hktKindParamIndex 用）。 */
+internal fun Checker.visibleClass(trait: String): ClassDecl? {
+    if (moduleTree == null) return null
+    for (p in visiblePaths) {
+        val s = allSymbols[p] ?: continue
+        s.classes[trait]?.let { return it }
+    }
+    return null
 }
 
 /** 类型里是否含 kind 形参应用（NamedType 名是 arity>0 的形参且带实参，如 `F[A]`） */
@@ -527,7 +621,7 @@ private fun Checker.isMethodName(n: String): Boolean =
             s != null && (s.methods.containsKey(n) || n in s.traitMethods)
         })
 
-/** v1.1：是否存在同名自由函数（本模块 / 内置 / 可见模块含 stdlib）——集合方法糖候选（v2.0：含重载） */
+/** v1.1：是否存在同名自由函数（本模块 / 内置 / 可见模块含 core 标准库）——集合方法糖候选（v2.0：含重载） */
 private fun Checker.hasFreeFun(n: String): Boolean =
     syms.findFun(n) != null || syms.funOverloads.containsKey(n) ||
         (moduleTree != null && visiblePaths.any {
@@ -538,7 +632,7 @@ private fun Checker.hasFreeFun(n: String): Boolean =
 /** 构造子调用公共段（决策 46/60，T5）：类型参数由实参推断；限定/普通共用。 */
 internal fun Checker.checkCtorCall(ci: CtorInfo, name: String, c: CallExpr, argTypes: List<Type>, modPath: String): Type {
     // 内置 prelude 构造子（Some/None/null/true/false）在 JS 里是根作用域函数/字面量，无模块前缀——
-    // 否则 stdlib 模块内 `Some(x)` 会被错生成成 `stdlib__Some`（P0 限制：多模块同名构造子取末者）
+    // 否则 core 标准库模块内 `Some(x)` 会被错生成成 `core_collection__Some`（P0 限制：多模块同名构造子取末者）
     if (name !in setOf("Some", "None", "null", "true", "false"))
         moduleHits[c.callee] = moduleJsName(modPath, name)
     // 先算类型参数名与实参推断：字段类型是类型参数（T）时由实参推断，不参与相等检查
@@ -602,6 +696,13 @@ internal fun Checker.checkFnCall(
     fn: FunDecl, name: String, c: CallExpr, f: Frame, pure: Boolean,
     effArgsIn: List<Expr>, effTypesIn: List<Type>, isMethodPath: Boolean,
 ): Type {
+    // core.async 内建运行时层：调用 Channel/Mutex/Flow 的配套 @root 内建即用到对应运行时——
+    // 置位通知 codegen 注入小运行时 class（Channel/Mutex/__flow），与 Channel<T>()/Mutex()/Flow{} 创建点同机制。
+    when (name) {
+        in CHANNEL_BUILTINS -> channelUsed = true
+        in MUTEX_BUILTINS -> mutexUsed = true
+        in FLOW_BUILTINS -> flowUsed = true
+    }
     val tps = tpNamesOf(fn)
     // @list 形参 = Kotlin vararg（吸收剩余位置实参打包成 List）；函数级作用域，供下方 arity 核对复用
     val listIdx = fn.params.indexOfFirst { "list" in it.annotations }
@@ -712,16 +813,27 @@ internal fun Checker.checkFnCall(
         val beforeTsub = tsub.size
         fn.params.forEachIndexed { i, p ->
             if (i >= effTypes.size) return@forEachIndexed
-            val want = syms.expand(p.type).substT(tsub)   // 别名展开（决策 30）
+            val want0 = syms.expand(p.type).substT(tsub)   // 别名展开（决策 30）
+            // 根文档·上下文系统：函数类型上下文里的自由名（如 forEach 的 $1 in xs 之 xs）在调用点
+            // 按形参名 -> 实参内联（envSub 同款），使 lambda 体拿到的是调用点真实表达式。
+            val want = if (want0 is FunType) {
+                val ctx = want0.context
+                if (ctx != null) {
+                    val paramEnv = fn.params.map { it.name }.zip(effArgs).toMap()
+                    want0.copy(context = ctx.map { PropLogic.substExpr(it, paramEnv) })
+                } else want0
+            } else want0
             if (want is FunType) {
                 // T2：lambda 实参带期望类型二次检查（双向推导）；非 lambda 实参宽松放行
                 val a = effArgs[i]
                 if (a is LambdaExpr) {
                     val lt = checkExpr(a, f, pure, want)
-                    // P2（决策 78）：lambda 实际返回类型反推类型参数（map 的 U 只能由 lambda 体推出）
-                    val wr = want.ret
-                    if (lt is FunType && wr is NamedType && wr.name in tps && wr.args.isEmpty() && !lt.ret.isSynthetic())
-                        tsub.putIfAbsent(wr.name, lt.ret)
+                    // P2（决策 78）：lambda 实际返回类型反推类型参数（map 的 U 只能由 lambda 体推出）。
+                    // v4（core 类型类应用位）：flatMap 的 want.ret 是 List[B]（应用形态）——lambda 体 List[Nat]
+                    // 反推 B:=Nat 需走深位合一（extractTpBinding 只绑 vars 内类型变量，与旧 putIfAbsent 同语义）。
+                    // 仅当 lambda 体类型无未解析变量时提取——否则会把 listOf[T] 泄漏的 T 绑进 tsub 污染后续轮次。
+                    if (lt is FunType && !lt.ret.isSynthetic() && !containsUnresolvedTp(lt.ret))
+                        extractTpBinding(want.ret, lt.ret, tps.toSet(), tsub)
                 }
             }
         }
@@ -744,7 +856,10 @@ internal fun Checker.checkFnCall(
             return@forEachIndexed
         }
         if (i >= effTypes.size) return@forEachIndexed
-        val want = syms.expand(p.type).substT(tsub)
+        // HKT（《高阶类型.md》HKT-D1）：kind 形参应用位（`F[A]`）经 unifyInto 已绑 F:=具体构造子（零实参头），
+        // 但 substT 不替换**应用形态**——在此手动套一次头替换（size(s) 的 s: Set[T] 与 Set[T] 核对），
+        // 否则形参保持 F[A] 与实参名义不等，误报 E-TYPE-MISMATCH。
+        val want = applyKindHead(p.type, syms.expand(p.type).substT(tsub), tsub)
         // v2.0 和类型：联合形参（name=(union) 以 ( 开头）也要核对——实参须命中某个变体（成员匹配）。
         if (want !is FunType && !effTypes[i].isSynthetic() && (!p.type.name.startsWith("(") || p.type is UnionType)) {
             // 形参在 substT(tsub) 后仍是**裸类型变量**（泛型形参位，未解出）→ 实参任意放行（与 checkBin 的 isTypeVarForm 一致）
@@ -757,24 +872,19 @@ internal fun Checker.checkFnCall(
             else typeLooseEq(want, effTypes[i])
             if ((want.isNominal() || want is UnionType) && !wantOk) {
                 // 决策 59：Any 形参接受任意实参（受限顶类型）；其余仍须名义相等
-                if (!(want.name == "Any" && want.args.isEmpty())) {
-                    // v2.0 空安全自动解构（AD-1..4）：类型检查**失败**时，若实参是**单字段构造子应用**
-                    // （Some(x)/Ok(x)/Err(x)），解包内部值再匹配——代替子类型；不改表达式类型、单向。
-                    val unwrapped = autoUnwrapCtor(effArgs[i], want)
-                    if (unwrapped != null) {
-                        val newArgs = effArgs.toMutableList()
-                        newArgs[i] = unwrapped
-                        methodSugarArgs[c] = newArgs   // codegen 侧用解包后实参生成 JS（sugarArgs 留痕复用）
-                    } else {
-                        d.error("E-TYPE-MISMATCH", c.pos, "实参 $i ${effTypes[i].render()} 与形参 ${want.render()} 不符")
-                    }
-                }
+                if (!(want.name == "Any" && want.args.isEmpty()))
+                    d.error("E-TYPE-MISMATCH", c.pos, "实参 $i ${effTypes[i].render()} 与形参 ${want.render()} 不符")
             }
         }
     }
 
-    // O2：方法路径的实参替换表只含真实形参（self 不上表）；伴生记录仍用全量 c.args（含 self，作调用痕迹）
-    val envSub = fn.params.map { it.name }.zip(effArgs).toMap()
+    // O2：方法路径的实参替换表只含真实形参（self 不上表）；伴生记录仍用全量 c.args（含 self，作调用痕迹）。
+    // 根文档·内联标识：方法路径的接收者内联为 self（a.f() 的 p<self> 内联为 p<a>）。
+    val envSub = fn.params.map { it.name }.zip(effArgs).toMap().toMutableMap()
+    if (isMethodPath) {
+        val recv = (c.callee as? FieldExpr)?.target ?: c.args.firstOrNull()
+        if (recv != null) envSub["self"] = recv
+    }
     val propNames = fn.theory.filterIsInstance<PropParam>().map { it.name }
     val binding = LinkedHashMap<String, Prop>()
     val explicitProps = instTermsOf(c).mapNotNull { propFromSupply(it) }
@@ -799,14 +909,14 @@ internal fun Checker.checkFnCall(
     }
 
     for (pre in fn.preps) {
-        val goal = substAll(PropLogic.fromExpr(pre), binding, tsub, envSub)
+        val goal = substAll(PropLogic.fromExpr(substThisExpr(substDollarNExpr(pre, fn.params), fn.name)), binding, tsub, envSub)
         if (!proveOrDeep(f.allFacts(), goal))
             d.error("E-PRE-UNPROVEN", c.pos, "调用 `$name` 前必须先证明它的上文 `${PropLogic.render(goal)}`，但编译器没证出。调用前用 `+∵ …` 注入事实，或换个参数让编译器能自动证出")
     }
 
     f.inject(PAtom(name, c.args))   // 伴生记录
     for (post in fn.posts) {
-        val goal = PropLogic.substDollar(substAll(PropLogic.fromExpr(post), binding, tsub, envSub), c)
+        val goal = PropLogic.substDollar(substAll(PropLogic.fromExpr(substThisExpr(substDollarNExpr(post, fn.params), fn.name)), binding, tsub, envSub), c)
         f.inject(goal)
     }
     // P6（决策 82）：带约束泛型函数的调用点——逐个约束解出具体类型并解析字典，codegen 前插字典实参。
@@ -831,35 +941,6 @@ internal fun Checker.checkFnCall(
 private fun Checker.instTermsOf(c: CallExpr): List<Expr> = when (val callee = c.callee) {
     is InstExpr -> callee.terms
     else -> emptyList()
-}
-
-/**
- * v2.0 空安全自动解构（AD-1..4）：实参类型检查**失败**时尝试。
- * 实参是**单字段构造子应用**（Some(x)/Ok(x)/Err(x)，构造子 fields.size==1）且解构后
- * 内部值类型与形参 want 松弛匹配 → 返回解包的内部表达式；否则 null（保持原错误）。
- * 仅作用于**字面量构造子**调用（不含变量引用——AD-4 单向、不穿透边界，变量形态后续迭代）。
- */
-internal fun Checker.autoUnwrapCtor(arg: Expr, want: Type): Expr? {
-    val ce = arg as? CallExpr ?: return null
-    val cname = (ce.callee as? NameRef)?.name ?: return null
-    val info = syms.ctors[cname] ?: return null
-    if (info.fields.size != 1) return null           // AD-2：仅单字段构造子
-    if (ce.args.size != 1) return null
-    val inner = ce.args[0]
-    // 规避：名字位是局部变量构造（如 `var Some = ...`），仅构造函数名字引用才解构；且不穿透函数边界
-    // （构造子全局登记，无局部遮蔽概念，这里直接按登记判定）。
-    // 解构后内部值类型与 want 松弛匹配（数值升格/同名义）才放行——避免 `Some(Str)` 传给 Rat 形参。
-    val innerT = typeOf(inner)
-    if (!innerT.isSynthetic() && want.isNominal() && !typeLooseEq(innerT, want)) return null
-    return inner
-}
-
-/** 表达式类型的最小求值：仅用于自动解构的内层类型预判。 */
-private fun Checker.typeOf(e: Expr): Type = when (e) {
-    is IntLit -> namedT("Nat", emptyList())
-    is FloatLit -> namedT("Rat", emptyList())
-    is StrLit -> namedT("Str", emptyList())
-    else -> syntheticT("解构内层")
 }
 
 /**
@@ -918,7 +999,7 @@ private fun Checker.checkQualifiedCall(q: QChain, c: CallExpr, f: Frame, pure: B
     }
     return when (sym.kind) {
         QSymKind.FUN -> {
-            // 跨模块限定调用：按目标模块符号表 + 实参首类型挑重载（`stdlib.filter(xs, f)` 路由到 List 版，而非先注册的 Set/Optional 版）
+            // 跨模块限定调用：按目标模块符号表 + 实参首类型挑重载（`core.collection.filter(xs, f)` 路由到 List 版，而非先注册的 Set/Optional 版）
             val fn = findCallableIn(sym.syms, sym.name, argTypes)
                 ?: run { d.error("E-UNBOUND-NAME", c.pos, "调用模块 ${node.absPath.ifEmpty { "/" }} 中无函数 ${sym.name}"); return syntheticT("限定调用") }
             moduleHits[c.callee] = jsOverloadName(node.absPath, fn)
@@ -1000,9 +1081,17 @@ internal fun substPropTerms(p: Prop, sub: Map<String, Expr>): Prop = when (p) {
     else -> p
 }
 
-/** 原子项里的 NameRef 浅替换（NameRef 直接换；其他表达式原样）。 */
-private fun subExprTerm(t: Expr, sub: Map<String, Expr>): Expr =
-    if (t is NameRef && sub.containsKey(t.name)) sub[t.name]!! else t
+/** 原子项里的名字深替换（NameRef 直接换；复合表达式递归穿透内层）。 */
+private fun subExprTerm(t: Expr, sub: Map<String, Expr>): Expr = when (t) {
+    is NameRef -> sub[t.name] ?: t
+    is BinExpr -> t.copy(left = subExprTerm(t.left, sub), right = subExprTerm(t.right, sub))
+    is UniExpr -> t.copy(operand = subExprTerm(t.operand, sub))
+    is CallExpr -> t.copy(callee = subExprTerm(t.callee, sub), args = t.args.map { subExprTerm(it, sub) })
+    is InstExpr -> t.copy(target = subExprTerm(t.target, sub), terms = t.terms.map { subExprTerm(it, sub) })
+    is FieldExpr -> t.copy(target = subExprTerm(t.target, sub))
+    is SymbolCallExpr -> t.copy(args = t.args.map { subExprTerm(it, sub) })
+    else -> t
+}
 
 /** 命题树是否引用字段名 name（原子项里出现同名 NameRef，含复合表达式递归）。 */
 internal fun propHasName(p: Prop, name: String): Boolean = when (p) {

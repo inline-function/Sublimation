@@ -73,7 +73,7 @@ class LspAnalysis {
         // 基本类型（编译器内建）
         for (t in BASE_TYPES.sorted()) add(t, "struct", t, "内建类型 " + t)
 
-        // stdlib 容器/代数数据类型（定义在 stdlib/*.subl）
+        // stdlib 容器/代数数据类型（core 统一标准库 core/collection/*.subl）
         for (t in STDLIB_TYPES.sorted()) add(t, "struct", t, "标准库类型 " + t)
 
         // 构造子（enum / 容器）
@@ -86,9 +86,9 @@ class LspAnalysis {
             add(name, "fun", "fun " + name + funSignature(fn), BUILTIN_FUN_DOCS[name])
         }
 
-        // 可选 stdlib 文件：解析后灌入顶层声明签名
+        // 可选 core 标准库文件（包目录，递归收集；core 统一标准库位于 test/core）：解析后灌入顶层声明签名
         if (stdlibDir != null && stdlibDir.isDirectory) {
-            for (f in stdlibDir.listFiles().orEmpty().filter { it.name.endsWith(".subl") }) {
+            for (f in stdlibDir.walkTopDown().filter { it.isFile && it.name.endsWith(".subl") }.sortedBy { it.path }) {
                 try {
                     val src = f.readText()
                     val ast = parseSource(src, f.name)
@@ -341,10 +341,10 @@ class LspAnalysis {
             is ByStmt -> s.props.forEach { walkExpr(it, w, add) }
             is UncheckedStmt -> walkStmt(s.inner, w, add)
             is ExprStmt -> walkExpr(s.expr, w, add)
-            is BecauseStmt -> walkExpr(s.prop, w, add)
-            is ThereforeStmt -> walkExpr(s.prop, w, add)
-            is PlusBecauseStmt -> walkExpr(s.prop, w, add)
-            is ExistIntroStmt -> { walkExpr(s.witness, w, add); walkExpr(s.prop, w, add) }
+            is BTSStmt -> { walkExpr(s.form, w, add); s.premises.forEach { walkExpr(it, w, add) }; walkExpr(s.conclusion, w, add) }
+            is WhenPropStmt -> { walkExpr(s.disjunction, w, add); s.arms.forEach { a -> walkExpr(a.condition, w, add); a.body.forEach { walkStmt(it, w, add) } } }
+            is StrategyStmt -> walkExpr(s.goal, w, add)
+            is ExistIntroStmt -> { s.witnesses.forEach { walkExpr(it, w, add) }; walkExpr(s.prop, w, add) }
             is ExistsElimStmt -> {
                 add(s.name, "var", s.pos, "var " + s.name)
                 walkExpr(s.prop, w, add)
@@ -369,14 +369,8 @@ class LspAnalysis {
             is NameRef -> w.refs += (e.name to e.pos)
             is BinExpr -> { walkExpr(e.left, w, add); walkExpr(e.right, w, add) }
             is UniExpr -> walkExpr(e.operand, w, add)
-            is ElvisExpr -> { walkExpr(e.left, w, add); walkExpr(e.right, w, add) }
-            is SafeCallExpr -> {
-                w.refs += (e.name to e.pos)
-                walkExpr(e.target, w, add)
-                e.args.forEach { walkExpr(it, w, add) }
-            }
-            is CastExpr -> walkExpr(e.target, w, add)
             is TypeTestExpr -> walkExpr(e.target, w, add)
+        is IsPatExpr -> walkExpr(e.target, w, add)   // ifis 哨兵（正常经 parseIf 脱糖为 when，此处保守遍历）
             is TaskExpr -> walkExpr(e.body, w, add)
             is FlowExpr -> walkExpr(e.body, w, add)
             is CallExpr -> {
@@ -862,7 +856,7 @@ class LspAnalysis {
         Kind.PLUS, Kind.MINUS, Kind.STAR, Kind.SLASH, Kind.PERCENT,
         Kind.ASSIGN, Kind.EQ, Kind.NEQ, Kind.LE, Kind.GE, Kind.RANGE,
         Kind.ARROW, Kind.DARROW, Kind.IFF, Kind.AMP, Kind.PIPE, Kind.BANG,
-        Kind.QUEST, Kind.SAFECALL, Kind.ELVIS, Kind.LT, Kind.GT,
+        Kind.LT, Kind.GT,
         Kind.FORALL, Kind.EXISTS, Kind.EXISTS1, Kind.LAND, Kind.LOR,
         Kind.LNOT, Kind.IMPLIES, Kind.EQUIV, Kind.TOP, Kind.BOT,
         Kind.BECAUSE, Kind.THEREFORE, Kind.PLUS_BECAUSE -> 9
@@ -1601,14 +1595,11 @@ class LspAnalysis {
             "if" to "if (\${1:condition}) { \${0} }",
             "else" to "else { \${0} }",
             "when" to "when (\${1:x}) { \${0} }",
-            "for" to "for (\${1:x} in \${2:xs}) { \${0} }",
             "return" to "return \${0}",
             "unchecked" to "unchecked.\${0}",
             "is" to "is \${0}",
             "by" to "by \${0}",
-            "in" to "in \${0}",
         )
-
         // ───────── prelude 静态数据 ─────────
 
         /** typeDefinition 目标成员类型（类型声明 varieties） */

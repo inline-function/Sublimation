@@ -24,7 +24,7 @@ class E2ETest {
         val chk = Checker(ast)
         val bag = chk.run()
         assertEquals(false, bag.hasError, "语义检查应通过，实际:\n${bag.report()}")
-        val js = JsCodeGen().generate(ast, chk.dictHits, chk.moduleHits, chk.consHits, chk.dictSubHits, chk.namedArgOrder, chk.methodSugarArgs, chk.asyncAwaitHits, chk.channelUsed, chk.mutexUsed, chk.atomicUsed, chk.flowUsed, chk.rangeHits, chk.rangeUsed, chk.receiveSmartHits, chk.varUnwrapHits, chk.funBodyUnwrapHits, chk.flowEmitHits, chk.hktKindPosHits, chk.funRefTargets, chk.funRefFree.keys, chk.lambdaDestructKeys, chk.delegatedImpls, chk.deepCopyHits)
+        val js = JsCodeGen().generate(ast, chk.dictHits, chk.moduleHits, chk.consHits, chk.dictSubHits, chk.namedArgOrder, chk.methodSugarArgs, chk.asyncAwaitHits, chk.channelUsed, chk.mutexUsed, chk.atomicUsed, chk.flowUsed, chk.rangeHits, chk.rangeUsed, chk.receiveSmartHits, chk.flowEmitHits, chk.hktKindPosHits, chk.funRefTargets, chk.funRefFree.keys, chk.lambdaDestructKeys, chk.delegatedImpls, chk.deepCopyHits)
         val f = File.createTempFile("subl-e2e-", ".js")
         f.writeText(js)
         return try {
@@ -69,6 +69,48 @@ class E2ETest {
     }
 
     @Test
+    fun `ifis 智能解构 Some`() {
+        // `if (o is Some(e)) e else 0`：脱糖为 when，枚举/结构体/元组解构通用
+        assumeTrue(nodeAvailable())
+        val src = "fun describe(o: Optional[Nat]): Nat = if (o is Some(e)) e else 0\n" +
+            "fun main() { unchecked print(describe(Some(42)))\nunchecked print(describe(None)) }"
+        assertEquals("42\n0", run(src))
+    }
+
+    @Test
+    fun `ifis 分支内提前 return 退出函数`() {
+        // 语句位展平（决策 75 的 when 版）：匹配分支的 return 真正退出函数，不匹配落穿到兜底 return
+        assumeTrue(nodeAvailable())
+        val src = "fun first(o: Optional[Nat]): Nat { if (o is Some(e)) { return e }\nreturn 0 }\n" +
+            "fun main() { unchecked print(first(Some(7)))\nunchecked print(first(None)) }"
+        assertEquals("7\n0", run(src))
+    }
+
+    @Test
+    fun `ifis 结构体与嵌套解构`() {
+        assumeTrue(nodeAvailable())
+        val src = "struct Point(x: Nat, y: Nat)\n" +
+            "fun sumXY(p: Point): Nat = if (p is Point(a, b)) a + b else 0\n" +
+            "fun deep(o: Optional[Optional[Nat]]): Nat = if (o is Some(is Some(v))) v else 0\n" +
+            "fun main() { unchecked print(sumXY(Point(3, 4)))\nunchecked print(deep(Some(Some(9)))) }"
+        assertEquals("7\n9", run(src))
+    }
+
+    @Test
+    fun `ifis 在 lambda 体内作语句`() {
+        // lambda 体的语句位 ifis（非尾表达式）：lambdaWhenLines 展平——分支语句在 lambda 内执行
+        assumeTrue(nodeAvailable())
+        val src = "fun apply(o: Optional[Nat], f: (Optional[Nat]) => Null): Null = f(o)\n" +
+            "fun main() {\n" +
+            "  @mut var log = \"\"\n" +
+            "  apply(Some(6), { x -> if (x is Some(v)) { log = log + toStr(v) } else { log = log + \"none\" } })\n" +
+            "  apply(None, { x -> if (x is Some(v)) { log = log + toStr(v) } else { log = log + \"none\" } })\n" +
+            "  unchecked print(log)\n" +
+            "}"
+        assertEquals("6none", run(src))
+    }
+
+    @Test
     fun `Optional 解构与默认值`() {
         assumeTrue(nodeAvailable())
         val src = "fun u(o: Optional[Nat], d: Nat): Nat = when(o) { is Some(x) -> x  None -> d }\n" +
@@ -77,13 +119,13 @@ class E2ETest {
     }
 
     @Test
-    fun `rootdoc 空安全 as 安全转换关键词`() {
-        assumeTrue(nodeAvailable())
-        // root doc《空安全系统》：`o as T` 是内置关键词——若 o 是 T 的实例则转换成功（Some(o)），否则返回 None。
-        // 与 `a >: T` 等价（parser 表达式层 as / >: 双分支，语义一致：__isa 结构判定）。
-        val src = "fun f(n: Nat): Nat = when(n as Nat) { is Some(x) -> x  None -> 0 }\n" +
-            "@impure fun main() { unchecked print(f(42))\nunchecked print(f(0)) }"
-        assertEquals("42\n0", run(src))
+    fun `空安全 as 安全转换已移除`() {
+        // 空安全语法移除：`o as T` 不再是内置安全转换关键词——as 回归普通标识符，
+        // `n as Nat` 按中缀糖解析为 as(n, Nat)，因 as 未定义而报 E-UNBOUND-NAME。
+        val src = "fun f(n: Nat): Nat = n as Nat\nfun main() { unchecked f(42) }"
+        val ast = parseSource(src, "e2e.subl")
+        val bag = Checker(ast).run()
+        assertEquals(true, bag.hasError, "as 不再是安全转换关键字，应报未定义错误，实际:\n${bag.report()}")
     }
 
     @Test
@@ -376,15 +418,14 @@ class E2ETest {
     @Test
     fun `P10 浮点除法与平方根近似`() {
         assumeTrue(nodeAvailable())
-        // §12.4 验收①②：`print(1.0 / 3.0)` 近似、`print(sqrt(2.0))` 平方根
+        // §12.4 验收①②：`print(1.0 / 3.0)` 近似——sqrt 已从内建改为 stdlib 证明期函数，运行时不再参与
         val src = "@impure fun main() {\n" +
             "print(1.0 / 3.0)\n" +
-            "print(sqrt(2.0))\n" +
             "print(floor(2.7))\n" +
             "print(pow(2.0, 10.0))\n" +
             "print(toRat(3))\n" +
             "}"
-        assertEquals("0.3333333333333333\n1.4142135623730951\n2\n1024\n3", run(src))
+        assertEquals("0.3333333333333333\n2\n1024\n3", run(src))
     }
 
     @Test

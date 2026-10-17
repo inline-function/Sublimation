@@ -1,6 +1,7 @@
 package sugared.functor
 
 import sugared.functor.ast.AstPrinter
+import sugared.functor.annotationproc.ProcessorPipeline
 import sugared.functor.ast.tokenLine
 import sugared.functor.checker.MultiModule
 import sugared.functor.checker.checkFile
@@ -19,7 +20,9 @@ const val USAGE = """sublimationc — Sublimation 编译器（M1 词法 + M2 语
   tokens <file.subl>       打印 token 流（含邻接标记）
   check <file.subl>        语义分析（弥散/证明义务/纯度/可变性/impl/when 穷尽），诊断分级输出
   check <file.subl> -v     同时输出补充级诊断（类型推导结果等）
-  compile <file.subl> [-o out.js]   语义通过后生成 JS（默认打印到标准输出）
+  -p <processor.subs|dir>  附加注解处理器（可多次）；目录装载其全部 .subs
+            处理器即 Sublimation 脚本（文件名=处理器名=关注的注解），编译时由解释器解释执行
+  compile <file.subl> [-o out.js] [-p ...]   语义通过后生成 JS（默认打印到标准输出）
   run-script <file.subs> [<file2.subs> ...]  脚本模式解释执行：顶层语句直接运行（无需 main）；多条脚本互不共享
   run-script <dir>            运行目录下所有 .subs 脚本（每个独立运行）；无 .subs 时按 .subl 工程(main)执行
   explain <CODE>           打印诊断码的含义与修复建议（如 E-TYPE-MISMATCH / W-NON-EXHAUSTIVE）
@@ -64,11 +67,8 @@ val EXPLAIN: Map<String, String> = mapOf(
     "D-TYPE-INFERRED" to "补充：变量类型是编译器推导出来的。你没写类型标注时，编译器自动推断（如 var x = 1 → x 是 Nat）。用 -v 查看所有补充。",
     "D-METHOD-SUGAR" to "补充：方法糖展开。`.f(…)` 是自由函数 `f(o, …)` 的简写，编译器自动把它展开成自由函数调用。",
     "D-AUTO-AWAIT" to "补充：异步调用自动 await。编译器检测到 @async 函数调用，会自动等待它完成（不用写 await）。",
-    "D-IMPLICIT-UNWRAP" to "补充：Some 隐式解包。`Some(x)` 在需要 T 类型的位置会自动转为内部的 x。",
     "D-DEEP-COPY" to "补充：发生了深拷贝。绑定/赋值涉及 @mut 类型时，编译器会自动复制一份，新变量是独立副本（改它不影响源）。",
     "D-NAT-PROP" to "补充：注入了自然命题。Nat 类型的变量自动成立 n ≥ 0，可直接用于自动证明。",
-    "D-SAFE-CALL" to "补充：安全调用展开。`?.f()` 在接收者为 None 时短路，整个表达式返回 None。",
-    "D-ELVIS" to "补充：Elvis 替换展开。`a ?: b` 在 a 为 None 时取 b 作为兜底值。",
     "D-INFIX" to "补充：中缀糖展开。`a f b` 与 `f(a, b)` 等价，编译器把它转成自由函数调用。",
     "D-TRAILING" to "补充：尾随 lambda。`f(a) { … }` 等价 `f(a, { … })`，lambda 作为最后一个实参传入。",
     "D-BECAUSE-PROVED" to "补充：命题成立、已注入上下文。`+…` 引入的事实会进入后续证明的上下文。",
@@ -116,6 +116,9 @@ val EXPLAIN: Map<String, String> = mapOf(
     "E-PARSE-SETTINGS" to "settings 文件语法错：模块的 `.settings` 文件只支持 `mount <路径> [as <别名>]` 一行一个指令。检查拼写与格式。",
     "E-PROCESSOR-ERROR" to "注解处理器执行出错：自定义注解处理器在运行时抛出了异常。检查处理器实现的健壮性。",
     "E-PROCESSOR-LOOP" to "注解处理器循环不收敛：处理器反复改写代码超过最大轮数仍未稳定。检查处理器是否在条件不满足时无限自我触发。",
+    "E-PROCESSOR-SCRIPT" to "注解处理器脚本主动报错：处理器脚本里调了 processorError(msg)。检查脚本里报错的分支条件——通常是被处理的注解用法不符合处理器预期。",
+    "W-PROCESSOR-SCRIPT" to "注解处理器脚本警告：脚本调了 processorWarn(msg)。这是处理器给作者的提示，不影响编译通过。",
+    "W-PROCESSOR-EDIT" to "处理器的注解编辑没命中目标：脚本想给某个结构体/函数/字段加减注解，但按名字找不到目标。检查脚本里的名字是否拼错了（编辑不存在的名字只报警告，其余编辑照常生效）。",
 )
 
 fun main(args: Array<String>) {
@@ -135,6 +138,22 @@ fun main(args: Array<String>) {
     }
     if (args.size < 2) { System.err.println(USAGE); exitProcess(2) }
     val verbose = args.contains("-v")
+    // -p <路径>（可多次）：附加注解处理器脚本（.subs 文件或目录）
+    val processorPaths = ArrayList<java.io.File>()
+    run {
+        val rest = args.toList()
+        var i = 1
+        while (i < rest.size) {
+            if (rest[i] == "-p" || rest[i] == "--processor") {
+                if (i + 1 >= rest.size) { System.err.println("[错误] -p 后面要跟处理器路径"); exitProcess(2) }
+                val f = java.io.File(rest[i + 1])
+                if (!f.exists()) { System.err.println("[错误] 注解处理器路径不存在: ${rest[i + 1]}"); exitProcess(2) }
+                processorPaths += f
+                i += 2
+            } else i++
+        }
+    }
+    val extraProcessors = ProcessorPipeline.loadProcessorFiles(processorPaths)
     try {
         // 脚本模式：支持多条脚本路径 / 一个目录，每个 .subs 独立执行（互不共享，无需 main）
         if (cmd == "run-script") {
@@ -150,7 +169,13 @@ fun main(args: Array<String>) {
                 exitProcess(2)
             }
             val mm = MultiModule(path)
+            // 注解处理器先于 B/C 检查跑（脚本模式解释执行）：变换后的模块才是检查对象
+            //（如 @allMut 引入的 @mut）；-p 追加的处理器也一并装载。processModules 内部统一重跑阶段 A/B/C
+            val loadErrs = ProcessorPipeline.loadErrorsToBag(extraProcessors)
+            if (loadErrs.hasError) { println(loadErrs.report()); System.err.println("[错误] 注解处理器装载失败"); exitProcess(1) }
+            val pbag = mm.processModules(ProcessorPipeline.builtinModuleTransformer(extraProcessors))
             val bag = mm.checkAll()
+            bag.absorb(pbag)
             val report = bag.report(includeSupplement = verbose)
             if (report.isNotEmpty()) println(report)
             if (bag.hasError) {
@@ -177,10 +202,14 @@ fun main(args: Array<String>) {
             "tokens" -> Lexer(src, path.name).tokenize().forEach { println(tokenLine(it)) }
             "check" -> {
                 val pr = parseSourceWithNotes(src, path.name)
-                val ast = pr.ast
+                var ast = pr.ast
+                // 注解处理器（脚本模式解释执行）先跑：变换后的 AST 才是检查对象（与 compile 同序）
+                val (ast2, pbag) = ProcessorPipeline.runBuiltin(ast, extraProcessors)
+                if (ast2 !== ast) ast = ast2
                 val bag = checkFile(ast)
                 for ((p0, m0) in pr.hints) bag.hint("H-ARITH-PRECEDENCE", p0, m0)
                 for ((c0, p1, m1) in pr.supplements) bag.supplement(c0, p1, m1)
+                bag.absorb(pbag)
                 val out = bag.report(includeSupplement = verbose, source = src)   // 报错增强：源码片段上下文
                 if (out.isNotEmpty()) println(out)
                 if (bag.hasError) { System.err.println("[错误] 语义检查未通过"); exitProcess(1) }
@@ -188,15 +217,21 @@ fun main(args: Array<String>) {
             }
             "compile" -> {
                 val pr = parseSourceWithNotes(src, path.name)
-                val ast = pr.ast
+                var ast = pr.ast
+                // 注解处理器（脚本模式解释执行）先跑：变换后的 AST 才是检查对象（@allMut → @mut 等）
+                val (ast2, pbag) = ProcessorPipeline.runBuiltin(ast, extraProcessors)
+                if (ast2 !== ast) ast = ast2
                 val chk = sugared.functor.checker.Checker(ast)
                 val bag = chk.run()
                 for ((p0, m0) in pr.hints) bag.hint("H-ARITH-PRECEDENCE", p0, m0)
                 for ((c0, p1, m1) in pr.supplements) bag.supplement(c0, p1, m1)
+                bag.absorb(pbag)
                 val out = bag.report(includeSupplement = verbose, source = src)   // 报错增强：源码片段上下文
                 if (out.isNotEmpty()) System.err.println(out)
                 if (bag.hasError) { System.err.println("[错误] 语义检查未通过，拒绝生成 JS"); exitProcess(1) }
-                val js = generateSingle(chk, ast)   // 单文件：留痕字段经 compiler 模块公开入口传递（跨模块 internal 边界）
+                // 处理器改了 AST → 重建带留痕的 Checker；否则沿用原 Checker
+                val finalChk = if (ast !== pr.ast) sugared.functor.checker.Checker(ast).also { it.run() } else chk
+                val js = generateSingle(finalChk, ast)   // 单文件：留痕字段经 compiler 模块公开入口传递（跨模块 internal 边界）
                 val oi = args.indexOf("-o")
                 if (oi >= 0 && oi + 1 < args.size) {
                     val target = File(args[oi + 1])

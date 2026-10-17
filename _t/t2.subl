@@ -1,0 +1,3 @@
+fun any[F[_]: Foldable, A](fa: F[A], p: (A) => Bool): Bool
+    <$ ↔ ∃a. a ∈ fa ∧ p(a)>
+    = fold(fa, false, { acc, x => acc || p(x) })

@@ -62,8 +62,8 @@ class Checker(
     internal val methodSugarArgs = java.util.IdentityHashMap<CallExpr, List<Expr>>()
     /** root doc《副作用与可变性控制》：可变视图绑定深拷贝留痕（绑定语句 → 需拷贝）。codegen 依此包 __dc */
     internal val deepCopyHits = java.util.IdentityHashMap<Node, Boolean>()
-    /** P9：stdlib 数组化 List 方法调用留痕（调用点 → 方法名）。codegen 据此把 map/size/… 映射成 JS 原生数组方法，
-     *  不再在 codegen 里靠 `stdlib__` 前缀字符串比较猜测。 */
+    /** P9：core 标准库数组化 List 方法调用留痕（调用点 → 方法名）。codegen 据此把 map/size/… 映射成 JS 原生数组方法，
+     *  不再在 codegen 里靠模块前缀字符串比较猜测。 */
     internal val listMethodHits = java.util.IdentityHashMap<CallExpr, String>()
     /** P9（决策 44，用户授权 Max 倾向）：递归停机上下文——当前函数名/形参名/解构血缘 */
     internal var curFunName: String? = null
@@ -99,10 +99,6 @@ class Checker(
     internal var rangeUsed = false
     /** v2.0 异步（CH-5）：receive 智能转换留痕（CallExpr → 是否为本地未关闭通道），codegen 据此解包 */
     internal val receiveSmartHits = java.util.IdentityHashMap<CallExpr, Boolean>()
-    /** v2.0 空安全（root doc《空安全系统》：变量位 Some→T 隐式转换）：var 声明初值被自动解构（VarStmt → 解构后表达式） */
-    val varUnwrapHits = java.util.IdentityHashMap<VarStmt, Expr>()
-    /** v2.0 空安全：函数表达式体 `fun f(): T = Some(x)` 被解构（表达式体 → 解构后表达式） */
-    val funBodyUnwrapHits = java.util.IdentityHashMap<Expr, Expr>()
     /** v2.0 异步（root doc《异步》）：Flow 冷流 -- 当前 Flow 体的 emit 值类型栈（嵌套 Flow 用栈） */
     internal val flowElemStack = ArrayDeque<MutableList<Type>>()
     /** v2.0 异步（root doc《异步》）：Flow 体的 emit 调用点（CallExpr -> true），codegen 据此生成 yield */
@@ -147,7 +143,7 @@ class Checker(
     internal val lambdaRetTypes = ArrayList<Type>()
 
     /** P6（决策 82）：类型名在可见模块中可解析（跨模块类型引用——裸名 `List`/`Result` 在类型位置可用，
- *  不只是 `stdlib.List` 限定形态）。P5 只补了 when 模式的构造子/枚举，这里补类型位置本身。 */
+ *  不只是 `core.collection.List` 限定形态）。P5 只补了 when 模式的构造子/枚举，这里补类型位置本身。 */
     internal fun typeVisible(name: String): Boolean {
         if (syms.baseOf(namedT(name)) != null) return true
         if (moduleTree == null) return false
@@ -257,7 +253,7 @@ class Checker(
         return substDollarNExpr(e, params)
     }
 
-    private fun substDollarNExpr(e: Expr, params: List<Param>): Expr = when (e) {
+    internal fun substDollarNExpr(e: Expr, params: List<Param>): Expr = when (e) {
         is ParamRefExpr -> params.getOrNull(e.index - 1)?.let { NameRef(it.name) } ?: e
         is BinExpr -> e.copy(left = substDollarNExpr(e.left, params), right = substDollarNExpr(e.right, params))
         is UniExpr -> e.copy(operand = substDollarNExpr(e.operand, params))
@@ -268,7 +264,7 @@ class Checker(
     }
 
     /** 根文档·this：上下文中 `this` 指代函数本体——内联替换为函数名（`p<this>` → `p<f>`）。 */
-    private fun substThisExpr(e: Expr, fnName: String): Expr = when (e) {
+    internal fun substThisExpr(e: Expr, fnName: String): Expr = when (e) {
         is NameRef -> if (e.name == "this") NameRef(fnName) else e
         is BinExpr -> e.copy(left = substThisExpr(e.left, fnName), right = substThisExpr(e.right, fnName))
         is UniExpr -> e.copy(operand = substThisExpr(e.operand, fnName))
@@ -276,8 +272,6 @@ class Checker(
         is InstExpr -> e.copy(target = substThisExpr(e.target, fnName), terms = e.terms.map { substThisExpr(it, fnName) })
         is TupleExpr -> e.copy(items = e.items.map { substThisExpr(it, fnName) })
         is FieldExpr -> e.copy(target = substThisExpr(e.target, fnName))
-        is ElvisExpr -> e.copy(left = substThisExpr(e.left, fnName), right = substThisExpr(e.right, fnName))
-        is SafeCallExpr -> e.copy(target = substThisExpr(e.target, fnName), args = e.args.map { substThisExpr(it, fnName) })
         is StructCtorExpr -> e.copy(assigns = e.assigns.map { it.first to substThisExpr(it.second, fnName) })
         is LambdaExpr -> e.copy(body = substThisExpr(e.body, fnName))
         else -> e
@@ -289,7 +283,9 @@ class Checker(
         if (pure && fn.params.any { syms.expand(it.type) is MutType })
             d.error("E-IMPURE-REQUIRED", fn.pos, "函数 " + fn.name + " 的参数是 @mut 可变类型，必须给函数标上 @impure") 
         val f = Frame(null)
-        val tps = tpNamesOf(fn)
+        // HKT-S6 + 标准库简写：impl 成员的签名可引用 self 的 kind 占位（经典 `List[a]` 的 a、简写 `Result[_, E]` 的 E）——
+        // 并入成员 theory 名字集合，供 checkTypeResolvable 放行（成员自带 theory 在前，占位追加）。
+        val tps = tpNamesOf(fn) + (if (selfT != null) selfPlaceholders(selfT) else emptyList())
         // P9（决策 44）：设置递归停机上下文（函数名/形参/解构血缘按函数隔离）
         val savedFunName = curFunName; val savedFunParams = curFunParams; val savedFunTps = curFunTps; val savedStructSub = structSub
         val savedFunAsync = curFunAsync
@@ -396,18 +392,15 @@ class Checker(
             d.error("E-NON-SEALED-MATCH", body.pos,
                 "函数 ${fn.name} 的返回值来自 when 表达式，但分支不穷尽（值可能为空 `Null`）。补全所有构造子分支，或加 `else` 兜底")
         else if (!t.isSynthetic() && !typeLooseEq(t, effRt) &&
-            !(effRt.name == "Null" && body is BlockExpr)) {
-            // v2.0 空安全（root doc《空安全系统》）：表达式体 `fun f(): T = Some(x)`——初值隐式解构（单向、不穿透函数边界）
-            val bodyUnwrap = if (body !is BlockExpr) autoUnwrapCtor(body, effRt) else null
-            if (bodyUnwrap != null) {
-                // 体被解构：登记 codegen 用解构后表达式；体类型按声明返回类型（effRt）
-                funBodyUnwrapHits[body] = bodyUnwrap
-                d.supplement("D-IMPLICIT-UNWRAP", body.pos, "Some 隐式解包为 ${effRt.render()}（`Some(x)` 自动转为 x）")
-            } else {
-                d.error("E-TYPE-MISMATCH", body.pos, "函数 ${fn.name} 声明返回 ${effRt.render()}，但函数体是 ${t.render()}，两边不一致")
-            }
-        }
+            !(effRt.name == "Null" && body is BlockExpr))
+            d.error("E-TYPE-MISMATCH", body.pos, "函数 ${fn.name} 声明返回 ${effRt.render()}，但函数体是 ${t.render()}，两边不一致")
         val tail = dollarOf(body)
+        // @axiom（标准库用，《基本库实现文档》的 @axiom 语义）：签名即公理——下文由作者声明、编译器信任，
+        // 不做自动证明义务检查（函数体仍正常类型检查与代码生成；上文仍在调用点强制证明）。
+        if ("axiom" in fn.annotations) {
+            if (postRewritten.isNotEmpty())
+                d.supplement("D-AXIOM-POST", body.pos, "函数 ${fn.name} 标了 @axiom：下文签名即公理（编译器信任，不做自动证明）")
+        } else
         for (post in postRewritten) {
             val goal = PropLogic.substDollar(PropLogic.fromExpr(post), tail)
             if (!proveOrDeep(f.allFacts(), goal))
@@ -433,8 +426,39 @@ class Checker(
     /** W-UNUSED：`_` 前缀名字视为有意的未使用，不警告；用法沿父链上溢标记（子作用域用到即算用过） */
     private fun emitWUnused(f: Frame, fn: FunDecl) {
         val rootVars = f.vars.keys
+        // 命题（证明义务/前提/结论/∃ 见证/@subst 目标）中出现的变量也算使用：
+        // 收集本函数帧子树全部事实里的自由名，与 isUsed 同等待遇。
+        val propNames = HashSet<String>()
+        fun collectE(e: Expr) { when (e) {
+            is NameRef -> propNames.add(e.name)
+            is BinExpr -> { collectE(e.left); collectE(e.right) }
+            is UniExpr -> collectE(e.operand)
+            is CallExpr -> { collectE(e.callee); e.args.forEach { collectE(it) } }
+            is InstExpr -> { collectE(e.target); e.terms.forEach { collectE(it) } }
+            is FieldExpr -> collectE(e.target)
+            is FunRefExpr -> collectE(e.target)
+            is SymbolCallExpr -> e.args.forEach { collectE(it) }
+            else -> {}
+        } }
+        fun collectP(p: Prop) { when (p) {
+            // 声明形（x = 初值 / x : T / x ≥ 0）首项是裸名——那是声明自己，不算使用，跳过
+            is PAtom -> if (p.head in setOf("=", "==", ":", ">=") && p.terms.firstOrNull() is NameRef)
+                p.terms.drop(1).forEach { collectE(it) }
+            else p.terms.forEach { collectE(it) }
+            is PNot -> collectP(p.p)
+            is PAnd -> { collectP(p.a); collectP(p.b) }
+            is POr -> { collectP(p.a); collectP(p.b) }
+            is PImp -> { collectP(p.a); collectP(p.b) }
+            is PIff -> { collectP(p.a); collectP(p.b) }
+            is PForall -> collectP(p.body)
+            is PExists -> collectP(p.body)
+            is PExists1 -> collectP(p.body)
+            else -> {}
+        } }
+        fun walkFrame(fr: Frame) { fr.facts.forEach { collectP(it) }; fr.children.forEach { walkFrame(it) } }
+        walkFrame(f)
         for ((name, posStr) in f.auditedDecls()) {
-            if (f.isUsed(name) || name.startsWith("_")) continue
+            if (f.isUsed(name) || name.startsWith("_") || name in propNames) continue
             val kind = if (name in rootVars) "参数 $name" else "变量 $name"
             d.warn("W-UNUSED", posStr, "$kind 声明后从未使用（可加 _ 前缀抑制）")
         }
@@ -514,23 +538,9 @@ class Checker(
                     val want = syms.expand(declType)   // 别名展开（决策 30）
                     // v1.1：标注类型即变量类型（Kotlin 语义）；unify 只做兼容性检查，
                     // 避免泛型初值（如 setEmpty(): Set[T]）把未绑定类型参数残留进变量类型
-                    var resolved = false
-                    if (TypeInfer.unify(t, want) == null && !compatibleView(t, want)) {
-                        // v2.0 空安全（root doc《空安全系统》：Some[T] 可直接赋值给 T 变量，隐式转换）——
-                        // 变量位自动解构（AD-5）：初值是单字段构造子（Some(x)/Ok(x)）且内层类型匹配时解包，
-                        // 与实参位 AD-1..4 共用同一审慎判据（单向、不穿透函数边界）。
-                        val unwrapped = autoUnwrapCtor(s.value, want)
-                        if (unwrapped != null) {
-                            varUnwrapHits[s] = unwrapped   // codegen 用解构后初值生成 JS
-                            t = want
-                            resolved = true
-                        }
-                    }
-                    if (!resolved) {
-                        if (TypeInfer.unify(t, want) == null && !compatibleView(t, want))
-                            d.error("E-TYPE-MISMATCH", s.pos, "var ${s.name} 标注了 ${declType.render()}，但初值是 ${t.render()}，两边类型不一致")
-                        else t = want
-                    }
+                    if (TypeInfer.unify(t, want) == null && !compatibleView(t, want))
+                        d.error("E-TYPE-MISMATCH", s.pos, "var ${s.name} 标注了 ${declType.render()}，但初值是 ${t.render()}，两边类型不一致")
+                    else t = want
                 }
                 f.declareVar(s.name, t, s.pos)
                 inferredVars[s.name] = t
@@ -608,41 +618,71 @@ class Checker(
                 }
                 vt
             }
-            // ---------- v3.0 特性 5：∵ / ∴ 语句（命题层，语句位） ----------
-            is BecauseStmt -> {
-                val p = PropLogic.fromExpr(s.prop)
-                if (proveOrDeep(f.allFacts(), p) || searchTheorems(p, 0, f.localTheorems)) {
-                    f.inject(p)
-                    d.supplement("D-BECAUSE-PROVED", s.pos, "∵ " + PropLogic.render(p) + "（上下文中成立，已加入已知事实）")
-                } else {
+            // ---------- 根文档《手动证明》：因为-所以语句 ∵ form, p₁, p₂ ∴ conclusion ----------
+            is BTSStmt -> {
+                val premises = s.premises.map { PropLogic.fromExpr(it) }
+                // 前提自动证明验证（文档：编译器帮你自动证明前提是否成立）
+                var premisesOk = true
+                for (pm in premises) {
+                    if (!(proveOrDeep(f.allFacts(), pm) || searchTheorems(pm, 0, f.localTheorems))) {
+                        premisesOk = false
+                        d.error("E-PREMISE-UNPROVEN", s.pos,
+                            "因为-所以的前提 " + PropLogic.render(pm) + " 没证出。当前已知事实 Γ：" + f.allFacts().joinToString("； ") { PropLogic.render(it) })
+                    }
+                }
+                val conclusion = PropLogic.fromExpr(s.conclusion)
+                // 结论由定理空间（含 form 匹配）+ 前提推出
+                if (premisesOk && (proveOrDeep(f.allFacts() + premises, conclusion) || searchTheorems(conclusion, 0, f.localTheorems))) {
+                    f.inject(conclusion)
+                    d.supplement("D-BTS", s.pos, "因为-所以：∵…∴ " + PropLogic.render(conclusion) + " 成立")
+                } else if (premisesOk) {
                     val tried = if (syms.theorems.isEmpty()) "（无定理函数）" else syms.theorems.keys.joinToString(", ")
-                    d.warn("W-CANNOT-PROVE", s.pos,
-                        "因为句 `∵ …` 证不出，无法注入。已试的定理：" + tried + "；当前已知的事实 Γ：" + f.allFacts().joinToString("； ") { PropLogic.render(it) })
+                    d.error("E-CANNOT-PROVE", s.pos,
+                        "因为-所以的结论 " + PropLogic.render(conclusion) + " 证不出。已试的定理：" + tried + "；当前已知事实 Γ：" + f.allFacts().joinToString("； ") { PropLogic.render(it) })
                 }
                 namedT("Null", emptyList())
             }
-            is ThereforeStmt -> {
-                val q = PropLogic.fromExpr(s.prop)
-                if (proveOrDeep(f.allFacts(), q) || searchTheorems(q, 0, f.localTheorems)) {
-                    f.inject(q)   // 连续 ∴ 自动累积上文（q 成为下文事实）
-                    d.supplement("D-THEREFORE", s.pos, "∴ " + PropLogic.render(q) + " 成立")
+            // ---------- 根文档《手动证明》：分类讨论 when[p ∨ q] ----------
+            is WhenPropStmt -> {
+                val disj = PropLogic.fromExpr(s.disjunction)
+                // 必须先有析取前提（Γ 有该析取式）——否则分类讨论无据
+                val hasDisj = f.allFacts().any { PropLogic.render(it) == PropLogic.render(disj) }
+                if (!hasDisj)
+                    d.warn("W-PROP-UNBOUND", s.pos, "分类讨论的析取前提 " + PropLogic.render(disj) + " 不在 Γ 中")
+                // 每个分支假设一个析取支成立，收集各支的结论
+                val armConcl = ArrayList<LinkedHashMap<String, Prop>>()
+                for (arm in s.arms) {
+                    val af = Frame(f)
+                    af.inject(PropLogic.fromExpr(arm.condition))
+                    arm.body.forEach { checkStmt(it, af, pure, flow) }
+                    val m = LinkedHashMap<String, Prop>()
+                    arm.body.filterIsInstance<BTSStmt>().forEach { b -> val pr = PropLogic.fromExpr(b.conclusion); m[PropLogic.render(pr)] = pr }
+                    armConcl += m
+                }
+                // 所有分支的公共结论注入 Γ；无公共结论报警告（文档：无共同命题报警告）
+                val common = if (armConcl.isEmpty()) LinkedHashMap<String, Prop>()
+                    else armConcl.reduce { a, b -> LinkedHashMap(a).apply { keys.retainAll(b.keys) } }
+                if (armConcl.isEmpty() || common.isEmpty()) {
+                    d.warn("W-WHEN-NO-COMMON", s.pos, "分类讨论各分支没有共同的结论")
                 } else {
-                    val tried = if (syms.theorems.isEmpty()) "（无定理函数）" else syms.theorems.keys.joinToString(", ")
-                    d.warn("W-CANNOT-PROVE", s.pos,
-                        "结论 `∴ …` 证不出。已试的定理：" + tried + "；当前已知的事实 Γ：" + f.allFacts().joinToString("； ") { PropLogic.render(it) })
+                    common.values.forEach { f.inject(it) }
+                    d.supplement("D-WHEN-PROP", s.pos, "分类讨论得出共同结论：" + common.keys.joinToString("; "))
                 }
                 namedT("Null", emptyList())
             }
-            is PlusBecauseStmt -> {
-                val p = PropLogic.fromExpr(s.prop)
-                // +∵ 是「因为」的累积形式：仍须上下文中成立，否则报错（不是 unchecked/公理注入）
-                if (proveOrDeep(f.allFacts(), p) || searchTheorems(p, 0, f.localTheorems)) {
-                    f.inject(p)
-                    d.supplement("D-PLUSBECAUSE-PROVED", s.pos, "+∵ " + PropLogic.render(p) + "（上下文中成立，已加入已知事实）")
+            // ---------- 根文档《手动证明》：策略调用 @simp[命题] ----------
+            is StrategyStmt -> {
+                val goal = PropLogic.fromExpr(s.goal)
+                val proved = when (s.strategy) {
+                    "simp" -> simpProve(goal, f)
+                    "subst" -> substProve(goal, f)
+                    else -> false
+                }
+                if (proved) {
+                    f.inject(goal)
+                    d.supplement("D-STRATEGY", s.pos, "@" + s.strategy + " 证出 " + PropLogic.render(goal))
                 } else {
-                    val tried = if (syms.theorems.isEmpty()) "（无定理函数）" else syms.theorems.keys.joinToString(", ")
-                    d.warn("W-CANNOT-PROVE", s.pos,
-                        "因为句 `+∵ …` 证不出，无法注入。已试的定理：" + tried + "；当前已知的事实 Γ：" + f.allFacts().joinToString("； ") { PropLogic.render(it) })
+                    d.error("E-STRATEGY-FAILED", s.pos, "@" + s.strategy + " 无法证明 " + PropLogic.render(goal))
                 }
                 namedT("Null", emptyList())
             }
@@ -656,30 +696,32 @@ class Checker(
                     val elseF = Frame(f); elseF.inject(PNot(p))
                     s.thenStmts.forEach { checkStmt(it, thenF, pure, flow) }
                     s.elseStmts.forEach { checkStmt(it, elseF, pure, flow) }
-                    // 两支 ∴ 结论集比对（渲染等价）；分支内证不出由 ThereforeStmt 分支报 W-CANNOT-PROVE
-                    val thenC = LinkedHashMap<String, Prop>()
-                    val elseC = LinkedHashMap<String, Prop>()
-                    fun collect(ss: List<Stmt>, m: LinkedHashMap<String, Prop>) {
-                        ss.filterIsInstance<ThereforeStmt>().forEach { t -> val pr = PropLogic.fromExpr(t.prop); m[PropLogic.render(pr)] = pr }
+                    // 排中律：把两支各自新注入的事实（含 ∵∴ 结论、∃ 引入结果、@subst 结果）
+                    // 取结构相等的交，作为「与 p 无关、两支都成立」的公共结论注入块外。
+                    val thenNew = thenF.facts
+                    val elseNew = elseF.facts
+                    val common = LinkedHashMap<String, Prop>()
+                    for (q in elseNew) {
+                        val m = thenNew.find { PropLogic.propStructEq(it, q) }
+                        if (m != null) common[PropLogic.render(q)] = m
                     }
-                    collect(s.thenStmts, thenC); collect(s.elseStmts, elseC)
-                    if (thenC.keys != elseC.keys)
-                        d.warn("E-IF-CONCLUSION-MISMATCH", s.pos,
-                            "if[p] 两支 ∴ 结论集不同：then=${thenC.keys}；else=${elseC.keys}（排中律要求两支结论相同）")
-                    else thenC.values.forEach { f.inject(it) }   // 块外 Γ += q₁ ∧ … ∧ qₙ
+                    if (common.isEmpty())
+                        d.error("E-IF-CONCLUSION-MISMATCH", s.pos,
+                            "if[p] 两支没有共同结论（排中律要求两支证出同一个结论）")
+                    else common.values.forEach { f.inject(it) }   // 块外 Γ += 公共结论
                 }
                 namedT("Null", emptyList())
             }
-            // ---------- v3.0 特性 7：量词（∃引入 / ∃消去 / ∀引入=局部函数） ----------
+// ---------- v3.0 特性 7：量词（∃引入 / ∃消去 / ∀引入=局部函数） ----------
             is ExistIntroStmt -> {
                 val sub = LinkedHashMap<String, Expr>()
-                sub[s.name] = s.witness
-                val inst = substPropTerms(PropLogic.fromExpr(s.prop), sub)   // P(x)[x→t]
+                s.names.zip(s.witnesses).forEach { (n, w) -> sub[n] = w }
+                val inst = substPropTerms(PropLogic.fromExpr(s.prop), sub)   // P(x₁,x₂,…)[xᵢ→tᵢ]
                 if (proveOrDeep(f.allFacts(), inst) || searchTheorems(inst, 0, f.localTheorems)) {
-                    f.inject(PExists(listOf(s.name), PropLogic.fromExpr(s.prop)))
-                    d.supplement("D-EXIST-INTRO", s.pos, "∃ 引入成立：∃${s.name}. " + PropLogic.render(PropLogic.fromExpr(s.prop)))
+                    f.inject(PExists(s.names, PropLogic.fromExpr(s.prop)))
+                    d.supplement("D-EXIST-INTRO", s.pos, "∃ 引入成立：∃${s.names.joinToString(",")}. " + PropLogic.render(PropLogic.fromExpr(s.prop)))
                 } else
-                    d.warn("E-QUANT-UNPROVEN", s.pos, "∃ 引入失败：想证明存在某个值满足性质，但给出的实例 `${PropLogic.render(inst)}` 满足不了。检查实例能否推出目标性质")
+                    d.error("E-QUANT-UNPROVEN", s.pos, "∃ 引入失败：想证明存在某个值满足性质，但给出的实例 `${PropLogic.render(inst)}` 满足不了。检查实例能否推出目标性质")
                 namedT("Null", emptyList())
             }
             is ExistsElimStmt -> {
@@ -691,7 +733,7 @@ class Checker(
                     val subF = Frame(f)
                     subF.inject(PropLogic.fromExpr(s.prop))   // P(x) 注入块内（x 作用域限于块）
                     s.body.forEach { checkStmt(it, subF, pure, flow) }
-                    s.body.filterIsInstance<ThereforeStmt>().forEach { t0 -> f.inject(PropLogic.fromExpr(t0.prop)) }   // 块外 Γ += 结论
+                    s.body.filterIsInstance<BTSStmt>().forEach { t0 -> f.inject(PropLogic.fromExpr(t0.conclusion)) }   // 块外 Γ += 结论
                 }
                 namedT("Null", emptyList())
             }
@@ -746,16 +788,26 @@ class Checker(
         }
     }
 
+    /** 按名字跨模块找函数（本模块 → 可见模块含 core 标准库）——isPureValue 判定 core 纯函数用 */
+    private fun findFunAnywhere(name: String): FunDecl? {
+        syms.findFun(name)?.let { return it }
+        if (moduleTree != null) for (p in moduleTree.bareVisibleOf(modulePath)) {
+            if (p == modulePath) continue
+            allSymbols[p]?.findFun(name)?.let { return it }
+        }
+        return null
+    }
+
     internal fun isPureValue(e: Expr): Boolean = when (e) {
         is IntLit, is StrLit, is NameRef -> true
-        is BinExpr -> e.op in setOf("+", "-", "*", "/", "=", "==", "!=", "<", ">", "<=", "in", "..", ">=", "&", "|", "∧", "∨") &&
+        is BinExpr -> e.op in setOf("+", "-", "*", "/", "%", "^", "=", "==", "!=", "<", ">", "<=", "in", "..", ">=", "&", "|", "∧", "∨") &&
             isPureValue(e.left) && isPureValue(e.right)
         is UniExpr -> isPureValue(e.operand)
         // P4（决策 80）：纯函数调用也视为纯值——`var x = f(5)` 需注入 `x = f(5)` 供等式推理
         // （§6.2 目标程序第一例；@impure 函数结果不确定，仍不注入）。构造子/方法有独立注入通道，不进此分支。
         is CallExpr -> {
             val n = (e.callee as? NameRef)?.name ?: return false
-            val fn = syms.findFun(n)
+            val fn = findFunAnywhere(n)
             if (fn != null) "impure" !in fn.annotations
             else builtinPure(n) != null && builtinimpure(n) == null
         }
@@ -868,11 +920,8 @@ class Checker(
         }
         is BinExpr -> checkBin(e, f, pure)
         is SymbolCallExpr -> { e.args.forEach { checkExpr(it, f, pure) }; namedT("Bool", emptyList()) }
-        // v2.0 空安全（决策 88-92）
-        is ElvisExpr -> { val l = checkExpr(e.left, f, pure); val r = checkExpr(e.right, f, pure); checkElvis(e, l, r) }
-        is SafeCallExpr -> checkSafeCall(e, f, pure)
-        is CastExpr -> { checkExpr(e.target, f, pure); checkCast(e) }
         is TypeTestExpr -> { checkExpr(e.target, f, pure); checkTypeTest(e) }
+        is IsPatExpr -> { d.error("E-PARSE", e.pos, "ifis 智能解构条件 `表达式 is 构造模式` 只能作为 if 的整个条件（解析期已脱糖为 when；此节点出现在这说明 AST 状态不合法）"); namedT("Bool", emptyList()) }
         is FieldExpr -> {
             // P0：跨模块限定引用 `core.gcd` / `c.Point`——纯名字链且首段非局部变量
             val qual = resolveQChain(e, f)
@@ -912,11 +961,18 @@ class Checker(
                         // v3.0（完美函数类型）：方法路径作值（方法糖自由函数 / 匹配类方法）——
                         // `xs.map` / `x.m`（无括号）→ 绑定 self 的函数值 FunType（与 o::f 同构）；
                         // codegen 生成 `(...a) => f(o, ...a)` 闭包。
-                        val m = findCollectionMethod(e.name, t)
-                            ?: (syms.methods[e.name]?.firstOrNull { doesSelfMatch(it.self, t) }?.let { it.fn to it.modulePath })
-                        if (m != null) {
-                            val (fn, mmod) = m
-                            funRefTargets[e] = jsOverloadName(mmod, fn)   // 重载组带首参标签（stdlib__map$List）
+                        // v4（跨模块 core 标准库）：类型类 impl 方法（List.map 等）跨可见模块查找；
+                        // impl 方法作值生成**字典闭包**名 `dict_X.m`（codegen 据此生成 `dict.m(dict, o, ...a)`，
+                        // 普通跨模块 JS 名不含点号）。
+                        val sugarM = findCollectionMethod(e.name, t)
+                        val implM = syms.methods[e.name]?.firstOrNull { doesSelfMatch(it.self, t) }
+                            ?: visibleMethodEntries(e.name)?.firstOrNull { doesSelfMatch(it.self, t) }
+                        if (sugarM != null || implM != null) {
+                            val fn = sugarM?.first ?: implM!!.fn
+                            val mmod = sugarM?.second ?: implM!!.modulePath
+                            funRefTargets[e] = if (sugarM == null && implM!!.trait.isNotEmpty())
+                                "${dictNameOf(implM.trait, implM.self, implM.modulePath)}.${jsMangle(fn.name)}"
+                            else jsOverloadName(mmod, fn)   // 重载组带首参标签（core_collection__map$List）
                             // 绑定 self：函数值形参 = 声明的**非首参**（首参即接收者，已在 target 上）；
                             // 多态方法糖函数保留理论参数（如 map[T,U] → [T,U](...)）
                             FunType(
@@ -977,7 +1033,22 @@ class Checker(
                 FunType(tt.params.map { it.substT(sub) }, tt.ret.substT(sub))
             } else tt
         }
-        is CallExpr -> { if (uncheckedDepth > 0) checkCall(e, f, pure = false) else checkCall(e, f, pure) }
+        is CallExpr -> {
+            // P51：in 为普通函数——中缀 a in b 解析为 in(a, b) 调用；内建签名（任意, Range[T]）→ Bool
+            // 保持 v3.0 V1 区间语义与诊断（内建优先，同 print 等所有内建；集合成员待 v3.1）
+            if ((e.callee as? NameRef)?.name == "in" && e.args.size == 2) {
+                checkExpr(e.args[0], f, pure)
+                val r = checkExpr(e.args[1], f, pure)
+                val rt = syms.expand(r)
+                val isLiteralRange = e.args[1] is BinExpr && (e.args[1] as BinExpr).op == ".."
+                val isRangeVar = rt is NamedType && rt.name == "Range"
+                if (isLiteralRange || isRangeVar) namedT("Bool", emptyList())
+                else {
+                    d.error("E-TYPE-MISMATCH", e.pos, "in 右侧须是区间 lo..hi 或 Range[T] 值（v3.0 V1；集合成员待 v3.1）")
+                    namedT("Bool", emptyList())
+                }
+            } else if (uncheckedDepth > 0) checkCall(e, f, pure = false) else checkCall(e, f, pure)
+        }
         is LambdaExpr -> {
             // T2 双向推导（决策 55/57）：期望 (A)=>B 时参数按 A 绑定、体核对 B；无期望则宽松 synthetic
             // v3.0（完美函数类型）：纯度跟踪——体内 impure 调用 → FunType.purity="impure"
@@ -1010,6 +1081,11 @@ class Checker(
                 } else { dtKeys += null; nf.declareVar(pname, ft?.params?.getOrNull(i) ?: syntheticT("参数")) }
             }
             if (dtKeys.any { it != null }) lambdaDestructKeys[e] = dtKeys
+            // 根文档·上下文系统：函数类型携带的上下文 `(T)<$1 ∈ xs> => Null` 注入 lambda 体作前提事实
+            ft?.context?.forEach { ctxExpr ->
+                val rewritten = substDollarNExpr(ctxExpr, e.params.map { Param(it, syntheticT("上下文参数")) })
+                nf.inject(PropLogic.fromExpr(rewritten))
+            }
             val bt = run {
                 lambdaRetTypes.add(ft?.ret ?: syntheticT("lambda返回"))
                 val r = checkExpr(e.body, nf, if (uncheckedDepth > 0) false else pure)
@@ -1022,7 +1098,7 @@ class Checker(
             val retIsTp = ftRet is NamedType && ftRet.args.isEmpty() &&
                 ftRet.name !in BASE_TYPES && ftRet.name !in syms.enums &&
                 ftRet.name !in syms.structs && !ftRet.isSynthetic()
-            if (ft != null && !retIsTp && !bt.isSynthetic() && !typeLooseEq(bt, ft.ret))
+            if (ft != null && !retIsTp && !containsUnresolvedTp(ft.ret) && !bt.isSynthetic() && !typeLooseEq(bt, ft.ret))
                 d.error("E-TYPE-MISMATCH", e.pos, "lambda 体类型 ${bt.render()} 与期望返回 ${ft.ret.render()} 不符")
             // P2（决策 78）：带期望时返回**实际组合类型** FunType(期望参数, 实际体类型)，
             // 无期望时返回 FunType(合成参数, 实际体类型)——调用点据此反推类型参数
@@ -1036,7 +1112,7 @@ class Checker(
             // 根文档：纯 lambda 亦可被证明纯（`pure<{ 1 + 1 }>`）——体无 impure 调用时登记自然命题
             if (!bodyImpure) f.inject(PAtom("pure", listOf(e)))
             val purity = if (bodyImpure) "impure" else ""
-            if (ft != null) FunType(ft.params, bt, purity = purity, theory = ft.theory)
+            if (ft != null) FunType(ft.params, bt, purity = purity, theory = ft.theory, context = ft.context)
             else FunType(e.params.map { syntheticT("参数") }, bt, purity = purity)
         }
         is BlockExpr -> {
@@ -1069,7 +1145,7 @@ class Checker(
             // flow=false（值位，如 var x = if…）分支仍是表达式（codegen 编 IIFE）。条件表达式恒值位。
             val up = if (uncheckedDepth > 0) false else pure
             checkExpr(e.cond, f, up)   // 条件恒值位
-            // v2.0 空安全智能转换（决策 88-92）：条件为 `x ? T` 时 then 分支帧注入 `x : T`——
+            // v2.1 智能转换（由 `x ? T` 迁移为 `x is T`）：条件为 `x is T` 时 then 分支帧注入 `x : T`——
             // 子帧遮蔽 x 的旧类型（Optional[T] → T），分支内 x 直接按 T 使用（Kotlin 智能转换扩展）。
             val cond0 = e.cond
             val thenF: Frame = if (cond0 is TypeTestExpr) {
@@ -1099,7 +1175,7 @@ class Checker(
                 try { checkExpr(e.thenBlock, thenF, up, flow = flow) }
                 finally { if (!wasOpen) openChannels -= openCn }
             } else checkExpr(e.thenBlock, thenF, up, flow = flow)
-            // v2.0 和类型（联合类型反收窄）：`if(x ? A)` 的 else 分支 x 收窄为「联合减 A」——
+            // v2.0 和类型（联合类型反收窄）：`if(x is A)` 的 else 分支 x 收窄为「联合减 A」——
             // 仅当条件为类型测、目标为名字、原名称为联合且被测类型确为变体时成立；否则不收窄（保持原行为）。
             val elseF: Frame? = if (cond0 is TypeTestExpr) {
                 val tt = cond0
@@ -1241,6 +1317,7 @@ class Checker(
                 theory = e.theory.filterIsInstance<TypeParam>(),
             )
         }
+        is IsPatExpr -> namedT("Bool", emptyList())
     }
 
     internal fun checkBin(e: BinExpr, f: Frame, pure: Boolean): Type {
@@ -1313,56 +1390,6 @@ class Checker(
         t is NamedType && t.args.isEmpty() && t.name !in BASE_TYPES &&
             t.name !in syms.enums && t.name !in syms.structs && !t.isSynthetic()
 
-    // ============ v2.0 空安全运算符（决策 88-92） ============
-
-    /** Optional 内层类型：Optional[T] → T；非 Optional 返回 null */
-    private fun optionalInner(t: Type): Type? =
-        if (t is NamedType && t.name == "Optional" && t.args.size == 1) t.args[0] else null
-
-    /** `a ?: b`——a 为 Some(x) 时得 x，None 时得 b。返回 a 内层与 b 的 join（宽松升格）。 */
-    private fun checkElvis(e: ElvisExpr, l: Type, r: Type): Type {
-        val inner = optionalInner(l)
-        if (inner == null && !l.isSynthetic()) {
-            d.error("E-TYPE-MISMATCH", e.pos, "空替代左操作数应为 Optional[T]，实际 ${l.render()}")
-            return syntheticT("空替代")
-        }
-        if (inner == null) return r
-        // 内层与 b 的类型 join：数值升格（Nat⊔Int=Int），否则取内层（宽松）
-        d.supplement("D-ELVIS", e.pos, "`?:` 安全替换：左边为 Some 时取内部值，None 时取右边兜底值")
-        return TypeInfer.unify(inner, r) ?: inner
-    }
-
-    /** `a?.f(b)`——a 为 Optional[T]，解构 T 后调用 f，结果重新包装为 Optional[U]。
-     *  依赖 findCollectionMethod（CallCheck.kt）找同名自由函数；类型由 f 返回类型 + Optional 包裹。 */
-    private fun checkSafeCall(e: SafeCallExpr, f: Frame, pure: Boolean): Type {
-        val selfT = checkExpr(e.target, f, pure)
-        val inner = optionalInner(selfT)
-        if (inner == null && !selfT.isSynthetic()) {
-            d.error("E-TYPE-MISMATCH", e.pos, "安全调用接收者应为 Optional[T]，实际 ${selfT.render()}")
-            return syntheticT("安全调用")
-        }
-        e.args.forEach { checkExpr(it, f, pure) }
-        // 用解构后的 inner 作为接收者，借 methodSugar 机制找同名自由函数并检查参数。
-        // 为复用 checkFnCall 的完整参数校验，构造一个 FieldExpr(target=NameRef(临时), name)。
-        val base = inner ?: syntheticT("安全调用解构")
-        val sugarFn = findCollectionMethod(e.name, base) ?: run {
-            d.error("E-UNBOUND-NAME", e.pos, "安全调用目标 ${e.name} 对 ${base.render()} 无匹配方法")
-            return syntheticT("安全调用")
-        }
-        // 登记 JS 调用名（与普通方法糖一致：模块前缀 + 重载标签）——codegen 生成 `<name>(inner, args…)`
-        moduleHits[e] = jsOverloadName(sugarFn.second, sugarFn.first)
-        // 返回类型 = f(inner, args…) 的返回类型包 Optional。
-        val ret = sugarFn.first.retType ?: namedT("Null", emptyList())
-        d.supplement("D-SAFE-CALL", e.pos, "`?.` 安全调用：若接收者为 None 则短路，整个表达式返回 None")
-        return namedT("Optional", listOf(ret))
-    }
-
-    /** `a >: T`——运行时结构判定 a 是否为 T；返回 Optional[T]。校验 T 可解析（不限定 a 类型，安全）。 */
-    private fun checkCast(e: CastExpr): Type {
-        checkTypeResolvable(e.type, emptyList())
-        return namedT("Optional", listOf(e.type))
-    }
-
     /** `a is T`（v2.1 由 `a ? T` 迁移）——运行时结构判定 a 是否为 T；返回 Bool。校验 T 可解析。
      *  分支内智能转换由 IfExpr 处理。v2.1 规则：is 只能判断结构体/枚举（含基本类型），
      *  类型类是编译期约束、无运行时 tag，禁止（对齐 Rust 语义）。 */
@@ -1376,3 +1403,122 @@ class Checker(
 }
 
 fun checkFile(file: FileAst): DiagBag = Checker(file).run()
+
+    // ---------- 根文档《手动证明》：@simp 化简器 ----------
+
+    /** @simp 化简器：委托给 ArithProve 的线性算术证明器（区间+常量折叠+不等式）。 */
+    private fun simpProve(goal: Prop, f: Frame): Boolean =
+        ArithProve.proves(f.allFacts(), goal) == true
+
+    /**
+     * @subst 莱布尼茨代换。
+     * ① 项级：用 `=`/`==` 等式事实单向代入 PAtom 的任意 term，检查代入后的 PAtom 是否已在 Γ。
+     * ② 命题级：用 \u2194/iff 等价事实单向代入目标中的子命题，检查代入后的目标是否已在 Γ。
+     */
+    /** 项节点数——给 @subst BFS 设体积上限，防膨胀型改写（2→√2·√2）指数爆炸 */
+    private fun termSize(e: Expr): Int = when (e) {
+        is BinExpr -> 1 + termSize(e.left) + termSize(e.right)
+        is UniExpr -> 1 + termSize(e.operand)
+        is CallExpr -> 1 + termSize(e.callee) + e.args.sumOf { termSize(it) }
+        is InstExpr -> 1 + termSize(e.target) + e.terms.sumOf { termSize(it) }
+        is FieldExpr -> 1 + termSize(e.target)
+        is FunRefExpr -> 1 + termSize(e.target)
+        is SymbolCallExpr -> 1 + e.args.sumOf { termSize(it) }
+        else -> 1
+    }
+    private fun propSize(p: Prop): Int = when (p) {
+        is PNot -> 1 + propSize(p.p)
+        is PAnd -> 1 + propSize(p.a) + propSize(p.b)
+        is POr -> 1 + propSize(p.a) + propSize(p.b)
+        is PImp -> 1 + propSize(p.a) + propSize(p.b)
+        is PIff -> 1 + propSize(p.a) + propSize(p.b)
+        is PForall -> 1 + propSize(p.body)
+        is PExists -> 1 + propSize(p.body)
+        is PExists1 -> 1 + propSize(p.body)
+        is PAtom -> 1 + p.terms.sumOf { termSize(it) }
+        else -> 1
+    }
+
+    private fun substProve(goal: Prop, f: Frame): Boolean {
+        val facts = f.allFacts()
+        val eqs = facts.filterIsInstance<PAtom>().filter { (it.head == "=" || it.head == "==") && it.terms.size == 2 }
+        val iffs = facts.filterIsInstance<PIff>()
+        if (eqs.isEmpty() && iffs.isEmpty()) return false
+        // 深度替换 + 多步传递闭包（BFS）：@subst 目标经等式/等价图逐次改写，直至命中事实库
+        val seen = HashMap<Int, MutableList<Prop>>()
+        val queue = ArrayDeque<Prop>()
+        queue.addLast(goal)
+        var steps = 0
+        val maxSteps = 400      // BFS 步数上限
+        val maxNodes = 400      // 项体积上限：禁止改写出超大命题（膨胀型等式会指数爆炸）
+        while (queue.isNotEmpty() && ++steps <= maxSteps) {
+            val cur = queue.removeFirst()
+            if (existsIn(cur, facts)) return true
+            val bucket = seen.getOrPut(PropLogic.propHash(cur)) { ArrayList() }
+            if (bucket.any { PropLogic.propStructEq(it, cur) }) continue
+            bucket.add(cur)
+            for (eq in eqs) {
+                val a = eq.terms[0]; val b = eq.terms[1]
+                for ((from, to) in listOf(a to b, b to a)) {
+                    val rw = deepReplaceProp(cur, from, to)
+                    if (!PropLogic.propStructEq(rw, cur) && propSize(rw) <= maxNodes) queue.addLast(rw)
+                }
+            }
+            for (iff in iffs) {
+                for ((from, to) in listOf(iff.a to iff.b, iff.b to iff.a)) {
+                    val sub = replaceProp(cur, from, to)
+                    if (!PropLogic.propStructEq(sub, cur) && propSize(sub) <= maxNodes) queue.addLast(sub)
+                }
+            }
+        }
+        return false
+    }
+
+    /** 在 allFacts 中找 p（忽略位置的结构相等）；另承认平凡自反等式 t = t */
+    private fun existsIn(p: Prop, facts: List<Prop>): Boolean =
+        facts.any { PropLogic.propStructEq(it, p) } || reflexiveEq(p)
+
+    private fun reflexiveEq(p: Prop): Boolean =
+        p is PAtom && p.head in setOf("=", "==") && p.terms.size == 2 && PropLogic.termEq(p.terms[0], p.terms[1])
+
+    /** 命题内项级深度替换：PAtom 每个 term 递归穿透替换，其余命题连接词递归 */
+    private fun deepReplaceProp(p: Prop, from: Expr, to: Expr): Prop = when (p) {
+        is PAtom -> PAtom(p.head, p.terms.map { deepReplaceTerm(it, from, to) })
+        is PNot -> PNot(deepReplaceProp(p.p, from, to))
+        is PAnd -> PAnd(deepReplaceProp(p.a, from, to), deepReplaceProp(p.b, from, to))
+        is POr -> POr(deepReplaceProp(p.a, from, to), deepReplaceProp(p.b, from, to))
+        is PImp -> PImp(deepReplaceProp(p.a, from, to), deepReplaceProp(p.b, from, to))
+        is PIff -> PIff(deepReplaceProp(p.a, from, to), deepReplaceProp(p.b, from, to))
+        is PForall -> PForall(p.names, deepReplaceProp(p.body, from, to))
+        is PExists -> PExists(p.names, deepReplaceProp(p.body, from, to))
+        is PExists1 -> PExists1(p.names, deepReplaceProp(p.body, from, to))
+        else -> p
+    }
+
+    /** 项级深度替换：递归穿透复合项内层，替换所有等于 from 的子项 */
+    private fun deepReplaceTerm(e: Expr, from: Expr, to: Expr): Expr {
+        if (PropLogic.termEq(e, from)) return to
+        return when (e) {
+            is BinExpr -> e.copy(left = deepReplaceTerm(e.left, from, to), right = deepReplaceTerm(e.right, from, to))
+            is UniExpr -> e.copy(operand = deepReplaceTerm(e.operand, from, to))
+            is CallExpr -> e.copy(callee = deepReplaceTerm(e.callee, from, to), args = e.args.map { deepReplaceTerm(it, from, to) })
+            is InstExpr -> e.copy(target = deepReplaceTerm(e.target, from, to), terms = e.terms.map { deepReplaceTerm(it, from, to) })
+            is FieldExpr -> e.copy(target = deepReplaceTerm(e.target, from, to))
+            is FunRefExpr -> e.copy(target = deepReplaceTerm(e.target, from, to))
+            else -> e
+        }
+    }
+
+    /** 子命题代换：\u2194 等价代入的目标不以 term 身份出现，而是整个子命题替换 */
+    private fun replaceProp(p: Prop, from: Prop, to: Prop): Prop = when {
+        PropLogic.propStructEq(p, from) -> to
+        p is PNot    -> PNot(replaceProp(p.p, from, to))
+        p is PAnd    -> PAnd(replaceProp(p.a, from, to), replaceProp(p.b, from, to))
+        p is POr     -> POr (replaceProp(p.a, from, to), replaceProp(p.b, from, to))
+        p is PImp    -> PImp(replaceProp(p.a, from, to), replaceProp(p.b, from, to))
+        p is PIff    -> PIff(replaceProp(p.a, from, to), replaceProp(p.b, from, to))
+        p is PForall -> PForall(p.names, replaceProp(p.body, from, to))
+        p is PExists -> PExists(p.names, replaceProp(p.body, from, to))
+        p is PExists1-> PExists1(p.names, replaceProp(p.body, from, to))
+        else -> p
+    }

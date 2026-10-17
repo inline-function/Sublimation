@@ -1,0 +1,6 @@
+@impure
+fun main() {
+    ∴ size(Cons(1, Cons(2, Nil()))) = 2
+    ∴ size(Cons(9, Nil())) = 1
+    ∴ size(Cons(1, Cons(2, Cons(3, Nil())))) = 3
+}

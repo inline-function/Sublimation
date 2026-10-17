@@ -10,12 +10,12 @@ import java.io.File
  * 脚本模式解释器（§4/§6）。
  *
  * 执行管线：Lexer → Parser(scriptMode) → Checker → Evaluator
- * - Checker 做类型推断、空安全、上下文、纯度、高阶类型等全部静态检查
+ * - Checker 做类型推断、上下文、纯度、高阶类型等全部静态检查
  * - Evaluator 只走运行时求值（不重复做类型系统）
  */
 class Interpreter(
-    /** 标准库目录（Sublimation 自举标准库 .subl 源文件） */
-    private val stdlibDir: File = File("stdlib"),
+    /** 标准库目录（Sublimation 自举标准库 .subl 源文件；core 统一标准库为包目录，递归收集） */
+    private val stdlibDir: File = File("test/core"),
 ) {
 
     // 宿主函数注册（含类型签名）
@@ -23,9 +23,11 @@ class Interpreter(
     private val hostStructs = LinkedHashMap<String, StructInfo>()
     private var globalFrame = ScriptFrame()
 
-    /** 标准库目录下的 .subl 源文件合集（controller 顺序稳定：按文件名排序） */
+    /** 标准库目录（含子包）下的 .subl 源文件合集（顺序稳定：按相对路径排序） */
     private val stdlibFiles: List<File>
-        get() = stdlibDir.listFiles { f -> f.name.endsWith(".subl") }?.sortedBy { it.name } ?: emptyList()
+        get() = if (!stdlibDir.isDirectory) emptyList()
+            else stdlibDir.walkTopDown().filter { it.isFile && it.name.endsWith(".subl") }
+                .sortedBy { it.relativeTo(stdlibDir).path }.toList()
 
     init { registerStdlib() }
 
@@ -172,7 +174,7 @@ class Interpreter(
         val stdlibEntries = loadStdlibEntries()
         val checkedAst = FileAst(stdlibEntries + structEntries + hostEntries + rawAst.entries)
 
-        // 3. Checker：类型推断 / 空安全 / 上下文 / 纯度 / HKT 等全部静态检查
+        // 3. Checker：类型推断 / 上下文 / 纯度 / HKT 等全部静态检查
         val checker = Checker(checkedAst, scriptMode = scriptMode)
         val diags = checker.run()
         if (diags.hasError) {
@@ -196,14 +198,15 @@ class Interpreter(
         val eval = Evaluator(
             hostFunctions = hostFunctionInfos.mapValues { it.value.fn },
             hostStructs = hostStructs,
-            varUnwrapHits = checker.varUnwrapHits,
-            funBodyUnwrapHits = checker.funBodyUnwrapHits,
         )
         val frame = ScriptFrame(globalFrame)
         eval.evaluate(FileAst(stdlibEntries + rawAst.entries), frame, mainName)
     }
 
-    /** 加载标准库 .subl 源文件，合并为一个条目列表（标准库与语言同源，非手写注入） */
+    /** 加载标准库 .subl 源文件，合并为一个条目列表（标准库与语言同源，非手写注入）。
+     *  v4（core 统一标准库）：@root 内建声明（print/readFile/jsonParse/timeNow…）跳过——
+     *  脚本模式下内建由宿主函数表（hostEntries）与 checker 内建表提供，@root 条目仅为声明文档，
+     *  留着会与 @host 声明撞 E-DUP-DECL。 */
     private fun loadStdlibEntries(): List<Entry> {
         val entries = ArrayList<Entry>()
         for (f in stdlibFiles) {
@@ -213,7 +216,10 @@ class Interpreter(
                 throw InterpreterError("标准库文件解析失败 ${f.name}: ${e.message}")
             }
         }
-        return entries
+        return entries.filter { e ->
+            val fd = (e as? DeclEntry)?.decl as? FunDecl
+            fd == null || "root" !in fd.annotations
+        }
     }
 
     /** 字段默认值（供 Checker 构造检查） */

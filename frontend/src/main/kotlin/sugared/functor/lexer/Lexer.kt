@@ -6,16 +6,10 @@ enum class Kind {
     FUN, CLASS, STRUCT, ENUM, VAR, IMPL, FOR, IF, ELSE, UNCHECKED, WHEN, IS, BY, TYPE, RET, IN, DEF,   // v3.0：in 区间成员判断；根文档：def 自定义命题
     // 标点
     LPAREN, RPAREN, LBRACKET, RBRACKET, LBRACE, RBRACE,
-    COMMA, SEMI, COLON, COLON2, DOT, AT, BACKSLASH, DOLLAR,   // COLON2 = `::`（v2.1 枚举成员访问 E::A）
+    COMMA, SEMI, COLON, COLON2, DOT, AT, BACKSLASH, DOLLAR, HASH,   // COLON2 = `::`（v2.1 枚举成员访问 E::A）；根文档：`#` 类型量化
     // 运算/比较/赋值
-    PLUS, MINUS, STAR, SLASH, PERCENT, ASSIGN, EQ, NEQ, LE, GE, RANGE,   // v3.0：`..` 区间
+    PLUS, MINUS, STAR, SLASH, PERCENT, POW, ASSIGN, EQ, NEQ, LE, GE, RANGE,   // v3.0：`..` 区间；根文档：`^` 幂
     ARROW, DARROW, IFF, AMP, PIPE, BANG,
-    // v2.0 空安全运算符（多字符优先：`?.`/`?:` 在 `?` 前）
-    // CAST `>:` **不在词法层粘连**——`<valid<7>>: Null` 的 `>>` 终止符序列会误粘连成 `>:`，
-    // 破坏上下文命题解析。`a >: T` 由 parser 表达式层合成（见 parseExpr 的 GT 分支）。
-    QUEST,        // `?` —— 运行时类型测 `a ? T`（前后均须有空格）或类型后缀 `T?`
-    SAFECALL,     // `?.` —— 安全调用 `a?.f(b)` / `a ?.f b`
-    ELVIS,        // `?:` —— 空替代 `a ?: b`
     // Unicode 逻辑符号（固定单 token，不做标识符）
     FORALL, EXISTS, EXISTS1, LAND, LOR, LNOT, IMPLIES, EQUIV, TOP, BOT,
     BECAUSE, THEREFORE, PLUS_BECAUSE,   // v3.0 特性 5：∵ 因为 / ∴ 所以 / +∵ 又因为
@@ -47,7 +41,7 @@ class Lexer(private val src: String, private val fileName: String) {
         "enum" to Kind.ENUM, "var" to Kind.VAR, "impl" to Kind.IMPL,
         "for" to Kind.FOR, "if" to Kind.IF, "else" to Kind.ELSE,
         "unchecked" to Kind.UNCHECKED, "when" to Kind.WHEN, "is" to Kind.IS, "by" to Kind.BY,
-        "type" to Kind.TYPE, "return" to Kind.RET, "in" to Kind.IN, "def" to Kind.DEF,
+        "type" to Kind.TYPE, "return" to Kind.RET, "def" to Kind.DEF,  // P51：in 去关键字化——作为 Any 类型类函数（ops 表识别），非保留字
     )
 
     companion object {
@@ -100,6 +94,8 @@ class Lexer(private val src: String, private val fileName: String) {
         val c = src[i]
         if (c in '0'..'9') return readInt()
         if (c == '"') return readString()
+        // 反引号标识符（Kotlin 风）：`任意字符`，不含换行与反引号本身
+        if (c == '`') return readBacktickIdent()
         // v3.0：标识符支持 Unicode（字母开头：英文/中文/希腊字母等均可；下划线亦为首字符）
         // v3.0 特性 5：∵/∴ 是固定单 token（BECAUSE/THEREFORE），不得作为符号标识符首字符（∷∴ 非字母但 isSymbolStart 会误收）
         val isBecauseSym = c == '∵' || c == '∴'
@@ -117,30 +113,28 @@ class Lexer(private val src: String, private val fileName: String) {
         if (c == '∃' && peekAt(i + 1) == '!') { adv(2); return Kind.EXISTS1 to "∃!" }
         // v3.0 特性 5：`+∵`（又因为）须先于单 '+' 判定
         if (c == '+' && peekAt(i + 1) == '∵') { adv(2); return Kind.PLUS_BECAUSE to "+∵" }
-        // v2.0 空安全运算符（多字符优先：`?.`/`?:` 在 `?` 前）
-        if (c == '?' && peekAt(i + 1) == '.') { adv(2); return Kind.SAFECALL to "?." }
-        if (c == '?' && peekAt(i + 1) == ':') { adv(2); return Kind.ELVIS to "?:" }
         // v3.0（区间）：`..` 须先于单 '.' 判定
         if (c == '.' && peekAt(i + 1) == '.') { adv(2); return Kind.RANGE to ".." }
         // v2.1（对齐 Rust 关联项）：`::` 枚举成员访问——粘连判定，须先于单 ':'
         if (c == ':' && peekAt(i + 1) == ':') { adv(2); return Kind.COLON2 to "::" }
-        if (c == '?') { adv(1); return Kind.QUEST to "?" }
+        // HKT 标准库（Kotlin 风）：`&&`/`||` 归一为 ∧/∨（文本归一为 Unicode 形，后续 binops/命题/codegen 全同 ∧ ∨ 通道）
+        if (c == '&' && peekAt(i + 1) == '&') { adv(2); return Kind.LAND to "∧" }
+        if (c == '|' && peekAt(i + 1) == '|') { adv(2); return Kind.LOR to "∨" }
 
         val one = when (c) {
             '(' -> Kind.LPAREN; ')' -> Kind.RPAREN
             '[' -> Kind.LBRACKET; ']' -> Kind.RBRACKET
             '{' -> Kind.LBRACE; '}' -> Kind.RBRACE
             ',' -> Kind.COMMA; ';' -> Kind.SEMI; ':' -> Kind.COLON; '.' -> Kind.DOT
-            '@' -> Kind.AT; '\\' -> Kind.BACKSLASH; '$' -> Kind.DOLLAR
-            '+' -> Kind.PLUS; '-' -> Kind.MINUS; '*' -> Kind.STAR; '/' -> Kind.SLASH; '%' -> Kind.PERCENT
+            '@' -> Kind.AT; '\\' -> Kind.BACKSLASH; '$' -> Kind.DOLLAR; '#' -> Kind.HASH
+            '+' -> Kind.PLUS; '-' -> Kind.MINUS; '*' -> Kind.STAR; '/' -> Kind.SLASH; '%' -> Kind.PERCENT; '^' -> Kind.POW
             '=' -> Kind.ASSIGN; '<' -> Kind.LT; '>' -> Kind.GT
             '&' -> Kind.AMP; '|' -> Kind.PIPE; '!' -> Kind.BANG
             '∀' -> Kind.FORALL; '∃' -> Kind.EXISTS
             '∧' -> Kind.LAND; '∨' -> Kind.LOR; '¬' -> Kind.LNOT
             '→' -> Kind.IMPLIES; '↔' -> Kind.EQUIV; '≠' -> Kind.NEQ
             '⊤' -> Kind.TOP; '⊥' -> Kind.BOT
-            // 深化上下文系统：∈/≥/≤ 与 ascii 同为两参/比较命题符号（∈ 归一 in，见 Parser 831）
-            '∈' -> Kind.IN; '≥' -> Kind.GE; '≤' -> Kind.LE
+            // 这些 Unicode 符号实际被 isSymbolStart 分支（readSymbol）先收——单分支不可达，仅为文档保留
             '∵' -> Kind.BECAUSE; '∴' -> Kind.THEREFORE
             else -> {
                 val hint = if (c in fullWidth) "（这是中文全角符号，请换成英文半角符号）" else ""
@@ -189,6 +183,23 @@ class Lexer(private val src: String, private val fileName: String) {
                     }
                     sb.append(e); adv()
                 }
+                else -> { sb.append(c); adv() }
+            }
+        }
+    }
+
+    /** 反引号标识符（Kotlin 风）：\`内容\`——内容可为任意字符（空格、符号均可），
+     *  只禁止换行与反引号本身；一律返回 IDENT，不进关键字表（\`when\` 是普通标识符而非关键字）。 */
+    private fun readBacktickIdent(): Pair<Kind, String> {
+        val sl = line; val sc = col
+        adv() // 开反引号
+        val sb = StringBuilder()
+        while (true) {
+            if (i >= src.length) throw LexFailure(fileName, sl, sc, "反引号标识符未闭合")
+            val c = src[i]
+            when {
+                c == '`' -> { adv(); return Kind.IDENT to sb.toString() }
+                c == '\n' || c == '\r' -> throw LexFailure(fileName, sl, sc, "反引号标识符不能跨行")
                 else -> { sb.append(c); adv() }
             }
         }

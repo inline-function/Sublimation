@@ -1,0 +1,6 @@
+﻿@impure
+fun main() {
+    var b: geo.Box = geo.Box(3)
+    print(toStr(b.v))
+}
+

@@ -36,9 +36,11 @@ import java.io.File
  * 逐个注入 Interpreter。解释器子代理只需调 [AnnotationProcessorHost.register] 即可让脚本
  * 拥有操作注解处理器的三个宿主函数，无需理解注解处理细节。
  */
+/** v2 脚本处理器（root doc/注解处理器.md 11：引擎默认装载内建脚本处理器 @allMut…）。 */
 class AnnotationProcessorHost(
     private val engine: ProcessorEngine = ProcessorEngine(maxRounds = 5),
 ) {
+    init { BuiltinProcessors.all().forEach { engine.addProcessor(it) } }
     /** 已加载的工程源文件（绝对路径 -> AST），保持加载顺序 */
     private val loaded = LinkedHashMap<String, FileAst>()
 

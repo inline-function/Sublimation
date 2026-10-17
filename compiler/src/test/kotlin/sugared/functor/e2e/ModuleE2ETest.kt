@@ -2,10 +2,14 @@ package sugared.functor.e2e
 
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
+import sugared.functor.checker.Checker
 import sugared.functor.checker.MultiModule
+import sugared.functor.lexer.LexFailure
+import sugared.functor.parser.parseSource
 import java.io.File
 import java.nio.file.Files
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -41,6 +45,18 @@ class ModuleE2ETest {
                 out.trim()
             } finally { f.delete() }
         } finally { dir.deleteRecursively() }
+    }
+
+    /** core 统一标准库（test/core 包目录）载入临时树规格：key 形如 "core/collection/list.subl"。
+     *  v4 改名后标准库位于仓库 sublimation/test/core，测试内联整包（stdlib → core）。 */
+    private fun coreSpec(): Map<String, String> {
+        val root = File("test/core")
+        val out = LinkedHashMap<String, String>()
+        for (f in root.walkTopDown().filter { it.isFile && it.name.endsWith(".subl") }
+                .sortedBy { it.relativeTo(root).path }) {
+            out["core/" + f.relativeTo(root).path.replace('\\', '/')] = f.readText()
+        }
+        return out
     }
 
     /** 同 runTree，但把 stdin 喂给 node 进程（P3 readLine 验收用） */
@@ -129,48 +145,42 @@ class ModuleE2ETest {
         assertEquals("hi", runTree(spec))
     }
 
-    // ============ P2 stdlib（决策 78，用户拍板 B：隐式挂载的 stdlib 模块） ============
+    // ============ P2 core 标准库（决策 78，用户拍板 B：隐式挂载；v4 改名 stdlib → core） ============
 
     @Test
-    fun `P2 range 走 listLength 得 3`() {
+    fun `P2 range 走 size 得 3`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/collection.subl").readText()
-        assertEquals("3", runTree(mapOf(
-            "stdlib/collection.subl" to std,
-            "main.subl" to "@impure fun main() {\nprint(stdlib.listLength(stdlib.range(0, 3)))\n}",
+        assertEquals("3", runTree(coreSpec() + mapOf(
+            "main.subl" to "@impure fun main() {\nprint(size(range(0, 3)))\n}",
         )))
     }
 
     @Test
     fun `P2 map 加一后长度 2 求和 5`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/collection.subl").readText()
         val main = "@impure fun main() {\n" +
-            "var xs = stdlib.Cons(1, stdlib.Cons(2, stdlib.Nil()))\n" +
-            "print(xs.map({ x -> x + 1 }).listLength())\n" +
-            "print(xs.map({ x -> x + 1 }).fold(0) { x, acc -> acc + x })\n" +
+            "var xs = Cons(1, Cons(2, Nil()))\n" +
+            "print(xs.map({ x -> x + 1 }).size())\n" +
+            "print(xs.map({ x -> x + 1 }).fold(0) { acc, x => acc + x })\n" +
             "}"
-        assertEquals("2\n5", runTree(mapOf("stdlib/collection.subl" to std, "main.subl" to main)))
+        assertEquals("2\n5", runTree(coreSpec() + mapOf("main.subl" to main)))
     }
 
     @Test
     fun `P2 打印 1 到 10 的平方 - 平方和为 385`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/collection.subl").readText()
         val main = "@impure fun main() {\n" +
-            "var xs = stdlib.range(1, 11)\n" +
+            "var xs = range(1, 11)\n" +
             "print(xs.map({ x -> x * x }).fold(0) { x, acc -> acc + x })\n" +
             "}"
-        assertEquals("385", runTree(mapOf("stdlib/collection.subl" to std, "main.subl" to main)))
+        assertEquals("385", runTree(coreSpec() + mapOf("main.subl" to main)))
     }
 
     @Test
-    fun `P2 隐式挂载 - 深处子模块也能引用 stdlib`() {
+    fun `P2 隐式挂载 - 深处子模块也能引用 core 标准库`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/collection.subl").readText()
-        assertEquals("3", runTree(mapOf(
-            "stdlib/collection.subl" to std,
-            "a/b/c/main.subl" to "@impure fun main() {\nprint(stdlib.listLength(stdlib.range(0, 3)))\n}",
+        assertEquals("3", runTree(coreSpec() + mapOf(
+            "a/b/c/main.subl" to "@impure fun main() {\nprint(size(range(0, 3)))\n}",
         )))
     }
 
@@ -179,46 +189,41 @@ class ModuleE2ETest {
     @Test
     fun `v2 标准库 - strSplit 返回数组化 List`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/collection.subl").readText()
         val main = "@impure fun main() {\n" +
             "var parts = strSplit(\"a,b,c\", \",\")\n" +
             "print(parts.size())\n" +
             "print(parts.joinToString(\"-\"))\n" +
             "}"
-        assertEquals("3\na-b-c", runTree(mapOf("stdlib/collection.subl" to std, "main.subl" to main)))
+        assertEquals("3\na-b-c", runTree(coreSpec() + mapOf("main.subl" to main)))
     }
 
     @Test
     fun `v2 标准库 - List 补全 any 找不到返回 false`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/collection.subl").readText()
         val main = "@impure fun main() {\n" +
-            "var xs = stdlib.range(1, 4)\n" +
+            "var xs = range(1, 4)\n" +
             "print(xs.any({ x -> x > 5 }))\n" +
             "print(xs.all({ x -> x > 0 }))\n" +
             "}"
-        assertEquals("false\ntrue", runTree(mapOf("stdlib/collection.subl" to std, "main.subl" to main)))
+        assertEquals("false\ntrue", runTree(coreSpec() + mapOf("main.subl" to main)))
     }
 
     @Test
     fun `v2 标准库 - List indexOf slice sortBy`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/collection.subl").readText()
         val main = "@impure fun main() {\n" +
-            "var xs = stdlib.range(1, 5)\n" +
+            "var xs = range(1, 5)\n" +
             "when(xs.indexOf(2)) { is Some(i) -> print(i); None -> print(\"x\") }\n" +
             "print(xs.slice(1, 3).joinToString(\",\"))\n" +
             "print(xs.sortBy({ a, b -> a > b }).joinToString(\",\"))\n" +
             "print(xs.sortBy({ a, b -> a < b }).joinToString(\",\"))\n" +
             "}"
-        assertEquals("1\n2,3\n4,3,2,1\n1,2,3,4", runTree(mapOf("stdlib/collection.subl" to std, "main.subl" to main)))
+        assertEquals("1\n2,3\n4,3,2,1\n1,2,3,4", runTree(coreSpec() + mapOf("main.subl" to main)))
     }
 
     @Test
     fun `v2 标准库 - IO 扩展 appendFile fileExists readDir`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/collection.subl").readText()
-        val res = File("stdlib/collection.subl").readText()
         val dir = Files.createTempDirectory("subl-v2-io").toFile()
         try {
             val p1 = File(dir, "a.txt").absolutePath.replace("\\", "\\\\")
@@ -232,49 +237,40 @@ class ModuleE2ETest {
                 "var rd = readDir(\"$d\")\n" +
                 "when(rd) { is Ok(xs) -> print(xs.size()); is Err(e) -> print(e) }\n" +
                 "}"
-            assertEquals("xy\ntrue\n1", runTree(mapOf(
-                "stdlib/collection.subl" to std, "stdlib/collection.subl" to res, "main.subl" to main)))
+            assertEquals("xy\ntrue\n1", runTree(coreSpec() + mapOf("main.subl" to main)))
         } finally { dir.deleteRecursively() }
     }
 
     // ============ P3 IO（v1.0 计划 §5） ============
 
     @Test
-    fun `P3 getArgs 无参数 - listLength 0`() {
+    fun `P3 getArgs 无参数 - size 0`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/collection.subl").readText()
-        assertEquals("0", runTree(mapOf(
-            "stdlib/collection.subl" to std,
-            "main.subl" to "@impure fun main() {\nprint(stdlib.listLength(getArgs()))\n}",
+        assertEquals("0", runTree(coreSpec() + mapOf(
+            "main.subl" to "@impure fun main() {\nprint(size(getArgs()))\n}",
         )))
     }
 
     @Test
     fun `P3 writeFile 写文件后 readFile 读回`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/collection.subl").readText()
-        val res = File("stdlib/collection.subl").readText()
         val f = File.createTempFile("subl-p3-wf", ".txt")
         val p = f.absolutePath.replace("\\", "\\\\")
         // P5：readFile 返回 Result<Str,Str>，解构 Ok/Err 取内容
         val main = "@impure fun main() {\nwriteFile(\"$p\", \"hi\")\nvar r = readFile(\"$p\")\n" +
             "when(r) {\n    is Ok(s) -> print(s)\n    is Err(e) -> print(e)\n}\n}"
         try {
-            assertEquals("hi", runTree(mapOf(
-                "stdlib/collection.subl" to std, "stdlib/collection.subl" to res, "main.subl" to main)))
+            assertEquals("hi", runTree(coreSpec() + mapOf("main.subl" to main)))
         } finally { f.delete() }
     }
 
     @Test
     fun `P3 readLine 读 stdin 该行`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/collection.subl").readText()
-        val res = File("stdlib/collection.subl").readText()
         // P5：readLine 返回 Result<Str,Str>，解构 Ok/Err 取该行
         val main = "@impure fun main() {\nvar r = readLine()\n" +
             "when(r) {\n    is Ok(s) -> print(s)\n    is Err(e) -> print(e)\n}\n}"
-        assertEquals("hello", runTreeIn(mapOf(
-            "stdlib/collection.subl" to std, "stdlib/collection.subl" to res, "main.subl" to main), "hello\n"))
+        assertEquals("hello", runTreeIn(coreSpec() + mapOf("main.subl" to main), "hello\n"))
     }
 
     // ============ P5 错误处理 Result（v1.0 计划 §7.4 验收；决策 81，用户拍板候选 A） ============
@@ -282,42 +278,33 @@ class ModuleE2ETest {
     @Test
     fun `P5 readFile 读不存在返回 Err 分支`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/collection.subl").readText()
-        val res = File("stdlib/collection.subl").readText()
         // 读不存在的文件 → Err 分支（平台无关，只断言命中 Err 分支）
         val main = "@impure fun main() {\nvar r = readFile(\"C:/no/such/subl-file.txt\")\n" +
             "when(r) {\n    is Ok(_) -> print(\"ok\")\n    is Err(e) -> print(\"err\")\n}\n}"
-        assertEquals("err", runTree(mapOf(
-            "stdlib/collection.subl" to std, "stdlib/collection.subl" to res, "main.subl" to main)))
+        assertEquals("err", runTree(coreSpec() + mapOf("main.subl" to main)))
     }
 
     @Test
     fun `P5 readFile 写后读回返回 Ok 分支`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/collection.subl").readText()
-        val res = File("stdlib/collection.subl").readText()
         val f = File.createTempFile("subl-p5-rf", ".txt")
         val p = f.absolutePath.replace("\\", "\\\\")
         val main = "@impure fun main() {\nwriteFile(\"$p\", \"ok content\")\nvar r = readFile(\"$p\")\n" +
             "when(r) {\n    is Ok(s) -> print(s)\n    is Err(e) -> print(\"err \" + e)\n}\n}"
         try {
-            assertEquals("ok content", runTree(mapOf(
-                "stdlib/collection.subl" to std, "stdlib/collection.subl" to res, "main.subl" to main)))
+            assertEquals("ok content", runTree(coreSpec() + mapOf("main.subl" to main)))
         } finally { f.delete() }
     }
 
     @Test
-    fun `P5 unwrapOr 和 mapResult 链式组合`() {
+    fun `P5 unwrapOr 和 mapOk 链式组合`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/collection.subl").readText()
-        val res = File("stdlib/collection.subl").readText()
-        // mapResult 的 U 由 lambda 反推（点号方法 x.length），unwrapOr 消费——嵌套泛型调用即 §7.3 用法
+        // mapOk 的 U 由 lambda 反推（点号方法 x.length），unwrapOr 消费——嵌套泛型调用即 §7.3 用法
         val main = "@impure fun main() {\nwriteFile(\"p5-mr.txt\", \"hello!\")\n" +
-            "var r = stdlib.mapResult(readFile(\"p5-mr.txt\"), { x -> x.length })\n" +
-            "print(stdlib.unwrapOr(r, 0))\n}"
+            "var r = mapOk(readFile(\"p5-mr.txt\"), { x -> x.length })\n" +
+            "print(unwrapOr(r, 0))\n}"
         try {
-            assertEquals("6", runTree(mapOf(
-                "stdlib/collection.subl" to std, "stdlib/collection.subl" to res, "main.subl" to main)))
+            assertEquals("6", runTree(coreSpec() + mapOf("main.subl" to main)))
         } finally { File("p5-mr.txt").delete() }
     }
 
@@ -326,26 +313,24 @@ class ModuleE2ETest {
     @Test
     fun `P6 showAll 整数列表输出 12`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/collection.subl").readText()
         // 约束 T: Show——类型参数约束经字典槽透传（§8.2：f 的 JS 签名带 d_Show_T 隐藏首参）
         val main = "class Show[T] { fun show(): Str }\n" +
             "impl Show for Nat { fun show(): Str = toStr(self) }\n" +
-            "fun showAll[T: Show](xs: List[T]): Str = xs.fold(\"\") { x, acc -> acc + x.show() }\n" +
+            "fun showAll[T: Show](xs: List[T]): Str = xs.fold(\"\") { acc, x => acc + x.show() }\n" +
             "@impure fun main() {\n" +
-            "print(showAll(stdlib.Cons(1, stdlib.Cons(2, stdlib.Nil()))))\n}"
-        assertEquals("12", runTree(mapOf("stdlib/collection.subl" to std, "main.subl" to main)))
+            "print(showAll(Cons(1, Cons(2, Nil()))))\n}"
+        assertEquals("12", runTree(coreSpec() + mapOf("main.subl" to main)))
     }
 
     @Test
     fun `P6 printAll 字符串列表输出 x`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/collection.subl").readText()
         val main = "class Show[T] { fun show(): Str }\n" +
             "impl Show for Str { fun show(): Str = self }\n" +
-            "fun printAll[T: Show](xs: List[T]): Str = xs.fold(\"\") { x, acc -> acc + x.show() }\n" +
+            "fun printAll[T: Show](xs: List[T]): Str = xs.fold(\"\") { acc, x => acc + x.show() }\n" +
             "@impure fun main() {\n" +
-            "print(printAll(stdlib.Cons(\"x\", stdlib.Nil())))\n}"
-        assertEquals("x", runTree(mapOf("stdlib/collection.subl" to std, "main.subl" to main)))
+            "print(printAll(Cons(\"x\", Nil())))\n}"
+        assertEquals("x", runTree(coreSpec() + mapOf("main.subl" to main)))
     }
 
     // ============ v2.0 同名方法重载（决策 92 配套：跨容器共用方法名，按接收者路由） ============
@@ -353,21 +338,18 @@ class ModuleE2ETest {
     @Test
     fun `v2 同名重载 - List Set Map Optional 的 size map contains get 各归各桶`() {
         assumeTrue(nodeAvailable())
-        val list = File("stdlib/collection.subl").readText()
-        val res = File("stdlib/collection.subl").readText()
-        val col = File("stdlib/collection.subl").readText()
         val main = "@impure fun main() {\n" +
-            "var xs = stdlib.Cons(1, stdlib.Cons(2, stdlib.Nil()))\n" +
-            "@mut var s: Set[Nat] = stdlib.setEmpty()\n" +
+            "var xs = Cons(1, Cons(2, Nil()))\n" +
+            "@mut var s: Set[Nat] = setEmpty()\n" +
             "s = s.add(3)\n" +
             "s = s.add(3)\n" +   // add 判重：不会重复插入
-            "@mut var m: Map[Str, Nat] = stdlib.mapEmpty()\n" +
-            "m = stdlib.put(m, \"a\", 1)\n" +
-            "m = stdlib.put(m, \"b\", 2)\n" +
+            "@mut var m: Map[Str, Nat] = mapEmpty()\n" +
+            "m = put(m, \"a\", 1)\n" +
+            "m = put(m, \"b\", 2)\n" +
             "print(\"listSize=\${xs.size()}\")\n" +
             "print(\"setSize=\${s.size()}\")\n" +
             "print(\"mapSize=\${m.size()}\")\n" +
-            "print(\"mapLen=\${xs.map({ x -> x * 2 }).listLength()}\")\n" +
+            "print(\"mapLen=\${xs.map({ x -> x * 2 }).size()}\")\n" +
             "print(\"setHas=\${s.contains(3)}\")\n" +
             "print(\"listHas=\${xs.contains(2)}\")\n" +
             "var g = m.get(\"a\").getOrElse(0)\n" +
@@ -376,132 +358,79 @@ class ModuleE2ETest {
             "}"
         assertEquals(
             "listSize=2\nsetSize=1\nmapSize=2\nmapLen=2\nsetHas=true\nlistHas=true\nmapGet=1\noptMap=6",
-            runTree(mapOf(
-                "stdlib/collection.subl" to list,
-                "stdlib/collection.subl" to res,
-                "stdlib/collection.subl" to col,
-                "main.subl" to main,
-            )),
+            runTree(coreSpec() + mapOf("main.subl" to main)),
         )
     }
 
     @Test
-    fun `v2 跨模块限定自由函数重载 - stdlib filter map 路由到 List 版`() {
+    fun `v2 跨模块限定自由函数重载 - core filter map 路由到 List 版`() {
         assumeTrue(nodeAvailable())
-        val list = File("stdlib/collection.subl").readText()
-        val res = File("stdlib/collection.subl").readText()
-        val col = File("stdlib/collection.subl").readText()
         val main = "@impure fun main() {\n" +
-            "var xs = stdlib.range(1, 6)\n" +
-            "var evens = stdlib.filter(xs, { x -> x % 2 == 0 })\n" +    // filter 跨 List/Optional/Result 重载——限定调用须路由到 List 版
-            "var doubled = stdlib.map(evens, { x -> x * 10 })\n" +      // map 同重载
-            "var j = stdlib.joinToString(doubled, \", \")\n" +
+            "var xs = range(1, 6)\n" +
+            "var evens = core.collection.filter(xs, { x -> x % 2 == 0 })\n" +    // filter 跨 List/Optional/Result/Set 重载——限定调用须路由到 List 版
+            "var doubled = evens.map({ x -> x * 10 })\n" +      // map 走类型类方法（Functor for List）
+            "var j = joinToString(doubled, \", \")\n" +
             "print(\"evens=\${j}\")\n" +
-            "print(\"sum=\${stdlib.sum(doubled)}\")\n" +
-            "print(\"size=\${stdlib.size(evens)}\")\n" +                 // size 跨 List/Set/Map 重载
+            "print(\"sum=\${sum(doubled)}\")\n" +
+            "print(\"size=\${size(evens)}\")\n" +                 // size 跨 List/Set/Map 重载
             "}"
         assertEquals(
             "evens=20, 40\nsum=60\nsize=2",
-            runTree(mapOf(
-                "stdlib/collection.subl" to list,
-                "stdlib/collection.subl" to res,
-                "stdlib/collection.subl" to col,
-                "main.subl" to main,
-            )),
+            runTree(coreSpec() + mapOf("main.subl" to main)),
         )
     }
 
     @Test
     fun `v2 新集合 API - sum maxNat minNat union intersect keys values`() {
         assumeTrue(nodeAvailable())
-        val std = File("stdlib/collection.subl").readText()
-        val col = File("stdlib/collection.subl").readText()
         val main = "@impure fun main() {\n" +
-            "var xs = stdlib.Cons(4, stdlib.Cons(1, stdlib.Cons(3, stdlib.Nil())))\n" +
-            "@mut var s: Set[Nat] = stdlib.setEmpty()\n" +
+            "var xs = Cons(4, Cons(1, Cons(3, Nil())))\n" +
+            "@mut var s: Set[Nat] = setEmpty()\n" +
             "s = s.add(1)\n" +
             "s = s.add(2)\n" +
-            "@mut var t: Set[Nat] = stdlib.setEmpty()\n" +
+            "@mut var t: Set[Nat] = setEmpty()\n" +
             "t = t.add(2)\n" +
             "t = t.add(3)\n" +
-            "@mut var m: Map[Str, Nat] = stdlib.mapEmpty()\n" +
-            "m = stdlib.put(m, \"a\", 1)\n" +
-            "m = stdlib.put(m, \"b\", 2)\n" +
+            "@mut var m: Map[Str, Nat] = mapEmpty()\n" +
+            "m = put(m, \"a\", 1)\n" +
+            "m = put(m, \"b\", 2)\n" +
             "print(\"sum=\${xs.sum()}\")\n" +
             "print(\"max=\${xs.maxNat().getOrElse(0)}\")\n" +
             "print(\"min=\${xs.minNat().getOrElse(0)}\")\n" +
             "print(\"uni=\${s.union(t).size()}\")\n" +
             "print(\"inter=\${s.intersect(t).size()}\")\n" +
-            "print(\"keys=\${m.keys().listLength()}\")\n" +
-            "print(\"vals=\${m.values().listLength()}\")\n" +
+            "print(\"keys=\${m.keys().size()}\")\n" +
+            "print(\"vals=\${m.values().size()}\")\n" +
             "}"
         assertEquals(
             "sum=8\nmax=4\nmin=1\nuni=3\ninter=1\nkeys=2\nvals=2",
-            runTree(mapOf(
-                "stdlib/collection.subl" to File("stdlib/collection.subl").readText(),
-                "stdlib/collection.subl" to File("stdlib/collection.subl").readText(),
-                "stdlib/collection.subl" to col,
-                "main.subl" to main,
-            )),
+            runTree(coreSpec() + mapOf("main.subl" to main)),
         )
     }
 
-    // ============ v2.0 空安全运算符（决策 88-92）：?: / ?. / >: ============
+    // ============ 空安全运算符已移除：?: / ?. / >: / Some→T 隐式解构 ============
 
     @Test
-    fun `v2 空安全 - elvis 空替代`() {
-        assumeTrue(nodeAvailable())
-        val res = File("stdlib/collection.subl").readText()
-        val main = "@impure fun main() {\n" +
-            "var a: Optional[Nat] = Some(5)\n" +
-            "var b: Optional[Nat] = None()\n" +
-            "var e1 = a ?: 0\n" +
-            "var e2 = b ?: 0\n" +
-            "print(\"e1=\$e1\")\n" +
-            "print(\"e2=\$e2\")\n" +
-            "}"
-        assertEquals(
-            "e1=5\ne2=0",
-            runTree(mapOf("stdlib/collection.subl" to res, "main.subl" to main)),
-        )
+    fun `空安全 - elvis 与 safecall 已从词法层移除`() {
+        // 移除空安全糖后 `?:` / `?.` 不再是合法 token——词法层直接报「字符不认识」
+        val e1 = assertFailsWith<LexFailure> { parseSource("fun f(): Null = a ?: b", "t.subl") }
+        assertTrue(e1.message!!.contains("不认识"), "实际: ${e1.message}")
+        val e2 = assertFailsWith<LexFailure> { parseSource("fun f(): Null = a?.b()", "t.subl") }
+        assertTrue(e2.message!!.contains("不认识"), "实际: ${e2.message}")
     }
 
     @Test
-    fun `v2 空安全 - safecall 安全调用`() {
-        assumeTrue(nodeAvailable())
-        val res = File("stdlib/collection.subl").readText()
-        val main = "@impure fun main() {\n" +
-            "var s: Optional[Str] = Some(\"ab\")\n" +
-            "var n: Optional[Str] = None()\n" +
-            "var sl = s?.length()\n" +
-            "var nl = n?.length()\n" +
-            "print(\"sl=\${sl.getOrElse(0)}\")\n" +
-            "print(\"nl=\${nl.getOrElse(0)}\")\n" +
-            "}"
-        assertEquals(
-            "sl=2\nnl=0",
-            runTree(mapOf("stdlib/collection.subl" to res, "main.subl" to main)),
-        )
+    fun `空安全 - Some 传基层形参不再隐式解构`() {
+        // 移除隐式转换：takeRat(Some(5)) 不再自动解包——Some(5) 是 Optional[Nat]，与 Rat 形参不符即报错
+        val main = "fun takeRat(n: Rat): Nat = 1\n" +
+            "@impure fun main() { var x = takeRat(Some(5)) }"
+        val ast = parseSource(main, "main.subl")
+        val bag = Checker(ast).run()
+        assertEquals(true, bag.hasError, "Some 不再隐式解包传入 Rat 形参，应报类型错误，实际:\n${bag.report()}")
     }
 
     @Test
-    fun `v2 空安全 - cast 安全转换`() {
-        assumeTrue(nodeAvailable())
-        val res = File("stdlib/collection.subl").readText()
-        val main = "@impure fun main() {\n" +
-            "var r = 5 >: Rat\n" +
-            "var w = \"x\" >: Rat\n" +
-            "print(\"r=\${r.isSome()}\")\n" +
-            "print(\"w=\${w.isSome()}\")\n" +
-            "}"
-        assertEquals(
-            "r=true\nw=false",
-            runTree(mapOf("stdlib/collection.subl" to res, "main.subl" to main)),
-        )
-    }
-
-    @Test
-    fun `v2 空安全 - 类型测问号 T`() {
+    fun `v2 空安全 - 类型测 is T`() {
         assumeTrue(nodeAvailable())
         val main = "fun describe(x: Any): Bool = x is Rat\n" +
             "@impure fun main() {\n" +
@@ -513,21 +442,6 @@ class ModuleE2ETest {
         assertEquals(
             "r=true\ns=false",
             runTree(mapOf("main.subl" to main)),
-        )
-    }
-
-    @Test
-    fun `v2 空安全 - 自动解构 Some 传基层形参`() {
-        assumeTrue(nodeAvailable())
-        val res = File("stdlib/collection.subl").readText()
-        val main = "fun takeRat(n: Rat): Nat = 1\n" +
-            "@impure fun main() {\n" +
-            "var x = takeRat(Some(5))\n" +
-            "print(\"x=\$x\")\n" +
-            "}"
-        assertEquals(
-            "x=1",
-            runTree(mapOf("stdlib/collection.subl" to res, "main.subl" to main)),
         )
     }
 
@@ -799,24 +713,14 @@ class ModuleE2ETest {
         assertEquals("m=41", runTree(mapOf("main.subl" to main)))
     }
 
-    // ============ v2.0 空安全变量位/函数返回位 Some→T（root doc《空安全系统》隐式转换） ============
+    // ============ 空安全 Some→T 隐式转换已移除（原 root doc《空安全系统》隐式解包） ============
 
     @Test
-    fun `v2 空安全 - 变量位 Some 隐式转 T`() {
-        assumeTrue(nodeAvailable())
+    fun `空安全 - 变量位 Some 不再隐式转 T`() {
+        // 移除隐式转换：var x: Nat = Some(1) 不再自动解包——Some(1) 是 Optional[Nat]，报 E-TYPE-MISMATCH
         val main = "@impure fun main() {\n" +
             "  var x : Nat = Some(1)\n" +
             "  print(\"x=\$x\")\n" +
-            "}\n"
-        assertEquals("x=1", runTree(mapOf("main.subl" to main)))
-    }
-
-    @Test
-    fun `v2 空安全 - 变量位 Some 类型不匹配报错`() {
-        assumeTrue(nodeAvailable())
-        val main = "@impure fun main() {\n" +
-            "  var x : Str = Some(1)\n" +
-            "  print(\"x=\" + x)\n" +
             "}\n"
         val dir = Files.createTempDirectory("subl-var-unwrap-mismatch").toFile()
         try {
@@ -829,14 +733,16 @@ class ModuleE2ETest {
     }
 
     @Test
-    fun `v2 空安全 - 函数返回位 Some 隐式转 T`() {
-        assumeTrue(nodeAvailable())
+    fun `空安全 - 函数返回位 Some 不再隐式转 T`() {
+        // 移除隐式转换：fun identity(n: Nat): Nat = Some(n) 不再自动解包，报 E-TYPE-MISMATCH
         val main = "@impure fun identity(n: Nat): Nat = Some(n)\n" +
             "@impure fun main() {\n" +
             "  var y = identity(9)\n" +
             "  print(\"y=\$y\")\n" +
             "}\n"
-        assertEquals("y=9", runTree(mapOf("main.subl" to main)))
+        val ast = parseSource(main, "main.subl")
+        val bag = Checker(ast).run()
+        assertEquals(true, bag.hasError, "Some 不再隐式解包为返回类型，应报类型错误，实际:\n${bag.report()}")
     }
 
     // ============ v2.0 异步 Flow 冷流（root doc《异步》emit/collect/map） ============
@@ -913,9 +819,9 @@ class ModuleE2ETest {
     }
 
     @Test
-    fun `v2 空安全 - if x?T 分支内智能转换收窄为 T`() {
+    fun `v2 空安全 - if x is T 分支内智能转换收窄为 T`() {
         assumeTrue(nodeAvailable())
-        // o: Any 参数，`if (o ? Point)` 分支内 o 从 Any 收窄为 Point（Kotlin 智能转换扩展）
+        // o: Any 参数，`if (o is Point)` 分支内 o 从 Any 收窄为 Point（Kotlin 智能转换扩展）
         val main = "struct Point(x: Nat, y: Nat)\n" +
             "@impure fun describe(o: Any): Null {\n" +
             "  if (o is Point) {\n" +
@@ -988,35 +894,29 @@ class ModuleE2ETest {
     fun `v2 基本库 - zip 恢复可用 类型参数撞名绕过 occurs check`() {
         assumeTrue(nodeAvailable())
         // Cons 构造子枚举类型参数名 T 与 zip 自用 T 撞名 → extracted 绑定 `T := (T,U)` 触发 occurs
-        // check 自指误判。zip 类型参数改名 A/B（用户避开重名，编译器哲学）后 stdlib 可编译运行。
+        // check 自指误判。zip 类型参数改名 A/B（用户避开重名，编译器哲学）后 core 可编译运行。
         val src = "@impure fun main() {\n" +
-            "  var xs: List[Nat] = stdlib.range(1, 4)\n" +
-            "  var z = stdlib.zip(xs, xs)\n" +
+            "  var xs: List[Nat] = range(1, 4)\n" +
+            "  var z = zip(xs, xs)\n" +
             "  print(\"zip ok\")\n" +
             "}\n"
-        // 内联 stdlib/list.subl（含 range + zip）——runTree 不自动挂载真实 stdlib
-        val list = File("stdlib/collection.subl").readText()
-        assertEquals("zip ok", runTree(mapOf("main.subl" to src, "stdlib/collection.subl" to list)))
+        // 内联 core/collection/list.subl（含 range + zip）——runTree 不自动挂载真实 core
+        assertEquals("zip ok", runTree(coreSpec() + mapOf("main.subl" to src)))
     }
 
     @Test
     fun `v2 基本库 - distinct toSet toMap 常用集合函数`() {
         assumeTrue(nodeAvailable())
         val src = "@impure fun main() {\n" +
-            "  var xs: List[Nat] = stdlib.range(1, 4)\n" +
-            "  var s = stdlib.toSet(xs)\n" +
-            "  var z = stdlib.zip(xs, xs)\n" +
-            "  var m = stdlib.toMap(z)\n" +
-            "  var d = stdlib.distinct(stdlib.append(xs, xs))\n" +
+            "  var xs: List[Nat] = range(1, 4)\n" +
+            "  var s = toSet(xs)\n" +
+            "  var z = zip(xs, xs)\n" +
+            "  var m = toMap(z)\n" +
+            "  var d = distinct(append(xs, xs))\n" +
             "  print(\"s=\${s.size()} m=\${m.size()} d=\${d.size()}\")\n" +
             "}\n"
-        // toSet/toMap 在 collection.subl，distinct/zip 在 list.subl——两者都内联
-        val list = File("stdlib/collection.subl").readText()
-        val coll = File("stdlib/collection.subl").readText()
-        assertEquals("s=3 m=3 d=3", runTree(mapOf(
-            "main.subl" to src,
-            "stdlib/collection.subl" to list,
-            "stdlib/collection.subl" to coll)))
+        // toSet/toMap 与 distinct/zip 同在 core/collection 模块——整包内联
+        assertEquals("s=3 m=3 d=3", runTree(coreSpec() + mapOf("main.subl" to src)))
     }
 
     @Test
@@ -1029,30 +929,20 @@ class ModuleE2ETest {
             "        else -> \"D\"\n" +
             "    }\n" +
             "@impure fun main() {\n" +
-            "  var s = stdlib.setOf(54, 75, 100)\n" +
-            "  stdlib.forEach(stdlib.map(s) { grade(_) }) { x => print(x) }\n" +
+            "  var s = setOf(54, 75, 100)\n" +
+            "  forEach(map(s) { grade(_) }) { x => print(x) }\n" +
             "}\n"
-        val list = File("stdlib/collection.subl").readText()
-        val coll = File("stdlib/collection.subl").readText()
-        assertEquals("D\nC\nA", runTree(mapOf(
-            "main.subl" to src,
-            "stdlib/collection.subl" to list,
-            "stdlib/collection.subl" to coll)))
+        assertEquals("D\nC\nA", runTree(coreSpec() + mapOf("main.subl" to src)))
     }
 
     @Test
     fun `v30b - 裸名 setOf map forEach 方法糖链路`() {
         assumeTrue(nodeAvailable())
-        val list = File("stdlib/collection.subl").readText()
-        val coll = File("stdlib/collection.subl").readText()
         val src = "@impure fun main() {\n" +
             "  var s = setOf(1, 2, 3)\n" +
             "  s.forEach { x => print(x) }\n" +
             "}\n"
-        assertEquals("1\n2\n3", runTree(mapOf(
-            "main.subl" to src,
-            "stdlib/collection.subl" to list,
-            "stdlib/collection.subl" to coll)))
+        assertEquals("1\n2\n3", runTree(coreSpec() + mapOf("main.subl" to src)))
     }
 
     @Test
@@ -1084,12 +974,7 @@ class ModuleE2ETest {
             "        .map { (_.name, _.score, _.grade()) }\n" +
             "        .forEach { (name, score, grade) => print(\"\$name:\$score:\$grade\") }\n" +
             "}\n"
-        val list = File("stdlib/collection.subl").readText()
-        val coll = File("stdlib/collection.subl").readText()
-        assertEquals("孙笑川:54:D\n丰川祥子:75:C\n37:100:A\n函子酱:91:A", runTree(mapOf(
-            "main.subl" to src,
-            "stdlib/collection.subl" to list,
-            "stdlib/collection.subl" to coll)))
+        assertEquals("孙笑川:54:D\n丰川祥子:75:C\n37:100:A\n函子酱:91:A", runTree(coreSpec() + mapOf("main.subl" to src)))
     }
 
     @Test
@@ -1097,18 +982,15 @@ class ModuleE2ETest {
         assumeTrue(nodeAvailable())
         // memo 验收目标：map/filter/fold 零魔法成立；多态匿名函数作实参进 List.map 的 (T)=>U 槽
         val src = "@impure fun main() {\n" +
-            "  var xs = stdlib.Cons(1, stdlib.Cons(2, stdlib.Cons(3, stdlib.Cons(4, stdlib.Nil()))))\n" +
+            "  var xs = Cons(1, Cons(2, Cons(3, Cons(4, Nil()))))\n" +
             "  var ys = xs.filter { x -> x > 2 }.map { x -> x * 2 }\n" +
             "  print(ys)\n" +
-            "  var s = xs.fold(0) { x, acc -> acc + x }\n" +
+            "  var s = xs.fold(0) { acc, x => acc + x }\n" +
             "  print(s)\n" +
             "  var zs = xs.map(fun[T](x: T): T = x)\n" +
             "  print(zs)\n" +
             "}"
-        val list = File("stdlib/collection.subl").readText()
-        assertEquals("[6,8]\n10\n[1,2,3,4]", runTree(mapOf(
-            "main.subl" to src,
-            "stdlib/collection.subl" to list)))
+        assertEquals("[6,8]\n10\n[1,2,3,4]", runTree(coreSpec() + mapOf("main.subl" to src)))
     }
 
     @Test
@@ -1116,30 +998,26 @@ class ModuleE2ETest {
         assumeTrue(nodeAvailable())
         // `xs.map` 无括号作值 → 绑定 self 的 ( (T)=>U ) => List[U]；调用 m({x -> x*2}) 实例化反推 U
         val src = "@impure fun main() {\n" +
-            "  var xs = stdlib.Cons(1, stdlib.Cons(2, stdlib.Nil()))\n" +
+            "  var xs = Cons(1, Cons(2, Nil()))\n" +
             "  var m = xs.map\n" +
             "  print(m({x -> x * 2}))\n" +
             "}"
-        val list = File("stdlib/collection.subl").readText()
-        assertEquals("[2,4]", runTree(mapOf(
-            "main.subl" to src,
-            "stdlib/collection.subl" to list)))
+        assertEquals("[2,4]", runTree(coreSpec() + mapOf("main.subl" to src)))
     }
     // ============ v3.0 第三批：Collection 型类 / 扩展调用法 / Tuple 类型族 ============
 
     @Test
-    fun `v3第三批 - Collection 型类 contains size 扩展调用法优先类型类`() {
+    fun `v3第三批 - contains size 扩展调用法与方法糖分派`() {
         assumeTrue(nodeAvailable())
-        // 扩展调用法 x.contains(e)/x.size() 走类型类字典（Collection impl）；普通调用法 contains(xs,e) 走自由函数
+        // 扩展调用法 x.contains(e)/x.size() 走方法糖（同名自由函数按接收者路由）；普通调用法 contains(xs,e) 走自由函数
         val src = "@impure fun main() {\n" +
-            "  var xs = stdlib.Cons(1, stdlib.Cons(2, stdlib.Nil()))\n" +
+            "  var xs = Cons(1, Cons(2, Nil()))\n" +
             "  print(xs.contains(2))\n" +
             "  print(xs.size())\n" +
-            "  var ys = stdlib.Cons(3, stdlib.Cons(4, stdlib.Nil()))\n" +
+            "  var ys = Cons(3, Cons(4, Nil()))\n" +
             "  print(contains(ys, 4))\n" +
             "}"
-        val col = File("stdlib/collection.subl").readText()
-        assertEquals("true\n2\ntrue", runTree(mapOf("main.subl" to src, "stdlib/collection.subl" to col)))
+        assertEquals("true\n2\ntrue", runTree(coreSpec() + mapOf("main.subl" to src)))
     }
 
     @Test
@@ -1154,20 +1032,100 @@ class ModuleE2ETest {
             "  print((1, \"x\").size())\n" +
             "  print((1, \"x\", true).size())\n" +
             "}"
-        val col = File("stdlib/collection.subl").readText()
-        assertEquals("0\ntrue\n1\nfalse\n2\n3", runTree(mapOf("main.subl" to src, "stdlib/collection.subl" to col)))
+        assertEquals("0\ntrue\n1\nfalse\n2\n3", runTree(coreSpec() + mapOf("main.subl" to src)))
     }
 
     @Test
     fun `v3第三批 - List Result Optional 统一在 collection 且方法糖可用`() {
         assumeTrue(nodeAvailable())
-        // 重组：List/Result/Optional 并入 collection.subl——三者在同一模块仍互见（方法重载按接收者路由）
+        // 重组：List/Result/Optional 并入 core.collection——三者在同一模块仍互见（方法重载按接收者路由）
         val src = "@impure fun main() {\n" +
-            "  var xs = stdlib.Cons(1, stdlib.Cons(5, stdlib.Nil()))\n" +
+            "  var xs = Cons(1, Cons(5, Nil()))\n" +
             "  print(xs.map({ x -> x * 2 }))\n" +
             "  print(xs.size())\n" +
             "}"
-        val col = File("stdlib/collection.subl").readText()
-        assertEquals("[2,10]\n2", runTree(mapOf("main.subl" to src, "stdlib/collection.subl" to col)))
+        assertEquals("[2,10]\n2", runTree(coreSpec() + mapOf("main.subl" to src)))
+    }
+
+    // ============ core.async 内建运行时层（@root 白名单扩展：编译期 JS 特判 + 小运行时） ============
+
+    @Test
+    fun `core async 内建 Channel Flow Mutex Task 端到端`() {
+        assumeTrue(nodeAvailable())
+        // 不挂 stdlib：List 本地声明（数组化按枚举名 List 生效），全部内建走 builtin 表回退签名。
+        // 通道 FIFO、Flow 冷流收集、Mutex 计数器、任务并发/串行组合各出一条断言。
+        val src = "enum List[T] { Nil(), Cons(T, List[T]) }\n" +
+            "@mut struct Counter(@mut n: Nat)\n" +
+            "fun firstOr[T](xs: List[T], d: T): T = when(xs) {\n" +
+            "    Nil -> d\n" +
+            "    is Cons(h, _) -> h\n" +
+            "}\n" +
+            "@impure fun main() {\n" +
+            "    var ch = channelFromList(Cons(1, Cons(2, Cons(3, Nil()))))\n" +
+            "    var xs = channelDrain(ch)\n" +
+            "    print(concat(\"first: \", toStr(firstOr(xs, 0))))\n" +
+            "    var src = channelFromList(xs)\n" +
+            "    var dst = Channel<Nat>(3)\n" +
+            "    channelPipe(src, dst)\n" +
+            "    sendAll(dst, Cons(7, Cons(8, Nil())))\n" +
+            "    print(concat(\"piped: \", toStr(firstOr(channelDrain(dst), 0))))\n" +
+            "    var fl = Flow {\n" +
+            "        emit(1)\n" +
+            "        emit(2)\n" +
+            "        emit(3)\n" +
+            "    }\n" +
+            "    print(concat(\"flow count: \", toStr(collectCount(fl))))\n" +
+            "    print(concat(\"flow all: \", toStr(collectAll(fl, { v -> v > 0 }))))\n" +
+            "    var mu = Mutex()\n" +
+            "    var c: @mut Counter = Counter(0)\n" +
+            "    bumpCounter(mu, c)\n" +
+            "    bumpPair(mu, mu, c, c)\n" +
+            "    withMutex(mu, { print(\"locked\") })\n" +
+            "    print(concat(\"counter: \", toStr(c.n)))\n" +
+            "    runSeq({ print(\"A\") }, { print(\"B\") })\n" +
+            "    runBoth({ print(\"X\") }, { print(\"Y\") })\n" +
+            "    delay(1)\n" +
+            "    print(\"done\")\n" +
+            "}"
+        assertEquals(
+            "first: 1\npiped: 1\nflow count: 3\nflow all: true\nlocked\ncounter: 3\nA\nB\nX\nY\ndone",
+            runTree(mapOf("main.subl" to src)),
+        )
+    }
+
+    // ============ core 统一标准库：挂载完整包名（决策：`mount core.math` 形） ============
+
+    @Test
+    fun `core 包 - 点分完整包名挂载与前缀包隐式可见`() {
+        assumeTrue(nodeAvailable())
+        // 点分挂载 `mount core.math`：目标名 math 可调（math.gcd），前缀包 core 隐式挂载后
+        // 全限定 core.math.gcd 亦可调；裸名 gcd 经挂载传递可达（print/concat/toStr 走内建表回退）。
+        val spec = mapOf(
+            "core/math/math.subl" to
+                "fun gcd(a: Nat, b: Nat): Nat = if (b == 0) { a } else { unchecked var r = gcd(b, a % b); r }",
+            "p/p.settings" to "mount core.math",
+            "p/main.subl" to
+                "@impure fun main() {\n" +
+                "    print(concat(\"full=\", toStr(core.math.gcd(12, 8))))\n" +
+                "    print(concat(\"short=\", toStr(math.gcd(12, 8))))\n" +
+                "    print(concat(\"bare=\", toStr(gcd(12, 8))))\n" +
+                "}",
+        )
+        assertEquals("full=4\nshort=4\nbare=4", runTree(spec))
+    }
+
+    @Test
+    fun `core 包 - 根模块不经挂载直接全限定调用子包`() {
+        assumeTrue(nodeAvailable())
+        // M3：根模块本就透过父→子见 core/math——零挂载即可 core.math.gcd(...)；裸名不可（无挂载传递）。
+        val spec = mapOf(
+            "core/math/math.subl" to
+                "fun gcd(a: Nat, b: Nat): Nat = if (b == 0) { a } else { unchecked var r = gcd(b, a % b); r }",
+            "main.subl" to
+                "@impure fun main() {\n" +
+                "    print(concat(\"gcd=\", toStr(core.math.gcd(12, 8))))\n" +
+                "}",
+        )
+        assertEquals("gcd=4", runTree(spec))
     }
 }

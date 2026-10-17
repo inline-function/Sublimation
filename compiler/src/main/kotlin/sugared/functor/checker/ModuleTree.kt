@@ -45,7 +45,18 @@ private val IGNORED_DIRS = setOf(
     ".git", ".gradle", ".idea", ".kotlin", ".gradle",
 )
 
-/** 从根目录递归扫描，构建模块树。忽略隐藏目录与 IGNORED_DIRS；只收集 `.subl` 文件。 */
+/** 标准库模块名（决策 78 改名：stdlib → core）：编译入口下以该名识别标准库包目录。 */
+const val STDLIB_MODULE = "core"
+
+/** 标准库包目录候选（相对编译入口根，按优先级）：
+ *  - `core/`：core 统一标准库的包目录惯例（《模块系统》"core 作为 <根>/core/ 包目录存在"）；
+ *  - `test/core/`：sublimation 仓库布局——标准库位于 sublimation/test/core，编译入口取仓库根即可识别。
+ *  命中后一律按 `core` 名嫁接到模块树根（见 graftStdlib），其内部 settings 的
+ *  `mount core.xxx` 完整包名挂载按根可达。 */
+val STDLIB_DIR_CANDIDATES = listOf("core", "test/core")
+
+/** 从根目录递归扫描，构建模块树。忽略隐藏目录与 IGNORED_DIRS；只收集 `.subl` 文件。
+ *  扫描后嫁接标准库包：根下无 `core/` 而存在 `test/core/` 时，将其重挂为根的 `core` 子树。 */
 fun scanModuleTree(root: File): ModuleNode {
     fun scan(dir: File, absPath: String, name: String): ModuleNode {
         val node = ModuleNode(name, absPath, dir)
@@ -61,7 +72,32 @@ fun scanModuleTree(root: File): ModuleNode {
         }
         return node
     }
-    return scan(root, "", "")
+    val tree = scan(root, "", "")
+    graftStdlib(tree)
+    return tree
+}
+
+/** 嫁接标准库包：`test/core/` → 根的 `core` 子模块（重算 absPath 为 `core/...`）。
+ *  根已有 `core` 子目录（编译入口即 core 的父目录，如 `compile test`）时不動。 */
+private fun graftStdlib(root: ModuleNode) {
+    if (STDLIB_MODULE in root.children) return
+    val test = root.children["test"] ?: return
+    val core = test.children[STDLIB_MODULE] ?: return
+    if (!isStdlibPackage(core)) return   // 用户的 test/core 普通模块不劫持
+    test.children.remove(STDLIB_MODULE)
+    root.children[STDLIB_MODULE] = repathModule(core, STDLIB_MODULE)
+}
+
+/** core 标准库包形态：只含子包目录、无直接 .subl 源文件。用户自己的 `core/`（目录下直接有源文件）
+ *  保持普通模块语义，不被当作标准库（M5 类测试里的用户 core 模块照常工作）。 */
+private fun isStdlibPackage(node: ModuleNode): Boolean =
+    node.files.isEmpty() && node.children.isNotEmpty()
+
+/** 子树重算 absPath（嫁接标准库用；settings 随后由 validate() 统一重载）。 */
+private fun repathModule(node: ModuleNode, absPath: String): ModuleNode {
+    val children = LinkedHashMap<String, ModuleNode>()
+    for ((n, c) in node.children) children[n] = repathModule(c, "$absPath/$n")
+    return ModuleNode(node.name, absPath, node.dir, children, ArrayList(node.files))
 }
 
 /** 读取模块的 settings 文件；文件不存在（或根模块）→ 空 mounts。语法错报 E-PARSE-SETTINGS。 */
@@ -76,7 +112,9 @@ fun loadSettings(node: ModuleNode, bag: DiagBag): ModuleSettings {
     }
 }
 
-/** 极简行式解析：每行 `mount <path> [as <alias>]`，忽略空行与 `#` 注释；语法错抛异常由调用方报 E-PARSE-SETTINGS。 */
+/** 极简行式解析：每行 `mount <path> [as <alias>]`，忽略空行与 `#` 注释；语法错抛异常由调用方报 E-PARSE-SETTINGS。
+ *  路径写法两等价：斜杠形 `core/math` 与**点分完整包名形 `core.math`**（core 统一标准库的挂载惯例）；
+ *  点分形在此归一化为斜杠形（目录名按约定不含点；斜杠形保持原样）。 */
 fun parseSettingsFile(file: File): ModuleSettings {
     val mounts = ArrayList<MountDecl>()
     var lineNo = 0
@@ -89,7 +127,9 @@ fun parseSettingsFile(file: File): ModuleSettings {
         val parts = line.split(Regex("\\s+"))
         if (parts[0] != "mount") fail("settings 只支持 `mount <路径> [as <别名>]` 一个指令")
         if (parts.size < 2) fail("mount 缺少路径")
-        val path = parts[1].trim('/')
+        val raw0 = parts[1].trim('/')
+        // 点分完整包名（core.math）→ 斜杠形（core/math）；已是斜杠形原样保留
+        val path = raw0.replace('.', '/')
         if (path.isEmpty() || path.split('/').any { it.isEmpty() }) fail("非法路径")
         var alias: String? = null
         if (parts.size >= 3) {
@@ -152,10 +192,11 @@ class ModuleTreeDriver(val tree: ModuleNode, val bag: DiagBag) {
 
     fun nodeOf(absPath: String): ModuleNode? = nodesByPath[absPath]
 
-    /** 校验：加载全部 settings、挂载目标存在性、本地名冲突、挂载链成环。 */
+    /** 校验：加载全部 settings、挂载完整包名展开、挂载目标存在性、本地名冲突、挂载链成环。 */
     private fun validate() {
+        for (m in tree.allModules()) m.settings = loadSettings(m, bag)
+        expandPackageMounts()   // 挂载完整包名：多段目标的前缀包隐式挂载（须在本地名冲突检查前完成）
         for (m in tree.allModules()) {
-            m.settings = loadSettings(m, bag)
             val lname = m.absPath.ifEmpty { "/" }
             val localNames = LinkedHashMap<String, String>()   // 本地可见名 → 描述
             m.children.keys.forEach { localNames.putIfAbsent(it, "子目录") }
@@ -171,29 +212,56 @@ class ModuleTreeDriver(val tree: ModuleNode, val bag: DiagBag) {
                     bag.error("E-DUP-DECL", "", "模块 $lname 内本地名 '$ln' 冲突：$prev 与 挂载 ${md.targetAbsPath}")
             }
         }
-        injectStdlibMounts()   // P2（决策 78）：stdlib 隐式挂载——必须在环检测前完成
+        injectCoreMounts()   // P2（决策 78，v4 改名）：core 标准库隐式挂载——必须在环检测前完成
         cycleDetect()
     }
 
-    /**
-     * P2（决策 78）：stdlib 隐式挂载（用户拍板 B——隐式挂载的 stdlib 模块）。
-     * 编译入口根目录下若有 `stdlib/` 子模块，自动为所有非根、非 stdlib 自身的模块追加 `mount stdlib`
-     * （本地名 "stdlib" 未被占用时）。根模块本就透过父→子可见 stdlib，无需注入。
-     */
-    private fun injectStdlibMounts() {
-        if ("stdlib" !in nodesByPath) return
+    /** 挂载完整包名（core 统一标准库）：目标为多段路径的挂载，其前缀包一并隐式挂载。
+     *  `mount core.math` 后 `core` 也成为本地可见模块名——限定调用 `core.math.gcd(...)` 可达，
+     *  与按目录名的 `math.gcd(...)` 等价；前缀本地名已被占用（子目录/别名/其他挂载目标）则跳过。 */
+    private fun expandPackageMounts() {
         for (m in tree.allModules()) {
-            // v3.0 修复：根模块（absPath=""）也注入 `mount stdlib`——`compile .` 入口在根时,
-            // 根模块裸名应能用同级 stdlib 的标准库符号（setOf/map/forEach 等），否则 E-UNBOUND-NAME。
-            // 根模块的 children 恒含 stdlib（父→子），故 occupied 对根不做 children 判定，强制注入。
-            if (m.absPath == "stdlib") continue
-            val occupied = !m.absPath.isEmpty() &&
-                (m.children.containsKey("stdlib") ||
-                    (m.settings?.mounts?.any { (it.alias ?: "") == "stdlib" || it.targetAbsPath == "stdlib" } ?: false))
-            if (!occupied) {
-                val st = m.settings ?: ModuleSettings(emptyList())
-                m.settings = ModuleSettings(st.mounts + MountDecl("stdlib", null))
+            val base = m.settings?.mounts ?: continue
+            val extras = LinkedHashMap<String, MountDecl>()
+            val occupied = m.children.keys.toMutableSet()
+            occupied += base.mapNotNull { it.alias ?: nodesByPath[it.targetAbsPath]?.name }
+            for (md in base) {
+                val segs = md.targetAbsPath.split('/')
+                if (segs.size < 2) continue
+                val pref = StringBuilder()
+                for (i in 0 until segs.size - 1) {
+                    if (pref.isNotEmpty()) pref.append('/')
+                    pref.append(segs[i])
+                    val pn = pref.toString()
+                    val node = nodesByPath[pn] ?: break
+                    if (node.name in occupied) continue
+                    extras[pn] = MountDecl(pn, null)
+                    occupied += node.name
+                }
             }
+            if (extras.isNotEmpty()) m.settings = ModuleSettings(base + extras.values)
+        }
+    }
+
+    /**
+     * P2（决策 78，v4 改名：stdlib → core）：core 标准库隐式挂载（用户拍板 B——隐式挂载的标准库模块）。
+     * 标准库是 core 包（`<根>/core/` 或 `<根>/test/core/`，见 STDLIB_DIR_CANDIDATES）：为所有非 core 自身的
+     * 模块追加 `mount core` 及其全部子包（`mount core.collection` 等）——core 包内符号（List/Ok/Err、
+     * size/filter 等裸名、Functor/Foldable 类型类）跨模块查找需整包可达。注入的挂载不经本地名冲突检查
+     * （子目录名优先于挂载名，visibleChild 先查子目录）；本地同名占用时仅跳过对应子包挂载。
+     */
+    private fun injectCoreMounts() {
+        val corePkg = nodesByPath[STDLIB_MODULE] ?: return
+        if (!isStdlibPackage(corePkg)) return   // 非标准库形态的 core（用户模块）不隐式挂载
+        val pkgs = corePkg.allModules()   // core 根 + 全部子包
+        for (m in tree.allModules()) {
+            // core 自身与子包不注入（自挂会成环：core 的子包经 core.settings 互引）
+            if (m.absPath == STDLIB_MODULE || m.absPath.startsWith("$STDLIB_MODULE/")) continue
+            val base = m.settings?.mounts ?: emptyList()
+            val localNames = m.children.keys.toMutableSet()
+            for (md in base) localNames += md.alias ?: nodesByPath[md.targetAbsPath]?.name ?: continue
+            val adds = pkgs.filter { it.name !in localNames }.map { MountDecl(it.absPath, null) }
+            if (adds.isNotEmpty()) m.settings = ModuleSettings(base + adds)
         }
     }
 
@@ -266,13 +334,15 @@ class ModuleTreeDriver(val tree: ModuleNode, val bag: DiagBag) {
     }
 
     /** v3.0：裸自由函数跨模块可见集合 = 本模块 + 自身及祖先**挂载**的传递可达（不含 addDesc 后代子树）。
-     *  语义：Kotlin 默认导入只在 stdlib/挂载间透传——root 裸调字模块函数仍不可见（M3 兄弟/子不可见约束保持）。 */
+     *  语义：Kotlin 默认导入只在 core/挂载间透传——root 裸调字模块函数仍不可见（M3 兄弟/子不可见约束保持）。 */
     fun bareVisibleOf(from: String): Set<String> {
         val start = nodesByPath[from] ?: return emptySet()
         val out = LinkedHashSet<String>()
         out += start.absPath
-        // v3.0 默认导入：根级保留名目录 stdlib（非挂载形态）= 全局库，任何模块裸名可见（Kotlin 默认导入语义）
-        nodesByPath["stdlib"]?.let { out += mountReach(it, LinkedHashSet()) }
+        // v4 默认导入：根级 core 标准库包（非挂载形态）= 全局库，任何模块裸名可见（Kotlin 默认导入语义）；
+        // core 是包目录，默认导入覆盖整包（core 根 + 全部子包）；用户自己的 core 模块不算
+        nodesByPath[STDLIB_MODULE]?.takeIf { isStdlibPackage(it) }
+            ?.let { corePkg -> out += corePkg.allModules().map { it.absPath } }
         var cur: ModuleNode? = start
         while (cur != null) {
             for (md in cur.settings?.mounts ?: emptyList()) {

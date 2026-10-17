@@ -1,6 +1,7 @@
 package sugared.functor.parser
 
 import sugared.functor.ast.*
+import sugared.functor.lexer.LexFailure
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -182,6 +183,52 @@ class ParserTest {
     }
 
     @Test
+    fun `ifis 智能解构脱糖为 when`() {
+        // `if (o is Some(e)) A else B` → `when (o) { is Some(e) -> A; else -> B }`（S-11）
+        val w = (stmtsOf("if (o is Some(e)) { print(e) } else { print(0) }")[0] as ExprStmt).expr as WhenExpr
+        assertEquals("o", (w.subject as NameRef).name)
+        assertNull(w.subjectBinding)
+        val a0 = w.arms[0].pattern as PatCtor
+        assertEquals("Some", a0.name)
+        assertEquals(listOf("e"), a0.args.map { (it as PatCtor).name })   // 裸名由语义层裁定为绑定
+        assertTrue(w.arms[1].pattern is PatElse)
+    }
+
+    @Test
+    fun `ifis 无 else 只留模式分支`() {
+        val w = (stmtsOf("if (o is Some(e)) { print(e) }")[0] as ExprStmt).expr as WhenExpr
+        assertEquals(1, w.arms.size)
+        assertTrue(w.arms[0].pattern is PatCtor)
+    }
+
+    @Test
+    fun `ifis 嵌套与枚举路径形态`() {
+        val w = (stmtsOf("if (o is Some(is Some(v))) { print(v) }")[0] as ExprStmt).expr as WhenExpr
+        val inner = (w.arms[0].pattern as PatCtor).args[0] as PatCtor
+        assertEquals("Some", inner.name)
+        val pathed = (stmtsOf("if (o is E::A(x)) { print(x) }")[0] as ExprStmt).expr as WhenExpr
+        assertEquals("E::A", (pathed.arms[0].pattern as PatCtor).name)
+    }
+
+    @Test
+    fun `ifis 不影响普通 if 与 is 类型测`() {
+        // 布尔条件的 if 仍是 IfExpr；`o is Rat`（无括号解构）仍是 TypeTestExpr 智能转换
+        val if1 = (stmtsOf("if (x > 0) { print(1) } else { print(2) }")[0] as ExprStmt).expr as IfExpr
+        assertTrue(if1.cond is BinExpr)
+        val if2 = (stmtsOf("if (o is Rat) { print(o) }")[0] as ExprStmt).expr as IfExpr
+        assertTrue(if2.cond is TypeTestExpr)
+    }
+
+    @Test
+    fun `ifis 组合条件报解析错`() {
+        // 模式绑定无法进入组合条件作用域——挡在解析期并给出改写指引
+        val ex = assertFailsWith<ParseFailure> {
+            parseSource("fun f(o: Optional[Nat]): Nat = if (o is Some(e) && e > 0) e else 0", "t.subl")
+        }
+        assertTrue(ex.message!!.contains("ifis"), "实际: ${ex.message}")
+    }
+
+    @Test
     fun `by 辅助策略两种形态`() {
         val st = stmtsOf("by [p]\nvar q = 1 by [r]")
         assertTrue(st[0] is ByStmt)
@@ -298,84 +345,41 @@ class ParserTest {
         parseSource(src, "diffuse.subl")
     }
 
-    // ============ v2.0 空安全：`T?` 类型后缀语法糖（决策 88-89） ============
+    // ============ 空安全语法已移除：`T?` / `?.` / `?:` / `>:` 均不再支持 ============
 
     @Test
-    fun `T问号 后缀 desugar 为 Optional`() {
-        // 形参位：`Rat?` → Optional[Rat]
-        val f = parseSource("fun f(x: Rat?): Null = null", "t")
+    fun `T问号 后缀语法糖已移除`() {
+        // 空安全糖移除：`Rat?` 不再是 Optional[Rat]——`?` 已从词法层删除，是未知字符
+        val e = assertFailsWith<LexFailure> { parseSource("fun f(x: Rat?): Null = null", "t") }
+        assertTrue(e.message!!.contains("不认识"), "实际: ${e.message}")
+    }
+
+    @Test
+    fun `elvis 空替代运算符已移除`() {
+        val e = assertFailsWith<LexFailure> { parseSource("fun f(): Null = a ?: b", "t") }
+        assertTrue(e.message!!.contains("不认识"), "实际: ${e.message}")
+    }
+
+    @Test
+    fun `safecall 安全调用运算符已移除`() {
+        val e = assertFailsWith<LexFailure> { parseSource("fun f(): Null = s?.length()", "t") }
+        assertTrue(e.message!!.contains("不认识"), "实际: ${e.message}")
+    }
+
+    @Test
+    fun `Optional 显式形态仍可用`() {
+        // 移除的是空安全语法糖，Optional 本身仍是普通枚举容器：显式 `Optional[T]` 正常解析
+        val f = parseSource("fun f(x: Optional[Rat]): Optional[Str] = null", "t")
         val d = (f.entries[0] as DeclEntry).decl as FunDecl
-        val p0 = d.params[0].type
-        assertEquals("Optional", p0.name)
-        assertEquals("Rat", p0.args.single().name)
-        // 返回位：T? 同样生效
-        val f2 = parseSource("fun g(): Str? = null", "t")
-        val r = ((f2.entries[0] as DeclEntry).decl as FunDecl).retType
-        assertEquals("Optional", r!!.name)
+        assertEquals("Optional", d.params[0].type.name)
+        assertEquals("Rat", d.params[0].type.args.single().name)
+        val r = d.retType!!
+        assertEquals("Optional", r.name)
         assertEquals("Str", r.args.single().name)
     }
 
     @Test
-    fun `T问号问号 嵌套叠加`() {
-        // `T??` = Optional[Optional[T]]
-        val f = parseSource("fun f(x: Nat??): Null = null", "t")
-        val p0 = ((f.entries[0] as DeclEntry).decl as FunDecl).params[0].type
-        assertEquals("Optional", p0.name)
-        assertEquals("Optional", p0.args.single().name)
-        assertEquals("Nat", p0.args.single().args.single().name)
-    }
-
-    @Test
-    fun `T问号 泛型实参位可用`() {
-        // `List[Nat?]` 内层元素类型也可空
-        val f = parseSource("fun f(xs: List[Nat?]): Null = null", "t")
-        val p0 = ((f.entries[0] as DeclEntry).decl as FunDecl).params[0].type
-        assertEquals("List", p0.name)
-        assertEquals("Optional", p0.args.single().name)
-    }
-
-    @Test
-    fun `T问号 带空格问号是独立token不坐后缀`() {
-        // 带空格的 `?` 不并入类型后缀（LEX 层 precededBySpace 区分）
-        val e = assertFailsWith<ParseFailure> { parseSource("fun f(x: Nat ?): Null = null", "t") }
-        assertTrue(e.message!!.contains("期望"), "实际: ${e.message}")
-    }
-
-    // ============ v2.0 空安全运算符（决策 88-92）：?: / ?. / >: / ? T ============
-
-    @Test
-    fun `elvis 空替代解析`() {
-        val v = (stmtsOf("var z = a ?: b")[0] as VarStmt).value as ElvisExpr
-        assertEquals("a", (v.left as NameRef).name)
-        assertEquals("b", (v.right as NameRef).name)
-    }
-
-    @Test
-    fun `safecall 标准形式解析`() {
-        val v = (stmtsOf("var z = s?.length()")[0] as VarStmt).value as SafeCallExpr
-        assertEquals("s", (v.target as NameRef).name)
-        assertEquals("length", v.name)
-        assertTrue(v.args.isEmpty())
-    }
-
-    @Test
-    fun `safecall 受限中缀解析`() {
-        // `a ?.f b`（INFIX-5/7）：同一行后继表达式作参数
-        val v = (stmtsOf("var z = a ?.add 3")[0] as VarStmt).value as SafeCallExpr
-        assertEquals("a", (v.target as NameRef).name)
-        assertEquals("add", v.name)
-        assertEquals(1, v.args.size)
-    }
-
-    @Test
-    fun `cast 安全转换解析`() {
-        val v = (stmtsOf("var z = a >: Rat")[0] as VarStmt).value as CastExpr
-        assertEquals("a", (v.target as NameRef).name)
-        assertEquals("Rat", v.type.name)
-    }
-
-    @Test
-    fun `typetest 问号类型测解析`() {
+    fun `typetest is 类型测解析`() {
         val v = (stmtsOf("var z = x is Rat")[0] as VarStmt).value as TypeTestExpr
         assertEquals("x", (v.target as NameRef).name)
         assertEquals("Rat", v.type.name)

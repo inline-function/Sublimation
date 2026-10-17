@@ -84,16 +84,22 @@ when {
     n == 0 -> print("零")
     else   -> print("正")
 }
+
+// ifis 智能解构（if 条件里的模式匹配，等同 Rust if let）：
+fun first(o: Optional[Nat]): Nat {
+    if (o is Some(v)) { return v }   // 匹配则解构 v 并提前返回
+    return 0
+}
 ```
 
-## 空安全
+## Optional 容器
 
-没有 `null` 裸奔——可空用 `Optional[T]`：
+没有 `null` 裸奔——可能缺失的值用 `Optional[T]` 显式表示，解构取值：
 
 ```subl
 var m: Optional[Nat] = Some(42)
 var v = when (m) { Some(x) -> x; None -> 0 }   // 解构取值
-var y = maybe?.field                             // 安全调用：None 时短路
+var w = if (m is Some(x)) x else 0               // 只取一种形状时用 ifis
 ```
 
 ## 结构体与类型类
@@ -140,12 +146,12 @@ m.get("a")                              // Some(1)
 
 ## 目录即模块
 
-每个目录 = 一个模块，`stdlib/` 自动挂载（不需 `mount`），跨模块自动解析：
+每个目录 = 一个模块，`core/` 标准库包自动挂载（不需 `mount`），跨模块自动解析：
 
 ```
 MY_PROJECT/
   main.subl          ← 根模块
-  stdlib/            ← 自动挂载（logic.subl + classic.subl + collection.subl）
+  core/              ← 标准库包（自动挂载：math/collection/string/logic/io… 子包）
   MY_PROJECT.settings ← mount 其他模块
 ```
 

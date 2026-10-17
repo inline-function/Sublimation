@@ -469,3 +469,5 @@ impl Tuple for (a, b, c) {
 class Functor[F[_]] {
     fun map[A, B](fa: F[A], f: (A) => B): F[B]
 }
+@theorem
+fun probeSz[T, x, y]: Null <size(Cons(x, Cons(y, Nil()))) = 2>

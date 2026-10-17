@@ -8,9 +8,6 @@ import sugared.functor.ast.*
 class Evaluator(
     private val hostFunctions: Map<String, (List<Any?>) -> Any?> = emptyMap(),
     private val hostStructs: Map<String, StructInfo> = emptyMap(),
-    // H3：Checker 留痕——变量位/表达式体的空安全自动解构（var x: Nat = Some(1) → x 存 1）
-    private val varUnwrapHits: Map<VarStmt, Expr> = emptyMap(),
-    private val funBodyUnwrapHits: Map<Expr, Expr> = emptyMap(),
 ) {
 
     /** 脚本自己声明的 struct/enum 构造子（运行时结构体元数据） */
@@ -22,7 +19,10 @@ class Evaluator(
     /** 类型类字典：方法名 → 候选列表（含 self 基名 / trait 名 / 实现方法）。多候选可检测（P4）。 */
     private val methodImpls = LinkedHashMap<String, MutableList<MethodImpl>>()
 
-    data class MethodImpl(val selfTypeName: String, val traitName: String, val fn: FunDecl)
+    data class MethodImpl(val selfTypeName: String, val traitName: String, val fn: FunDecl,
+                     /** v4 HKT 标记：impl 的 self 带类型实参（impl Functor for List[a]）→ 方法首形参即接收者（fa: List[A]）；
+                      *  普通类型类（impl X for Account）接收者走 self 变量。 */
+                     val hkt: Boolean = false)
 
     private fun lookupStruct(name: String): StructInfo? = hostStructs[name] ?: localStructs[name]
 
@@ -84,8 +84,10 @@ class Evaluator(
                     val selfTag = (d.self as? NamedType)?.name
                     if (traitName != null && selfTag != null) {
                         for (m in d.members) {
+                            // v4：self 带类型实参（List[a]/Optional[a]/Set[a]…）= HKT 形态，方法首形参即接收者
+                            val hkt = (d.self as? NamedType)?.args?.isNotEmpty() == true
                             methodImpls.getOrPut(m.name) { mutableListOf() }
-                                .add(MethodImpl(selfTag, traitName, m))
+                                .add(MethodImpl(selfTag, traitName, m, hkt))
                         }
                     }
                 }
@@ -124,7 +126,7 @@ class Evaluator(
     private fun evalStmt(stmt: Stmt, frame: ScriptFrame): ScriptValue {
         return when (stmt) {
             is VarStmt -> {
-                val v = evalExpr(varUnwrapHits[stmt] ?: stmt.value, frame)
+                val v = evalExpr(stmt.value, frame)
                 val mutable = "mut" in stmt.annotations
                 val ref = "ref" in stmt.annotations
                 val bound = bindCopy(v, ref, sourceIsRef(stmt.value, frame))
@@ -152,7 +154,7 @@ class Evaluator(
                 val v = stmt.expr?.let { evalExpr(it, frame) } ?: ScriptValue.Null
                 throw ReturnException(v)
             }
-            is BecauseStmt, is ThereforeStmt, is PlusBecauseStmt, is AxiomStmt, is ByStmt -> ScriptValue.Null
+            is BTSStmt, is WhenPropStmt, is StrategyStmt, is AxiomStmt, is ByStmt -> ScriptValue.Null
             is IfPropStmt -> ScriptValue.Null
             is ExistIntroStmt, is ExistsElimStmt -> ScriptValue.Null
             is UncheckedStmt -> evalStmt(stmt.inner, frame)
@@ -187,6 +189,7 @@ class Evaluator(
             is WhenExpr -> evalWhen(expr, frame)
             is LambdaExpr -> evalLambda(expr, frame)
             is AnonFunExpr -> evalAnonFun(expr, frame)
+            is IsPatExpr -> throw InterpreterError("IsPatExpr 只应出现在 when 模式里，不应作为表达式求值")
             is FieldExpr -> {
                 val obj = evalExpr(expr.target, frame)
                 when (obj) {
@@ -198,9 +201,8 @@ class Evaluator(
                 }
             }
             is StructCtorExpr -> evalStructCtor(expr, frame)
-            is SafeCallExpr -> evalSafeCall(expr, frame)
-            is ElvisExpr -> evalElvis(expr, frame)
             is TypeTestExpr -> evalTypeTest(expr, frame)
+        is IsPatExpr -> throw InterpreterError("ifis 哨兵未脱糖：`a is 模式` 只能出现在 if 条件位（parseIf 已脱糖为 when）")
             is TupleExpr -> ScriptValue.ListV(expr.items.map { evalExpr(it, frame) }.toMutableList())
             is InstExpr -> evalExpr(expr.target, frame)
             is VarExpr -> {
@@ -230,7 +232,6 @@ class Evaluator(
                 ScriptValue.Fun(boundFn)
             }
             is TaskExpr, is FlowExpr -> throw InterpreterError("异步特性不在脚本中支持")
-            is CastExpr -> evalCast(expr, frame)
             is QuantExpr -> ScriptValue.Null
             TopExpr, BotExpr -> ScriptValue.Null
             ReturnSym -> ScriptValue.Null
@@ -421,7 +422,7 @@ class Evaluator(
             }
             val tag = typeTag(target)
             val implFn = lookupTraitMethod(methodName, tag)
-            if (implFn != null) return invokeImplMethod(implFn, target, argVals, frame)
+            if (implFn != null) return invokeImplMethod(implFn.fn, target, argVals, frame, implFn.hkt)
             return callFunction(methodName, listOf(target) + argVals, frame, c.pos, c.namedArgs.mapValues { (_, ex) -> evalExpr(ex, frame) })
         }
         if (callee is NameRef) {
@@ -470,7 +471,9 @@ class Evaluator(
     }
 
     private fun callFunction(name: String, args: List<ScriptValue>, frame: ScriptFrame, pos: String, namedArgs: Map<String, ScriptValue> = emptyMap()): ScriptValue {
-        // @vararg 可变元组名字特判：stdlib listOf/setOf 的 body 是占位，编译模式 codegen 同名特判打包（§决策 61/E-TUPLE-VARARG）
+        // P51：in 为普通函数——中缀 a in b 解析为 in(a, b)；内建实现=区间/列表成员（evalIn）
+        if (name == "in" && args.size == 2) return evalIn(args[0], args[1], pos)
+        // @vararg 可变元组名字特判：core 标准库 listOf/setOf 的 body 是占位，编译模式 codegen 同名特判打包（§决策 61/E-TUPLE-VARARG）
         if (name == "listOf") return ScriptValue.ListV(args.toMutableList())
         if (name == "setOf") return buildSet(args)
         val hostFn = hostFunctions[name]
@@ -483,6 +486,15 @@ class Evaluator(
         if (fns.isNotEmpty()) {
             val fn = pickOverload(fns, args)
             return invokeFunDecl(fn, applyNamedArgs(fn, args, namedArgs), frame)
+        }
+        // v4（core 标准库）：自由形态的类型类方法（`fold(xs, 0, f)`）。core 把 fold/map 等声明在类型类 impl 里，
+        // 同名自由函数不存在时按首参运行时 tag 走字典分发——HKT 方法首形参即接收者（fa），剩余实参按序。
+        // 与编译模式自由形态（dict 首实参装配）对齐；同名自由函数存在时优先上面那条路（重载分派）。
+        val rec = args.firstOrNull()
+        if (rec != null) {
+            val mimpl = lookupTraitMethod(name, typeTag(rec))
+            if (mimpl != null)
+                return invokeImplMethod(mimpl.fn, rec, args.drop(1), frame, mimpl.hkt)
         }
         throw InterpreterError("未定义的函数「" + name + "」")
     }
@@ -502,7 +514,7 @@ class Evaluator(
             override fun call(args: List<Any?>): Any? {
                 val svArgs = args.map { fromHost(it) }
                 return try {
-                    val r = if (implFn != null) invokeImplMethod(implFn, receiver, svArgs, frame)
+                    val r = if (implFn != null) invokeImplMethod(implFn.fn, receiver, svArgs, frame, implFn.hkt)
                             else callFunction(name, listOf(receiver) + svArgs, frame, "<method-path>")
                     toHost(r)
                 } catch (ex: ReturnException) { toHost(ex.value) }
@@ -523,7 +535,7 @@ class Evaluator(
         return out
     }
 
-    /** setOf 实参打包为 SetCons 链（stdlib Set 是结构枚举：SetCons(h, t)） */
+    /** setOf 实参打包为 SetCons 链（core 标准库 Set 是结构枚举：SetCons(h, t)） */
     private fun buildSet(elems: List<ScriptValue>): ScriptValue {
         var acc: ScriptValue = ScriptValue.Struct("SetNil", LinkedHashMap())
         for (x in elems.reversed()) {
@@ -545,38 +557,43 @@ class Evaluator(
         }
         child.declareFunction(fn)
         return try {
-            fn.body?.let { evalExpr(funBodyUnwrapHits[it] ?: it, child) } ?: ScriptValue.Null
+            fn.body?.let { evalExpr(it, child) } ?: ScriptValue.Null
         } catch (e: ReturnException) { e.value }
     }
 
-    /** 类型类字典查找：按接收者运行时类型 tag 找同名方法。多候选立即报消歧错误（P4）。 */
-    private fun lookupTraitMethod(methodName: String, tag: String): FunDecl? {
+    /** 类型类字典查找：按接收者运行时类型 tag 找同名方法。多候选立即报消歧错误（P4）。
+     *  v4：返回完整 MethodImpl（含 HKT 标记——HKT 方法首形参即接收者，调用方据此装配实参）。 */
+    private fun lookupTraitMethod(methodName: String, tag: String): MethodImpl? {
         val cands = methodImpls[methodName]?.filter { it.selfTypeName == tag } ?: return null
         if (cands.isEmpty()) return null
         if (cands.size > 1) {
             val origins = cands.joinToString(", ") { it.traitName }
             throw InterpreterError("方法 " + methodName + " 在类型 " + tag + " 上有多个类型类实现（" + origins + "），无法消歧")
         }
-        return cands[0].fn
+        return cands[0]
     }
 
     /** 执行类型类 impl 方法：self 首参 + 显式形参。
-     *  H2（已知限制）：高阶类（F[_]，如 Functor 的 map(fa: F[A], f)）的 self 在 kind 应用位（fa），
-     *  需走「参数全注入」（self 不作为独立 self 变量而是首形参）；当前按普通类型类 self 隐式处理。
-     *  与 stdlib collection.subl 的 Functor 注释一致——HKT 点号式字典实参装配是语言侧待完善项，当前容器 map 由同名自由函数承载（不触发此路径）。 */
-    private fun invokeImplMethod(fn: FunDecl, selfVal: ScriptValue, args: List<ScriptValue>, frame: ScriptFrame): ScriptValue {
+     *  v4 HKT 修正：impl 的 self 带类型实参（impl Functor for List[a]）时，方法首形参即接收者
+     *  （fa: List[A]）——接收者注入首参位、用户实参后移一位；不用 self 变量。
+     *  普通类型类（impl X for Account）保持原语义：self 变量 + 结构体字段注入。 */
+    private fun invokeImplMethod(fn: FunDecl, selfVal: ScriptValue, args: List<ScriptValue>, frame: ScriptFrame, hkt: Boolean = false): ScriptValue {
         val child = ScriptFrame(frame)
-        child.declareVar("self", selfVal)
-        // impl 方法体内裸字段名解析为 self 的字段（Checker 的字段优先规则 / H-FIELD-SHADOW）；形参随后覆盖同名字段
-        if (selfVal is ScriptValue.Struct) {
-            for ((k, sv) in selfVal.fields) child.declareVar(k, sv)
+        if (!hkt) {
+            child.declareVar("self", selfVal)
+            // impl 方法体内裸字段名解析为 self 的字段（Checker 的字段优先规则 / H-FIELD-SHADOW）；形参随后覆盖同名字段
+            if (selfVal is ScriptValue.Struct) {
+                for ((k, sv) in selfVal.fields) child.declareVar(k, sv)
+            }
         }
-        fn.params.forEachIndexed { i, p ->
-            child.declareVar(p.name, args.getOrNull(i) ?: ScriptValue.Null, "mut" in p.annotations)
+        val argList = if (hkt && fn.params.isNotEmpty()) listOf(selfVal) + args else args
+        argList.forEachIndexed { i, v ->
+            val p = fn.params[i]
+            child.declareVar(p.name, v, "mut" in p.annotations)
         }
         child.declareFunction(fn)
         return try {
-            fn.body?.let { evalExpr(funBodyUnwrapHits[it] ?: it, child) } ?: ScriptValue.Null
+            fn.body?.let { evalExpr(it, child) } ?: ScriptValue.Null
         } catch (e: ReturnException) { e.value }
     }
 
@@ -789,7 +806,7 @@ class Evaluator(
             override fun call(args: List<Any?>): Any? {
                 val child = ScriptFrame(frame)
                 bindLambdaParams(child, e.params, args)
-                return try { toHost(evalExpr(funBodyUnwrapHits[e.body] ?: e.body, child)) }
+                return try { toHost(evalExpr(e.body, child)) }
                 catch (ex: ReturnException) { toHost(ex.value) }
             }
         }
@@ -806,7 +823,7 @@ class Evaluator(
             override fun call(args: List<Any?>): Any? {
                 val child = ScriptFrame(frame)
                 e.params.forEachIndexed { i, p -> child.declareVar(p.name, fromHost(args.getOrNull(i)), "mut" in p.annotations) }
-                return try { toHost(e.body?.let { evalExpr(funBodyUnwrapHits[it] ?: it, child) } ?: ScriptValue.Null) }
+                return try { toHost(e.body?.let { evalExpr(it, child) } ?: ScriptValue.Null) }
                 catch (ex: ReturnException) { toHost(ex.value) }
             }
         }
@@ -830,7 +847,7 @@ class Evaluator(
                 val child = ScriptFrame(frame)
                 fn.params.forEachIndexed { i, p -> child.declareVar(p.name, fromHost(args.getOrNull(i)), "mut" in p.annotations) }
                 child.declareFunction(fn)
-                return try { toHost(fn.body?.let { evalExpr(funBodyUnwrapHits[it] ?: it, child) } ?: ScriptValue.Null) }
+                return try { toHost(fn.body?.let { evalExpr(it, child) } ?: ScriptValue.Null) }
                 catch (ex: ReturnException) { toHost(ex.value) }
             }
         }
@@ -875,37 +892,10 @@ class Evaluator(
         return ScriptValue.Struct(e.struct, fields, mutables)
     }
 
-    // ============ 空安全 ============
-
-    private fun evalSafeCall(e: SafeCallExpr, frame: ScriptFrame): ScriptValue {
-        val target = evalExpr(e.target, frame)
-        if (target is ScriptValue.OptionalV && target.value == null) {
-            return ScriptValue.OptionalV(null)
-        }
-        val inner = if (target is ScriptValue.OptionalV) target.value else target
-        val argVals = e.args.map { evalExpr(it, frame) }
-        val r = callFunction(e.name, listOf(inner!!) + argVals, frame, e.pos)
-        return ScriptValue.OptionalV(r)
-    }
-
-    private fun evalElvis(e: ElvisExpr, frame: ScriptFrame): ScriptValue {
-        val left = evalExpr(e.left, frame)
-        if (left is ScriptValue.OptionalV && left.value == null) return evalExpr(e.right, frame)
-        if (left is ScriptValue.OptionalV) return left.value!!
-        return left
-    }
-
     private fun evalTypeTest(e: TypeTestExpr, frame: ScriptFrame): ScriptValue {
         val subject = evalExpr(e.target, frame)
         val p = PatIs(e.type, null)
         return ScriptValue.Bool(matchType(p, subject, frame))
-    }
-
-    private fun evalCast(e: CastExpr, frame: ScriptFrame): ScriptValue {
-        val subject = evalExpr(e.target, frame)
-        val p = PatIs(e.type, null)
-        return if (matchType(p, subject, frame)) ScriptValue.OptionalV(subject)
-        else ScriptValue.OptionalV(null)
     }
 
     // ============ 值转换（§4.6） ============

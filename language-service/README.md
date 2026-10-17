@@ -17,7 +17,7 @@ Sublimation 的 Language Server Protocol 实现，零第三方依赖，仅复用
 - **悬停** `textDocument/hover`（符号签名 + 关键字文档 + prelude 内建文档）
 - **跳转** `textDocument/definition`
 - **类型定义跳转** `textDocument/typeDefinition`（struct/enum/class/type 别名）
-- **补全** `textDocument/completion`（关键字 snippet + 全符号 + prelude 内建类型/函数/stdlib 符号 + `\xxx` Unicode 符号，如 `\forall`→∀、`\!=`→≠ + 成员上下文：`.`/`::` 后按 receiver 类型过滤字段/方法/构造子）
+- **补全** `textDocument/completion`（关键字 snippet + 全符号 + prelude 内建类型/函数/core 标准库符号 + `\xxx` Unicode 符号，如 `\forall`→∀、`\!=`→≠ + 成员上下文：`.`/`::` 后按 receiver 类型过滤字段/方法/构造子）
 - **大纲** `textDocument/documentSymbol`（层级：顶层声明 → 字段/构造子/参数/方法/局部变量）
 - **引用** `textDocument/references`（声明 + 全部 NameRef/字段/构造子引用）
 - **高亮** `textDocument/documentHighlight`
@@ -37,7 +37,7 @@ Sublimation 的 Language Server Protocol 实现，零第三方依赖，仅复用
 2. **全 AST 遍历器**（`walkExpr`/walkStmt`/walkPattern`/walkFunDecl`）：一次性采集「声明」（局部 var / 参数 / 字段 / 构造子 / 方法 / 局部 fun）与「引用」（NameRef / FieldExpr / SafeCallExpr / FunRefExpr / StructCtorExpr / PatCtor），供所有查询复用。
 3. **顶层 vs 局部**：`SymbolRef.topLevel` 区分大纲符号与局部符号——大纲只展示顶层，其余仅参与 hover/补全/引用；`SymbolRef.parent` 记录父声明名，用于层级大纲。
 4. **零依赖 JSON**：手写递归下降解析器 + 序列化器（`LspServer.Json`），转义规则覆盖引号/反斜杠/控制符/Unicode。
-5. **prelude**：载入时注入内建类型（`BASE_TYPES`）+ 内建函数（复用 `builtinPure/builtinimpure` 真实签名）+ 可选 stdlib 顶层符号；仅参与补全/悬停，不参与 definition（避免虚假位置）。
+5. **prelude**：载入时注入内建类型（`BASE_TYPES`）+ 内建函数（复用 `builtinPure/builtinimpure` 真实签名）+ 可选 core 标准库（`test/core`）顶层符号；仅参与补全/悬停，不参与 definition（避免虚假位置）。
 
 ## 已知限制（后续轮次）
 

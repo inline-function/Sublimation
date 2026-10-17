@@ -57,7 +57,7 @@ class JsCodeGen {
     private var funRefFree: Set<Expr> = emptySet()
     /** root doc《副作用与可变性控制》85-144：可变视图深拷贝留痕（绑定/赋值语句 → 需包 __dc） */
     private var deepCopyHits: Map<Node, Boolean> = emptyMap()
-    /** P9：stdlib 数组化 List 方法调用留痕（CallExpr → 方法名），据此映射 JS 原生数组方法，不再硬编码 stdlib__ 前缀 */
+    /** P9：core 标准库数组化 List 方法调用留痕（CallExpr → 方法名），据此映射 JS 原生数组方法，不再硬编码模块前缀 */
     private var listMethodHits: Map<CallExpr, String> = emptyMap()
     /** v3.0 特性 2：委托 impl 的展开方法表（checker 传参） */
     private var delegatedImpls: Map<ImplDecl, List<FunDecl>> = emptyMap()
@@ -79,8 +79,6 @@ class JsCodeGen {
     private val kindTraits = HashSet<String>()
     /** v2.0：每模块的重载函数名集合（模块路径 → 名），声明侧按此加后缀（与 Checker 侧 moduleHits 判定一致） */
     private val overloadsByUnit = HashMap<String, Set<String>>()
-    /** v2.0：空安全 SafeCall 调用点的 JS 方法名（Checker 登记；SafeCallExpr → 函数名） */
-    private var safeCallExprNames: Map<Expr, String> = emptyMap()
     /** v2.0 异步（决策 93）：@async 函数体内的挂起点调用（CallExpr → true），生成 `await fn(...)` */
     private var awaitHits: Map<CallExpr, Boolean> = emptyMap()
     /** v2.0 异步（§5.4）：源码用到 Channel 时注入 Channel 运行时 class（唯一的运行时组件，几十行） */
@@ -97,10 +95,6 @@ class JsCodeGen {
     private var rangeUsed = false
     /** v2.0 异步（CH-5）：receive 智能转换（CallExpr → true）→ codegen 解包 `(…)[0]` */
     private var receiveSmartHits: Map<CallExpr, Boolean> = emptyMap()
-    /** v2.0 空安全（变量位 Some→T）：var 声明初值被自动解构（VarStmt → 解构后表达式生成 JS） */
-    private var varUnwrapHits: Map<VarStmt, Expr> = emptyMap()
-    /** v2.0 空安全：函数表达式体 `fun f(): T = Some(x)` 解构（表达式体 Expr → 解构后表达式） */
-    private var funBodyUnwrapHits: Map<Expr, Expr> = emptyMap()
     /** v2.0 异步（root doc《异步》）：Flow 体 emit(v) 调用点 → codegen 生成 yield v */
     private var flowEmitHits: Map<CallExpr, Boolean> = emptyMap()
     /** HKT（《高阶类型.md》HKT-D2）：带参类型类方法调用点 → kind 应用位下标（点号式 `xs.map(f)` 的 fa 位）。
@@ -109,8 +103,8 @@ class JsCodeGen {
     /** v2.0 基本库（内建 JS 实现）：**数组化 List** 的构造子名集合（名为 `List` 的枚举的构造子）。
      *  List 在 JS 层直接表示为数组：`Nil()` → `[]`、`Cons(h,t)` → `[h, ...t]`，
      *  模式解构 `Nil ->` / `Cons(h,t) ->` 翻译为 `length`/`slice`——
-     *  语义层（enum List 声明、when 检查、Optional 空安全）完全不动，纯 codegen 表示变换。
-     *  仅按枚举名 List 收集，用户自定义 `enum Foo { Nil() }` 不受影响；单文件无 stdlib 时集合为空。 */
+     *  语义层（enum List 声明、when 检查、Optional 枚举）完全不动，纯 codegen 表示变换。
+     *  仅按枚举名 List 收集，用户自定义 `enum Foo { Nil() }` 不受影响；单文件无 core 标准库时集合为空。 */
     private val listCtorSet = LinkedHashSet<String>()
     /** 修复（#3）：@theorem 定理函数的 JS 顶层名（运行时擦除，值级调用 → null） */
     private val theoremJsNames = LinkedHashSet<String>()
@@ -131,8 +125,6 @@ class JsCodeGen {
         rangeHits: Map<CallExpr, String> = emptyMap(),
         rangeUsed: Boolean = false,
         receiveSmartHits: Map<CallExpr, Boolean> = emptyMap(),
-        varUnwrapHits: Map<VarStmt, Expr> = emptyMap(),
-        funBodyUnwrapHits: Map<Expr, Expr> = emptyMap(),
         flowEmitHits: Map<CallExpr, Boolean> = emptyMap(),
         hktKindPosHits: Map<CallExpr, Int> = emptyMap(),
         funRefTargets: Map<Expr, String> = emptyMap(),
@@ -141,7 +133,7 @@ class JsCodeGen {
         delegatedImpls: Map<ImplDecl, List<FunDecl>> = emptyMap(),
         deepCopyHits: Map<Node, Boolean> = emptyMap(),
         listMethodHits: Map<CallExpr, String> = emptyMap(),
-    ): String = generateUnits(listOf("" to file), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, mutexUsed, atomicUsed, flowUsed, rangeHits, rangeUsed, receiveSmartHits, varUnwrapHits, funBodyUnwrapHits, flowEmitHits, hktKindPosHits, funRefTargets, funRefFree, lambdaDestructKeys, delegatedImpls, deepCopyHits, listMethodHits)
+    ): String = generateUnits(listOf("" to file), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, mutexUsed, atomicUsed, flowUsed, rangeHits, rangeUsed, receiveSmartHits, flowEmitHits, hktKindPosHits, funRefTargets, funRefFree, lambdaDestructKeys, delegatedImpls, deepCopyHits, listMethodHits)
 
     /** M8：全部模块合成一个 JS（顶层名字带模块前缀，根无前缀） */
     fun generateUnits(
@@ -160,8 +152,6 @@ class JsCodeGen {
         rangeHits: Map<CallExpr, String> = emptyMap(),
         rangeUsed: Boolean = false,
         receiveSmartHits: Map<CallExpr, Boolean> = emptyMap(),
-        varUnwrapHits: Map<VarStmt, Expr> = emptyMap(),
-        funBodyUnwrapHits: Map<Expr, Expr> = emptyMap(),
         flowEmitHits: Map<CallExpr, Boolean> = emptyMap(),
         hktKindPosHits: Map<CallExpr, Int> = emptyMap(),
         funRefTargets: Map<Expr, String> = emptyMap(),
@@ -186,8 +176,6 @@ class JsCodeGen {
         this.rangeHits = rangeHits
         this.rangeUsed = rangeUsed
         this.receiveSmartHits = receiveSmartHits
-        this.varUnwrapHits = varUnwrapHits
-        this.funBodyUnwrapHits = funBodyUnwrapHits
         this.flowEmitHits = flowEmitHits
         this.hktKindPosHits = hktKindPosHits
         this.funRefTargets = funRefTargets
@@ -256,7 +244,7 @@ class JsCodeGen {
         line("  if (typeof v === \"object\" && Object.keys(v).length === 1 && \"tag\" in v) return String(v.tag);")
         line("  return String(v);")
         line("};")
-        // v2.0 空安全结构判定（决策 88-92，§7）：基本类型用 typeof，枚举/具名用 tag，函数 typeof===
+        // `is` 类型测的结构判定（v2.1 由空安全 `?`/`>:` 迁移）：基本类型用 typeof，枚举/具名用 tag，函数 typeof===
         // JS 不记录类型信息 → 结构判定（与 == 结构相等同源）；v1 纯结构、零 tag 名义区分。
         line("const __isa = (v, t) => {")
         line("  if (t === \"Nat\" || t === \"Int\" || t === \"Rat\") return typeof v === \"number\";")
@@ -576,7 +564,7 @@ class JsCodeGen {
             .map { "d_${it.constraint}_${it.name}" }
         // P4（v2.1）：解构参数的 JS 形参用合成名 __dtN，函数体开头 const 拆解分量
         val ps = (slots + fn.params.mapIndexed { i, p -> if (p.destruct != null) "__dt$i" else mangle(p.name) }).joinToString(", ")
-        // v2.0 重载：本模块内同名 >1 的函数按首参标签唯一化（`stdlib__map$List`），与 Checker 侧 moduleHits 同名规则一致
+        // v2.0 重载：本模块内同名 >1 的函数按首参标签唯一化（`core_collection__map$List`），与 Checker 侧 moduleHits 同名规则一致
         val base = moduleJsName(currentPrefix, fn.name)
         val jsName = if (overloadsByUnit[currentPrefix]?.contains(fn.name) == true) "$base\$${fnTag(fn)}" else base
         // v2.0 异步（决策 93）：@async 函数与 main（天然 @async，异步 §5.2）生成 `async function`——体内挂起点（awaitHits）生成 await
@@ -598,7 +586,7 @@ class JsCodeGen {
         }
         when (body) {
             is BlockExpr -> genBlockBody(body)
-            else -> line("return ${funBodyUnwrapHits[body]?.let { expr(it) } ?: expr(body)};")
+            else -> line("return ${expr(body)};")
         }
         indent--
         line("}")
@@ -656,8 +644,8 @@ class JsCodeGen {
 
     private fun genStmt(s: Stmt) {
         when (s) {
-            // v3.0 特性 5/6：∵∴ 与 if[p] 是纯证明构造——不产生运行时代码
-            is BecauseStmt, is ThereforeStmt, is PlusBecauseStmt, is IfPropStmt, is ExistIntroStmt, is ExistsElimStmt, is FunStmt -> {}
+            // 根文档《手动证明》：因为-所以 / 非真即假 / 分类讨论 / 策略 是纯证明构造——不产生运行时代码
+            is BTSStmt, is WhenPropStmt, is StrategyStmt, is IfPropStmt, is ExistIntroStmt, is ExistsElimStmt, is FunStmt -> {}
             is VarStmt -> {
                 val destruct = s.destruct
                 if (destruct != null) {
@@ -665,7 +653,7 @@ class JsCodeGen {
                     line("$kw [${destruct.joinToString(", ") { mangle(it) }}] = ${dcWrap(s, expr(s.value))};")
                 } else {
                     val kw = if ("mut" in s.annotations) "let" else "const"
-                    val initJs = varUnwrapHits[s]?.let { expr(it) } ?: expr(s.value)
+                    val initJs = expr(s.value)
                     line("$kw ${mangle(s.name)} = ${dcWrap(s, initJs)};")
                 }
             }
@@ -679,6 +667,7 @@ class JsCodeGen {
                 // 分支里的 return 因此能真正退出函数。值位 if（var 初值/尾表达式）仍走 expr→IIFE。
                 val x = s.expr
                 if (x is IfExpr) ifStmtFlatten(x)
+                else if (x is WhenExpr) whenStmtFlatten(x)   // M4 同款：含 ifis 脱糖形态，提前 return 能退出函数
                 else line("${expr(x)};")
             }
             // 第四轮：显式 return 语句发射为真 return（仅在函数体/块体方法的展平语境出现）
@@ -704,7 +693,7 @@ class JsCodeGen {
                     else -> mangle(full)
                 }
             }
-            // v2.0 基本库：数组化 List 的零参构造子值引用 → 空数组（工厂已跳过生成，不能调 stdlib__Nil()）
+            // v2.0 基本库：数组化 List 的零参构造子值引用 → 空数组（工厂已跳过生成，不能调 core_collection__Nil()）
             e.name in nullaryCtors && e.name in listCtorSet -> "[]"
             e.name in nullaryCtors -> "${moduleHits[e] ?: mangle(e.name)}()"       // 零参构造子值引用→调用
             // P0（M8）：全局引用按 Checker 留痕的 mangle 名；局部变量/字段不留痕
@@ -721,10 +710,6 @@ class JsCodeGen {
         BotExpr -> "false"
         is UniExpr -> "(${unop(e.op)}${expr(e.operand)})"
         is BinExpr -> bin(e)
-        // v2.0 空安全（决策 88-92）
-        is ElvisExpr -> { val t = expr(e.left); "(() => { const _v = $t; return _v.tag === \"None\" ? ${expr(e.right)} : _v[0]; })()" }
-        is SafeCallExpr -> safeCallJs(e)
-        is CastExpr -> { val t = expr(e.target); "(() => { const _v = $t; return __isa(_v, \"${e.type.name}\") ? Some(_v) : None(); })()" }
         is TypeTestExpr -> "(__isa(${expr(e.target)}, \"${e.type.name}\"))"
         // v2.0 异步（决策 93，异步 §5.3）：Task { … } → 惰性任务对象。start() 惰性创建 async 函数并执行；
         // join() 返回 Promise（await 在调用点）；isAlive() 简化为「是否已 start」。
@@ -735,8 +720,12 @@ class JsCodeGen {
             // v3.0（完美函数类型）：方法路径作值（xs.map / x.m 无括号）→ 绑定 self 的闭包；
             // 其余走 P0 跨模块限定引用留痕名 / 字段读取
             val ref = funRefTargets[e]
-            if (ref != null) "(...a) => $ref(${expr(e.target)}, ...a)"
-            else moduleHits[e] ?: "${expr(e.target)}.${mangle(e.name)}"
+            if (ref != null) {
+                // v4：类型类 impl 方法（字典方法）作值——字典名带点号（dict_X.m）：闭包首参补 dict 自身
+                val di = ref.indexOf('.')
+                if (di > 0) "(...a) => $ref(${ref.substring(0, di)}, ${expr(e.target)}, ...a)"
+                else "(...a) => $ref(${expr(e.target)}, ...a)"
+            } else moduleHits[e] ?: "${expr(e.target)}.${mangle(e.name)}"
         }
         // P6（决策 95）：`o::f` 方法引用 → 绑定 self 的闭包 `(…a) => f(o, …a)`
         is FunRefExpr -> {
@@ -778,6 +767,7 @@ class JsCodeGen {
         is QuantExpr -> expr(e.body)    // 量词命题擦除
         is VarExpr -> varExprJs(e)
         is AnonFunExpr -> anonFun(e)
+        is IsPatExpr -> throw RuntimeException("IsPatExpr 只应出现在 when 模式里，不应作为表达式 codegen")
         is ByExpr -> expr(e.target)     // by 后缀擦除，只留目标值
     }
 
@@ -797,6 +787,7 @@ class JsCodeGen {
             return "true"   // 语义层已拦；兜底
         }
         if (e.op == "..") return "__range(${expr(e.left)}, ${expr(e.right)})"   // v3.0 特性 3：惰性 Range（非 List 数组）
+        if (e.op == "^") return "Math.pow(${expr(e.left)}, ${expr(e.right)})"   // 根文档：`^` 幂
         val op = when (e.op) {
             "+", "-", "*", "/", "%", "<", ">", "<=", ">=" -> e.op
             // `==` 是结构相等（决策 32/53）：struct 全字段相等即相等，禁重写
@@ -823,23 +814,6 @@ class JsCodeGen {
             "<", ">", "<=", ">=" -> if (a.size == 2) "(${a[0]} ${e.op} ${a[1]})" else "false"
             else -> "undefined"   // 未收录的前缀符号：不应出现（解析器 symbolCallStart 限定）
         }
-    }
-
-    /** v2.0 空安全 SafeCall：`a?.f(b)` → a 为 Some 时调 f(a0, b…) 并包 Some；None 短路返回 None。
-     *  方法名从 moduleHits[e] 取（Checker 已按接收者解构后的类型路由）；`
-     *  非 Optional 是语义已报错，genExpr 不会走到——防御性返回 None()。 */
-    private fun safeCallJs(e: SafeCallExpr): String {
-        val t = expr(e.target)
-        val inner = "_v[0]"
-        // 内建零参值方法（Str.length 等）：JS 原生 `.property` 后缀形态（无参）；解构后直接访问。
-        // 其余（stdlib 自由函数/重载方法）走函数调用 `fn(inner, args…)`。
-        if (e.name == "length" && e.args.isEmpty()) {
-            return "(() => { const _v = $t; return _v.tag === \"None\" ? None() : Some($inner.length); })()"
-        }
-        val fn = moduleHits[e] ?: jsMangle(e.name)
-        val argJs = e.args.joinToString(", ") { expr(it) }
-        val callJs = "$fn($inner${if (argJs.isNotEmpty()) ", $argJs" else ""})"
-        return "(() => { const _v = $t; return _v.tag === \"None\" ? None() : Some($callJs); })()"
     }
 
     /** v2.0 异步（决策 93，异步 §5.3）：Task { … } → 惰性任务对象。
@@ -911,6 +885,14 @@ class JsCodeGen {
             val js = moduleHits[callee] ?: (callee as? NameRef)?.let { mangle(it.name) }
             if (js != null && js in theoremJsNames) return "null"
         }
+        // P51：in 为普通函数——中缀 a in b 解析为 in(a, b)；值代码生成同原 BinExpr 语义
+        // x in lo..hi → 闭区间比较；Range 变量成员由语义层拦（V1），兜底 true
+        if (name == "in" && e.args.size == 2) {
+            val rr = e.args[1]
+            if (rr is BinExpr && rr.op == "..")
+                return "(${expr(rr.left)} <= ${expr(e.args[0])} && ${expr(e.args[0])} <= ${expr(rr.right)})"
+            return "true"
+        }
         // 构造子/枚举名：Bool 的 true/false 特判
         if (name == "true") return "true"
         if (name == "false") return "false"
@@ -934,21 +916,21 @@ class JsCodeGen {
             return "console.log($a)"
         }
         // P3 IO（v1.0 计划 §5）：node 原语，内联 require('fs')（node 模块缓存，无性能问题）
-        // P5（决策 81）：readFile/writeFile/readLine 返回 Result[_, Str]——try/catch 包 Ok/Err（stdlib/result.subl）
+        // P5（决策 81）：readFile/writeFile/readLine 返回 Result[_, Str]——try/catch 包 Ok/Err（core/collection/result.subl）
         // v2.0 异步（异步 §6 阶段 6）：IO 标 @async——同步实现 + await 挂起点（await 非 Promise 值无害，但保持产物语义一致）
         if (name == "readLine" && e.args.isEmpty())
-            return awaited(e, "(() => { try { const b = Buffer.alloc(4096); const n = require('fs').readSync(0, b, 0, 4096, null); if (n <= 0) return stdlib__Err(\"EOF\"); return stdlib__Ok(b.slice(0, n).toString('utf8').trim()); } catch (x) { return stdlib__Err(x.message); } })()")
+            return awaited(e, "(() => { try { const b = Buffer.alloc(4096); const n = require('fs').readSync(0, b, 0, 4096, null); if (n <= 0) return core_collection__Err(\"EOF\"); return core_collection__Ok(b.slice(0, n).toString('utf8').trim()); } catch (x) { return core_collection__Err(x.message); } })()")
         if (name == "readFile" && e.args.size == 1)
-            return awaited(e, "(() => { try { return stdlib__Ok(require('fs').readFileSync(${expr(e.args[0])}, 'utf8')); } catch (x) { return stdlib__Err(x.message); } })()")
+            return awaited(e, "(() => { try { return core_collection__Ok(require('fs').readFileSync(${expr(e.args[0])}, 'utf8')); } catch (x) { return core_collection__Err(x.message); } })()")
         if (name == "writeFile" && e.args.size == 2)
-            return awaited(e, "(() => { try { require('fs').writeFileSync(${expr(e.args[0])}, ${expr(e.args[1])}); return stdlib__Ok(null); } catch (x) { return stdlib__Err(x.message); } })()")
+            return awaited(e, "(() => { try { require('fs').writeFileSync(${expr(e.args[0])}, ${expr(e.args[1])}); return core_collection__Ok(null); } catch (x) { return core_collection__Err(x.message); } })()")
         // v2.0 标准库补全：IO 扩展——appendFile/readDir 返回 Result（同 readFile 的 try/catch 包 Ok/Err）
         if (name == "appendFile" && e.args.size == 2)
-            return awaited(e, "(() => { try { require('fs').appendFileSync(${expr(e.args[0])}, ${expr(e.args[1])}); return stdlib__Ok(null); } catch (x) { return stdlib__Err(x.message); } })()")
+            return awaited(e, "(() => { try { require('fs').appendFileSync(${expr(e.args[0])}, ${expr(e.args[1])}); return core_collection__Ok(null); } catch (x) { return core_collection__Err(x.message); } })()")
         if (name == "fileExists" && e.args.size == 1)
             return "require('fs').existsSync(${expr(e.args[0])})"
         if (name == "readDir" && e.args.size == 1)
-            return awaited(e, "(() => { try { return stdlib__Ok(require('fs').readdirSync(${expr(e.args[0])})); } catch (x) { return stdlib__Err(x.message); } })()")
+            return awaited(e, "(() => { try { return core_collection__Ok(require('fs').readdirSync(${expr(e.args[0])})); } catch (x) { return core_collection__Err(x.message); } })()")
         if (name == "timeNow" && e.args.isEmpty()) return "Date.now()"
         if (name == "rand" && e.args.isEmpty()) return "Math.random()"
         if (name == "getArgs" && e.args.isEmpty())
@@ -957,6 +939,65 @@ class JsCodeGen {
         // v2.0 异步（异步 §6 阶段 6）：sleep(ms) 显式延时——Promise + setTimeout，恒为挂起点
         if (name == "sleep" && e.args.size == 1)
             return awaited(e, "new Promise(r => setTimeout(r, ${expr(e.args[0])}))")
+        // ---- core.async 内建运行时层（@root 无体签名 → 编译期 JS 特判；全部 @async 挂起点）----
+        // 内部局部名一律 __ 前缀（与 __dc/__flow 等运行时约定同层），避免内联实参表达式被 IIFE 内同名 const 遮蔽（TDZ）。
+        // delay：sleep 的语义包装（显式延时，毫秒）。
+        if (name == "delay" && e.args.size == 1)
+            return awaited(e, "new Promise(r => setTimeout(r, ${expr(e.args[0])}))")
+        // runBoth：先启动 f（不阻塞），主路径继续 g，join 等 f 收尾。
+        if (name == "runBoth" && e.args.size == 2) {
+            val f0 = expr(e.args[0]); val g0 = expr(e.args[1])
+            return awaited(e, "(async () => { const __pf = Promise.resolve().then(() => ($f0)()); await Promise.resolve(); await ($g0)(); await __pf; })()")
+        }
+        // runSeq：先做完 f 再做 g（串行语义）。
+        if (name == "runSeq" && e.args.size == 2) {
+            val f0 = expr(e.args[0]); val g0 = expr(e.args[1])
+            return awaited(e, "(async () => { await ($f0)(); await ($g0)(); })()")
+        }
+        // Flow 收集三件套：迭代冷流生成器（.gen()）。collectToList 发送序保持成表；collectCount 计数；collectAll 谓词短路。
+        if (name == "collectToList" && e.args.size == 1) {
+            val fl = expr(e.args[0])
+            return awaited(e, "(async () => { const __out = []; for await (const __v of ($fl).gen()) __out.push(__v); return __out; })()")
+        }
+        if (name == "collectCount" && e.args.size == 1) {
+            val fl = expr(e.args[0])
+            return awaited(e, "(async () => { let __n = 0; for await (const __v of ($fl).gen()) __n = __n + 1; return __n; })()")
+        }
+        if (name == "collectAll" && e.args.size == 2) {
+            val fl = expr(e.args[0]); val p0 = expr(e.args[1])
+            return awaited(e, "(async () => { for await (const __v of ($fl).gen()) { if (! ($p0)(__v)) return false; } return true; })()")
+        }
+        // Mutex 临界区：withMutex = m.withLock(f)；bumpCounter/bumpPair 自增计数器（读-改-写复合操作）。
+        if (name == "withMutex" && e.args.size == 2) {
+            val m0 = expr(e.args[0]); val f0 = expr(e.args[1])
+            return awaited(e, "($m0).withLock($f0)")
+        }
+        if (name == "bumpCounter" && e.args.size == 2) {
+            val m0 = expr(e.args[0]); val c0 = expr(e.args[1])
+            return awaited(e, "(async () => { await ($m0).withLock(() => { ($c0).n = ($c0).n + 1; }); })()")
+        }
+        if (name == "bumpPair" && e.args.size == 4) {
+            val a0 = expr(e.args[0]); val a1 = expr(e.args[1]); val a2 = expr(e.args[2]); val a3 = expr(e.args[3])
+            return awaited(e, "(async () => { await ($a0).withLock(() => { ($a2).n = ($a2).n + 1; }); await ($a1).withLock(() => { ($a3).n = ($a3).n + 1; }); })()")
+        }
+        // Channel 配套四件套：channelFromList（容量取列表大小，发完即关）、sendAll（逐一发送）、
+        // channelDrain（收到关闭为止，FIFO）、channelPipe（src 收一个往 dst 发一个，src 关则关 dst）。
+        if (name == "channelFromList" && e.args.size == 1) {
+            val xs = expr(e.args[0])
+            return awaited(e, "(async () => { const __xs = $xs; const __ch = new Channel(__xs.length); for (const __v of __xs) await __ch.send(__v); __ch.close(); return __ch; })()")
+        }
+        if (name == "sendAll" && e.args.size == 2) {
+            val ch = expr(e.args[0]); val xs = expr(e.args[1])
+            return awaited(e, "(async () => { for (const __v of ($xs)) await ($ch).send(__v); })()")
+        }
+        if (name == "channelDrain" && e.args.size == 1) {
+            val ch = expr(e.args[0])
+            return awaited(e, "(async () => { const __out = []; for (;;) { const __v = await ($ch).receive(); if (__v.tag === \"None\") break; __out.push(__v[0]); } return __out; })()")
+        }
+        if (name == "channelPipe" && e.args.size == 2) {
+            val src = expr(e.args[0]); val dst = expr(e.args[1])
+            return awaited(e, "(async () => { for (;;) { const __v = await ($src).receive(); if (__v.tag === \"None\") break; await ($dst).send(__v[0]); } ($dst).close(); })()")
+        }
         // P1 字符串内建（v1.0 计划 §3）：JS 原生映射，与 print 同款特判（在内建之上、模块前缀留痕之前）
         if (name == "concat" && e.args.size == 2)
             return "(${expr(e.args[0])} + ${expr(e.args[1])})"
@@ -991,13 +1032,15 @@ class JsCodeGen {
         // P10 浮点数 Rat（决策 86，候选 A：IEEE double via JS Number）：JS 原生映射
         if (name == "toRat" && e.args.size == 1)
             return "Number(${expr(e.args[0])})"
+        if (name == "toReal" && e.args.size == 1)
+            return "Number(${expr(e.args[0])})"
         if (name == "parseRat" && e.args.size == 1)
             return "(() => { const v = Number(String(${expr(e.args[0])})); return Number.isNaN(v) ? None() : Some(v); })()"
         if (name == "abs" && e.args.size == 1) return "Math.abs(${expr(e.args[0])})"
-        if (name == "sqrt" && e.args.size == 1) return "Math.sqrt(${expr(e.args[0])})"
-        if (name == "floor" && e.args.size == 1) return "Math.floor(${expr(e.args[0])})"
+                if (name == "floor" && e.args.size == 1) return "Math.floor(${expr(e.args[0])})"
         if (name == "ceil" && e.args.size == 1) return "Math.ceil(${expr(e.args[0])})"
         if (name == "pow" && e.args.size == 2) return "Math.pow(${expr(e.args[0])}, ${expr(e.args[1])})"
+        if (name == "panic") return "(() => { throw new Error('panic: unreachable') })()"
         // v2.0 标准库补全：Math 扩展
         if (name == "mathMin" && e.args.size == 2) return "Math.min(${expr(e.args[0])}, ${expr(e.args[1])})"
         if (name == "mathMax" && e.args.size == 2) return "Math.max(${expr(e.args[0])}, ${expr(e.args[1])})"
@@ -1007,7 +1050,7 @@ class JsCodeGen {
         if (name == "mathSin" && e.args.size == 1) return "Math.sin(${expr(e.args[0])})"
         if (name == "mathCos" && e.args.size == 1) return "Math.cos(${expr(e.args[0])})"
         if (name == "mathTan" && e.args.size == 1) return "Math.tan(${expr(e.args[0])})"
-        // v2.0 基本库（内建 JS 实现）：JSON —— 编译成 JS 原生 JSON.parse / 对象·数组访问；语义保空安全（Optional）
+        // v2.0 基本库（内建 JS 实现）：JSON —— 编译成 JS 原生 JSON.parse / 对象·数组访问；失败返回 None（Optional 包装）
         // jsonParse 解析失败（语法错/非法 JSON）→ None()，不抛异常——与语言"无运行时异常"哲学一致
         // 临时变量名用 __jv + 计数器，避免实参恰叫 v/o 时 TDZ（const v = v）
         if (name == "jsonParse" && e.args.size == 1)
@@ -1045,8 +1088,8 @@ class JsCodeGen {
             return "(() => { const $n = $j; return Array.isArray($n) ? Some($n) : None(); })()"
         }
         // v2.0 基本库（内建 JS 实现）：**List 方法特判成 JS 原生数组方法**——
-        // P9：List 方法映射改走 checker 留痕（listMethodHits：调用点已由 Checker 判定为 stdlib 数组化 List 方法），
-        // 不再在 codegen 硬编码 stdlib__ 前缀字符串比较——仅命中已留痕的方法名才走原生数组方法。
+        // P9：List 方法映射改走 checker 留痕（listMethodHits：调用点已由 Checker 判定为 core 标准库数组化 List 方法），
+        // 不再在 codegen 硬编码模块前缀字符串比较——仅命中已留痕的方法名才走原生数组方法。
         // 数组化 List = JS 数组：map→.map、filter→.filter、fold→.reduce、size→.length……语义同旧（函数式、无原地修改）。
         val listMethodName = listMethodHits[e]
         if (name != null && listMethodName == name) {
@@ -1056,7 +1099,7 @@ class JsCodeGen {
                 // —— 元信息：O(1) 原生 ——
                 "size", "listLength" -> if (eArgs.size == 1) return "($xs).length"
                 "isEmpty" -> if (eArgs.size == 1) return "($xs).length === 0"
-                // —— 访问：空安全（Optional 包装，无运行时异常）——
+                // —— 访问：Optional 包装（缺失键返回 None，无运行时异常）——
                 "head" -> if (eArgs.size == 1) return "(() => { const a = $xs; return a.length ? Some(a[0]) : None(); })()"
                 "last" -> if (eArgs.size == 1) return "(() => { const a = $xs; return a.length ? Some(a[a.length - 1]) : None(); })()"
                 "elementAt" -> if (eArgs.size == 2) {
@@ -1095,7 +1138,7 @@ class JsCodeGen {
                 "forEach" -> if (eArgs.size == 2) { val f = expr(eArgs[1]); return "($xs).forEach(x => ($f)(x))" }
             }
         }
-        // v3.0：setOf（@list 变长实参）→ SetCons 链（stdlib Set 是结构枚举：SetCons(h, t)）
+        // v3.0：setOf（@list 变长实参）→ SetCons 链（core 标准库 Set 是结构枚举：SetCons(h, t)）
         if (name == "setOf" && moduleHits[callee] != null) {
             val modP = moduleHits.getValue(callee).substringBeforeLast("__setOf")
             val nil = if (modP.isEmpty()) "SetNil" else "${modP}__SetNil"
@@ -1204,7 +1247,7 @@ class JsCodeGen {
 
     /** 语句转单行字符串（供 IIFE 内联；var/assign/expr 足够，axiom/by 擦除为空） */
     private fun stmtStr(s: Stmt): String = when (s) {
-        is BecauseStmt, is ThereforeStmt, is PlusBecauseStmt, is IfPropStmt, is ExistIntroStmt, is ExistsElimStmt, is FunStmt -> ""
+        is BTSStmt, is WhenPropStmt, is StrategyStmt, is IfPropStmt, is ExistIntroStmt, is ExistsElimStmt, is FunStmt -> ""
         is VarStmt -> s.destruct?.let { d ->
             "${if ("mut" in s.annotations) "let" else "const"} [${d.joinToString(", ") { mangle(it) }}] = ${dcWrap(s, expr(s.value))};"
         } ?: "${if ("mut" in s.annotations) "let" else "const"} ${mangle(s.name)} = ${dcWrap(s, expr(s.value))};"
@@ -1254,7 +1297,7 @@ class JsCodeGen {
     /** lambda 体内单条语句 → 缩进行（if 展平为真语句，return 原样发射） */
     private fun lambdaStmtToLines(s: Stmt, out: MutableList<String>, ind: String) {
         when (s) {
-            is BecauseStmt, is ThereforeStmt, is PlusBecauseStmt, is IfPropStmt, is ExistIntroStmt, is ExistsElimStmt, is FunStmt -> {}
+            is BTSStmt, is WhenPropStmt, is StrategyStmt, is IfPropStmt, is ExistIntroStmt, is ExistsElimStmt, is FunStmt -> {}
             is VarStmt -> {
                 val destruct = s.destruct
                 if (destruct != null)
@@ -1262,7 +1305,9 @@ class JsCodeGen {
                 else out += "$ind${if ("mut" in s.annotations) "let" else "const"} ${mangle(s.name)} = ${dcWrap(s, expr(s.value))};"
             }
             is AssignStmt -> out += "$ind${expr(s.target)} = ${dcWrap(s, expr(s.value))};"
-            is ExprStmt -> if (s.expr is IfExpr) lambdaIfLines(s.expr as IfExpr, out, ind) else out += "$ind${expr(s.expr)};"
+            is ExprStmt -> if (s.expr is IfExpr) lambdaIfLines(s.expr as IfExpr, out, ind)
+                else if (s.expr is WhenExpr) lambdaWhenLines(s.expr as WhenExpr, out, ind)   // 含 ifis 脱糖形态：return 穿透 lambda
+                else out += "$ind${expr(s.expr)};"
             is ReturnStmt -> out += "$ind${s.expr?.let { "return ${expr(it)};" } ?: "return;"}"
             is UncheckedStmt -> lambdaStmtToLines(s.inner, out, ind)
             is AxiomStmt, is ByStmt -> {}
@@ -1279,6 +1324,114 @@ class JsCodeGen {
             elseBlock.stmts.forEach { lambdaStmtToLines(it, out, "$ind  ") }
         }
         out += "$ind}"
+    }
+
+    /** 语句位 when（含 ifis 脱糖形态 `if (o is Some(e)) …`）展平为真 JS if 链——决策 75 的 when 版：
+     *  主题 const + 顺序 else-if 短路链（不可达分支才落到链尾），模式绑定 const 在分支内，
+     *  分支体的提前 return 因此能真正退出函数（值位 when 仍走 whenExpr 的 IIFE）。
+     *  守卫与 whenExpr 同处理：守卫可能引用模式绑定 → 先绑定、再判守卫，守卫失败落下一分支。 */
+    private fun whenStmtFlatten(e: WhenExpr) {
+        val subject = e.subject
+        val subjJs = if (subject == null) "" else e.subjectBinding?.let { mangle(it) } ?: "__s${subjCounter++}"
+        if (subject != null) line("const $subjJs = ${expr(subject)};")
+        var started = false
+        var brace = false
+        for (arm in e.arms) {
+            val conds = ArrayList<String>()
+            val binds = ArrayList<Pair<String, String>>()
+            if (subject == null) arm.cond?.let { conds += expr(it) } else matchJs(arm.pattern, subjJs, conds, binds)
+            val guard = arm.guard
+            val condPart = conds.joinToString(" && ") { "($it)" }.ifEmpty { null }
+            if (condPart == null && guard == null && !started) {
+                armBodyFlat(arm, binds)   // 退化：首分支即兜底（主题 when），无条件直发
+                return
+            }
+            if (guard != null && binds.isNotEmpty()) {
+                // 先绑定、再判守卫：守卫失败落下一分支（与 whenExpr 的结构对齐）
+                line(if (started) "} else if ($condPart) {" else "if ($condPart) {")
+                brace = true
+                indent++
+                binds.forEach { line("const ${mangle(it.first)} = ${it.second};") }
+                line("if (${expr(guard)}) {")
+                indent++
+                armBodyFlat(arm, emptyList())
+                indent--
+                line("}")
+                indent--
+            } else {
+                val cond = when {
+                    condPart == null -> null                 // 兜底
+                    guard == null -> condPart
+                    else -> "$condPart && (${expr(guard)})"
+                }
+                line(when {
+                    cond == null -> "} else {"
+                    !started -> "if ($cond) {"
+                    else -> "} else if ($cond) {"
+                })
+                brace = true
+                indent++
+                armBodyFlat(arm, binds)
+                indent--
+            }
+            started = true
+        }
+        if (brace) line("}")
+    }
+
+    /** whenStmtFlatten 的分支体：模式绑定（已汇集）+ 分支语句逐条经 genStmt（嵌套 if/when 递归展平） */
+    private fun armBodyFlat(arm: WhenArm, binds: List<Pair<String, String>>) {
+        binds.forEach { line("const ${mangle(it.first)} = ${it.second};") }
+        val body = arm.body
+        if (body is BlockExpr) body.stmts.forEach { genStmt(it) } else line("${expr(body)};")
+    }
+
+    /** lambda 体内语句位 when（含 ifis 脱糖形态）展平为真 JS if 链——lambdaWhenLines 的语句流版本 */
+    private fun lambdaWhenLines(e: WhenExpr, out: MutableList<String>, ind: String) {
+        val subject = e.subject
+        val subjJs = if (subject == null) "" else e.subjectBinding?.let { mangle(it) } ?: "__s${subjCounter++}"
+        if (subject != null) out += "$ind const $subjJs = ${expr(subject)};"
+        var started = false
+        for (arm in e.arms) {
+            val conds = ArrayList<String>()
+            val binds = ArrayList<Pair<String, String>>()
+            if (subject == null) arm.cond?.let { conds += expr(it) } else matchJs(arm.pattern, subjJs, conds, binds)
+            val guard = arm.guard
+            val condPart = conds.joinToString(" && ") { "($it)" }.ifEmpty { null }
+            if (condPart == null && guard == null && !started) {
+                binds.forEach { out += "$ind const ${mangle(it.first)} = ${it.second};" }
+                armBodyLambda(arm, out, ind)
+                return
+            }
+            if (guard != null && binds.isNotEmpty()) {
+                out += "$ind${if (started) "} else if ($condPart) {" else "if ($condPart) {"}"
+                binds.forEach { out += "$ind  const ${mangle(it.first)} = ${it.second};" }
+                out += "$ind  if (${expr(guard)}) {"
+                armBodyLambda(arm, out, "$ind    ")
+                out += "$ind  }"
+            } else {
+                val cond = when {
+                    condPart == null -> null
+                    guard == null -> condPart
+                    else -> "$condPart && (${expr(guard)})"
+                }
+                out += "$ind" + when {
+                    cond == null -> "} else {"
+                    !started -> "if ($cond) {"
+                    else -> "} else if ($cond) {"
+                }
+                binds.forEach { out += "$ind  const ${mangle(it.first)} = ${it.second};" }
+                armBodyLambda(arm, out, "$ind  ")
+            }
+            started = true
+        }
+        if (started) out += "$ind}"
+    }
+
+    private fun armBodyLambda(arm: WhenArm, out: MutableList<String>, ind: String) {
+        val body = arm.body
+        if (body is BlockExpr) body.stmts.forEach { lambdaStmtToLines(it, out, ind) }
+        else out += "$ind${expr(body)};"
     }
 
     private fun whenExpr(e: WhenExpr): String {

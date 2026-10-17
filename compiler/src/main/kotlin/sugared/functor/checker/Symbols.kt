@@ -245,7 +245,8 @@ internal fun Checker.checkDeclTypes(decl: Decl) {
             decl.trait?.let { checkTypeResolvable(it, emptyList()) }
             // HKT（《高阶类型.md》HKT-S6）：impl self 的 kind 占位变量（`List[a]` 的 a）是隐式绑定，
             // 属合法名字——并入 tps 放行（self 其余实参仍按普通类型检查）
-            val selfTps = decl.self.args.filterIsInstance<NamedType>().filter { it.args.isEmpty() }.map { it.name }
+            // 内涵同 selfPlaceholders（ImplCheck）：经典小写占位、简写 _ 与用户变量（E/K）皆合法隐式绑定
+            val selfTps = selfPlaceholders(decl.self)
             checkTypeResolvable(decl.self, selfTps)
         }
         is EnumDecl -> if (decl.name !in setOf("Bool", "Null", "Optional"))

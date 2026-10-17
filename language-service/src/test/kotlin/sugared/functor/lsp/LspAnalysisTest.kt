@@ -351,16 +351,16 @@ class LspAnalysisTest {
         assertNull(loc, "内建类型不应有可跳转定义")
     }
 
-    @Test fun `prelude stdlib 文件符号（存在才验）`() {
-        val stdlib = java.io.File("stdlib")
-        if (!stdlib.isDirectory) return  // 无 stdlib 目录则跳过
+    @Test fun `prelude core 标准库文件符号（存在才验）`() {
+        val stdlib = java.io.File("test/core")
+        if (!stdlib.isDirectory) return  // 无标准库目录则跳过
         val a = opened("fun main() { }")
         a.loadPrelude(stdlib)
         val list = a.completionFor("file:///t.subl", Position(0, 0))
         val names = list.items.map { it.label }
-        // stdlib 顶层声明至少含 List（collection.subl）或 map/fold
+        // core 标准库顶层声明至少含 List（collection/list.subl）或 map/fold
         assertTrue(names.contains("List") || names.contains("map") || names.contains("fold"),
-            "应含至少一个 stdlib 顶层符号，实际前若干: " + names.take(20).joinToString())
+            "应含至少一个 core 顶层符号，实际前若干: " + names.take(20).joinToString())
     }
 
     // ───────── Unicode 符号补全 ─────────

@@ -58,8 +58,14 @@ object PropLogic {
         else -> PAtom("__t__", listOf(e))
     }
 
-    /** 合取分解 + 双否消去：事实库归一化（定理表的可判定子集） */
-    fun normalizeFacts(ps: List<Prop>): List<Prop> = ps.flatMap { flattenAnd(it) }.map { stripNN(it) }
+    /** 合取分解 + 双否消去 + 等价拆双蕴含：事实库归一化（定理表的可判定子集） */
+    fun normalizeFacts(ps: List<Prop>): List<Prop> = ps.flatMap { expandIff(it) }.flatMap { flattenAnd(it) }.map { stripNN(it) }
+
+    /** a ↔ b 拆成 (a→b) ∧ (b→a)——使 MP 能由 ¬irrational<power> 推出 rational<power> 等 */
+    private fun expandIff(p: Prop): List<Prop> = when (p) {
+        is PIff -> listOf(PImp(p.a, p.b), PImp(p.b, p.a))
+        else -> listOf(p)
+    }
 
     private fun flattenAnd(p: Prop): List<Prop> = when (p) {
         is PAnd -> flattenAnd(p.a) + flattenAnd(p.b)
@@ -226,13 +232,39 @@ object PropLogic {
     fun groundTerms(facts: List<Prop>): List<Expr> {
         val out = LinkedHashSet<Expr>()
         fun collectTerm(e: Expr) {
+            // 根文档·关键表达式：收集程序【所有】表达式，优先内其次外（后序遍历）。
+            // 不再只收叶子——复合项（1+2、f(1+2)、a.x 等）也进实例化候选（用户指定：不要工程取舍）。
             when (e) {
-                is IntLit, is StrLit, is NameRef -> out.add(e)
                 is BinExpr -> { collectTerm(e.left); collectTerm(e.right) }
-                is CallExpr -> e.args.forEach { collectTerm(it) }
-                is InstExpr -> e.terms.forEach { collectTerm(it) }
+                is UniExpr -> collectTerm(e.operand)
+                is TypeTestExpr -> collectTerm(e.target)
+                is TaskExpr -> collectTerm(e.body)
+                is FlowExpr -> collectTerm(e.body)
+                is CallExpr -> { collectTerm(e.callee); e.args.forEach { collectTerm(it) } }
+                is InstExpr -> { collectTerm(e.target); e.terms.forEach { collectTerm(it) } }
+                is FieldExpr -> collectTerm(e.target)
+                is FunRefExpr -> collectTerm(e.target)
+                is SymbolCallExpr -> e.args.forEach { collectTerm(it) }
+                is LambdaExpr -> collectTerm(e.body)
+                is TupleExpr -> e.items.forEach { collectTerm(it) }
+                is StructCtorExpr -> e.assigns.forEach { collectTerm(it.second) }
+                is ByExpr -> { collectTerm(e.target); e.props.forEach { collectTerm(it) } }
+                is VarExpr -> collectTerm(e.value)
+                is BlockExpr -> e.tailExpr?.let { collectTerm(it) }
+                is IfExpr -> { collectTerm(e.cond); collectTerm(e.thenBlock); e.elseBlock?.let { collectTerm(it) } }
+                is WhenExpr -> {
+                    e.subject?.let { collectTerm(it) }
+                    e.arms.forEach { arm ->
+                        arm.guard?.let { collectTerm(it) }
+                        arm.cond?.let { collectTerm(it) }
+                        collectTerm(arm.body)
+                    }
+                }
+                is QuantExpr -> collectTerm(e.body)
+                is AnonFunExpr -> e.body?.let { collectTerm(it) }
                 else -> {}
             }
+            out.add(e)   // 后序：内层先入，外层后入（优先内其次外）
         }
         fun collectProp(p: Prop) {
             when (p) {
@@ -300,6 +332,40 @@ object PropLogic {
         p is PExists1 && q is PExists1 -> p.names.size == q.names.size && propStructEq(p.body, q.body)
         else -> false
     }
+
+    /** 结构哈希（忽略 pos/位置）——供 BFS seen 集合 O(1) 去重；碰撞由 propStructEq 兜底 */
+    fun termHash(e: Expr): Int = when (e) {
+        is IntLit -> "I".hashCode() * 31 + e.value.hashCode()
+        is FloatLit -> "F".hashCode() * 31 + e.value.hashCode()
+        is StrLit -> "S".hashCode() * 31 + e.value.hashCode()
+        is NameRef -> "N".hashCode() * 31 + e.name.hashCode()
+        is BinExpr -> ("B" + e.op).hashCode() * 961 + termHash(e.left) * 31 + termHash(e.right)
+        is UniExpr -> ("U" + e.op).hashCode() * 31 + termHash(e.operand)
+        is CallExpr -> e.args.fold(termHash(e.callee) * 31 + "C".hashCode()) { acc, a -> acc * 31 + termHash(a) }
+        is InstExpr -> e.terms.fold(termHash(e.target) * 31 + "T".hashCode()) { acc, t -> acc * 31 + termHash(t) }
+        is FieldExpr -> termHash(e.target) * 31 + ("." + e.name).hashCode()
+        is FunRefExpr -> termHash(e.target) * 31 + ("::" + e.name).hashCode()
+        is SymbolCallExpr -> e.args.fold(("Y" + e.op).hashCode()) { acc, a -> acc * 31 + termHash(a) }
+        is ParamRefExpr -> "P".hashCode() * 31 + e.index
+        is TopExpr -> "Top".hashCode()
+        is BotExpr -> "Bot".hashCode()
+        else -> e.javaClass.name.hashCode()
+    }
+
+    /** 命题结构哈希（与 propStructEq 一致：忽略位置） */
+    fun propHash(p: Prop): Int = when (p) {
+        is PTop -> 1
+        is PBot -> 2
+        is PNot -> 3 * 31 + propHash(p.p)
+        is PAnd -> 4 * 961 + propHash(p.a) * 31 + propHash(p.b)
+        is POr -> 5 * 961 + propHash(p.a) * 31 + propHash(p.b)
+        is PImp -> 6 * 961 + propHash(p.a) * 31 + propHash(p.b)
+        is PIff -> 7 * 961 + propHash(p.a) * 31 + propHash(p.b)
+        is PForall -> p.names.fold(8) { acc, n -> acc * 31 + n.hashCode() } * 31 + propHash(p.body)
+        is PExists -> p.names.fold(9) { acc, n -> acc * 31 + n.hashCode() } * 31 + propHash(p.body)
+        is PExists1 -> p.names.fold(10) { acc, n -> acc * 31 + n.hashCode() } * 31 + propHash(p.body)
+        is PAtom -> p.terms.fold(p.head.hashCode()) { acc, t -> acc * 31 + termHash(t) }
+    }
 }
 
 /**
@@ -308,7 +374,7 @@ object PropLogic {
  * 前向链接 modus ponens（`p` 与 `p->q` 可推出 `q`）、⊥ 爆炸。
  * 不做：算术推理、∨/¬/→ 待证侧引入、∃! 唯一性、多名字量词（v1 限制）。
  */
-class Prover(private val maxRounds: Int = 3, private val maxDepth: Int = 4) {
+class Prover(private val maxRounds: Int = 114514, private val maxDepth: Int = 4) {
     var deepAborted = false
         private set
 
@@ -316,60 +382,64 @@ class Prover(private val maxRounds: Int = 3, private val maxDepth: Int = 4) {
      * 饱和闭包：合取分解 + ∀ 单名实例化（候选项 = Γ 现有项 ∪ 目标项）+ MP，迭代至不动点。
      * extraGoals 的项只作实例化候选，不作为事实加入（否则目标平凡可证，破坏健全性）。
      */
-    fun closure(gamma: List<Prop>, extraGoals: List<Prop> = emptyList()): List<Prop> {
+    fun closure(gamma: List<Prop>, extraGoals: List<Prop> = emptyList(), termSource: List<Prop> = gamma): List<Prop> {
         val facts = PropLogic.normalizeFacts(gamma).toMutableSet()
         val extraTerms = extraGoals.flatMap { PropLogic.groundTerms(listOf(it)) }
-        repeat(maxRounds) {
-            val termsAll = (PropLogic.groundTerms(facts.toList()) + extraTerms).distinctBy { PropLogic.termTag(it) }
-            // 根文档·自动证明矩阵：多变量定理与关键表达式排列组合（p<a,a> p<a,b> p<b,a> p<b,b>）
-            // 防爆炸：笛卡尔候选截断到 24、定理参数量 ≤ 3；单变量保留全量（原行为）
-            val terms = termsAll   // 单变量实例化候选：全量不动（截断会漏掉 tagged<7> 这类目标项）
-            val termsMatrix = if (termsAll.size <= 24) termsAll else termsAll.take(24)
-            var changed = false
-            for (fa in facts.filterIsInstance<PForall>().toList()) {
-                if (fa.names.size > 3) continue
-                val pool = if (fa.names.size == 1) terms else termsMatrix
-                val subs: List<Map<String, Expr>> = when {
-                    fa.names.isEmpty() -> emptyList()
-                    fa.names.size == 1 -> pool.map { mapOf(fa.names[0] to it) }
-                    else -> {
-                        var acc: List<List<Expr>> = listOf(emptyList())
-                        repeat(fa.names.size) { acc = acc.flatMap { comb -> pool.map { comb + it } } }
-                        acc.map { comb -> fa.names.zip(comb).toMap() }
-                    }
+        // 关键表达式：一次性从程序块（初始事实 + 目标）收集**一切**表达式，此后固定——
+        // 不随新增事实扩张（根文档「命题中出现的表达式再收集仅关键表达式中」），
+        // 否则复合项会自我增殖（(1+2)->(1+2)+(2+1)->…）导致笛卡尔爆炸、永不达不动点。
+        val keyTerms = (PropLogic.groundTerms(termSource) + extraTerms).distinctBy { PropLogic.termTag(it) }
+        // 实例化矩阵预计算：keyTerms 固定，各 ∀ 量词的候选替换跨轮不变——每轮重建是 Kⁿ 开销（show.subl 卡顿根因）。
+        val forallSubs = facts.filterIsInstance<PForall>().mapNotNull { fa ->
+            if (fa.names.isEmpty()) null else fa to when {
+                fa.names.size == 1 -> keyTerms.map { listOf(it) }
+                else -> {
+                    var acc: List<List<Expr>> = listOf(emptyList())
+                    repeat(fa.names.size) { acc = acc.flatMap { comb -> keyTerms.map { comb + it } } }
+                    acc
                 }
-                for (sub in subs) {
+            }
+        }
+        val seenSubs = HashSet<String>()
+        for (round in 0 until maxRounds) {
+            var changed = false
+            for ((fa, combs) in forallSubs) {
+                for (comb in combs) {
+                    val key = fa.names.joinToString("\u0001") + "\u0002" + comb.joinToString("\u0001") { PropLogic.termTag(it) }
+                    if (!seenSubs.add(key)) continue
+                    val sub = fa.names.zip(comb).toMap()
                     PropLogic.normalizeFacts(listOf(PropLogic.substProp(fa.body, sub)))
                         .forEach { if (facts.add(it)) changed = true }
                 }
             }
             for (im in facts.filterIsInstance<PImp>().toList()) {
-                val a = im.a
-                if (a is PAtom && facts.any { it is PAtom &&
-                        PropLogic.matchProp(it as PAtom, a, emptySet(), mutableMapOf()) }) {
+                // 前件按规范形拆解（合取拆诸支、等价已拆双蕴含、双否已消），各支都在 Γ 即触发 MP
+                val ants = PropLogic.normalizeFacts(listOf(im.a))
+                if (ants.isNotEmpty() && ants.all { facts.contains(it) }) {
                     PropLogic.normalizeFacts(listOf(im.b)).forEach { if (facts.add(it)) changed = true }
                 }
             }
             // 加强：modus tollens（后件否定推前件否定）——p→q 与 ¬q 在 Γ ⇒ ¬p（经典逻辑健全）
             for (im in facts.filterIsInstance<PImp>().toList()) {
-                val negB = PNot(im.b)
-                if (facts.any { it == negB }) {
-                    val negA = PNot(im.a)
-                    PropLogic.normalizeFacts(listOf(negA)).forEach { if (facts.add(it)) changed = true }
+                if (facts.contains(PNot(im.b))) {
+                    PropLogic.normalizeFacts(listOf(PNot(im.a))).forEach { if (facts.add(it)) changed = true }
                 }
             }
-            // 矛盾检测：p 与 ¬p 同在 Γ → ⊥（穷尽性/不可达分支判定的基础）
-            if (!facts.contains(PBot) && facts.any { p -> p !is PNot && facts.any { it is PNot && it.p == p } }) {
-                facts.add(PBot); changed = true
+            // 矛盾检测：p 与 ¬p 同在 Γ → ⊥（穷尽性/不可达分支判定的基础）；先收集 ¬ 集合转 O(N)
+            if (!facts.contains(PBot)) {
+                val negated = facts.filterIsInstance<PNot>().map { it.p }.toHashSet()
+                if (facts.any { p -> p !is PNot && p in negated }) {
+                    facts.add(PBot); changed = true
+                }
             }
-            if (!changed) return@repeat
+            if (!changed) break
         }
         return facts.toList()
     }
 
-    fun proves(gamma: List<Prop>, goal: Prop): Boolean {
+    fun proves(gamma: List<Prop>, goal: Prop, global: List<Prop> = emptyList()): Boolean {
         deepAborted = false
-        val cl = closure(gamma, listOf(goal))
+        val cl = closure(gamma + global, listOf(goal), termSource = gamma)
         // 目标的 ground 项并入实例化候选：否则 ∀n.p<n> 永远举不出目标里的具体项（valid<7> 证不出）
         // P4：预提取等式事实（prove 递归共享，避免每个目标重扫全部 facts）
         val eqs = cl.filterIsInstance<PAtom>()
@@ -412,15 +482,13 @@ class Prover(private val maxRounds: Int = 3, private val maxDepth: Int = 4) {
             is PNot -> facts.any { it == goal } || facts.contains(PBot) ||
                 // 加强：双重否定引入 p ⊢ ¬¬p（直觉逻辑健全）；¬→ 载体已由 MP/closure 处理
                 (goal.p is PNot && prove(facts, (goal.p as PNot).p, d + 1, visited, eqs))
-            is PAtom -> matchAtom(facts, goal, d, visited, eqs) ||
+            is PAtom -> membershipFilterPred(facts, goal) || matchAtom(facts, goal, d, visited, eqs) ||
                 // P4（决策 80）：等式图可达（对称 + 传递，BFS 双向边即对称）
                 (goal.head in setOf("=", "==", "<=", "≤", ">=", "≥") && goal.terms.size == 2 &&
                     (PropLogic.termEq(goal.terms[0], goal.terms[1]) ||
                         eqReachable(eqs, goal.terms[0], goal.terms[1]))) ||
                 // P4：类型事实在等式下的传播 `e:T, e=e' ⊢ e':T`
-                (goal.head == ":" && goal.terms.size == 2 && typeFactEq(facts, goal, eqs)) ||
-                // P4：浅层等量代换 `a=b, p<a> ⊢ p<b>`（一层，不递归、不动事实库）
-                proveWithSubst(facts, goal, d, visited, eqs)
+                (goal.head == ":" && goal.terms.size == 2 && typeFactEq(facts, goal, eqs))
         }
     }
 
@@ -457,6 +525,54 @@ class Prover(private val maxRounds: Int = 3, private val maxDepth: Int = 4) {
             else -> {}
         }
         return false
+    }
+
+    /**
+     * 容器/高阶函数的后验推理（加强证明器，窄根但覆盖面广）：
+     * Γ 含 `e ∈ filter(xs, λp. body)` 时，filter 的语义保证该元素满足谓词 →
+     * 直接把谓词 β-归约到 `body[p:=e]` 与目标原子比对。
+     * 覆盖 `list.filter { _ != 0 }` 之类后置 `∀e. e ∈ $ -> e ≠ 0` 的证明；
+     * 比较运算符做 ASCII/Unicode 等价（!= ↔ ≠、<= ↔ ≤、>= ↔ ≥、== ↔ =）。
+     */
+    private fun membershipFilterPred(facts: List<Prop>, goal: PAtom): Boolean {
+        for (f in facts) {
+            if (f !is PAtom || f.head != "in" || f.terms.size != 2) continue
+            val container = f.terms[1]
+            if (container !is CallExpr) continue
+            val cal = container.callee
+            val isFilter = (cal as? NameRef)?.name == "filter" || (cal as? FieldExpr)?.name == "filter"
+            if (!isFilter) continue
+            // 自由函数形态 filter(xs, λ)：实参 [xs, λ]；方法糖形态 xs.filter(λ)：实参 [λ]，接收者是 callee.target。
+            val lam = when {
+                cal is NameRef && container.args.size == 2 -> container.args[1] as? LambdaExpr
+                cal is FieldExpr && container.args.size == 1 -> container.args[0] as? LambdaExpr
+                else -> null
+            } ?: continue
+            if (lam.params.size != 1) continue
+            val member = f.terms[0]
+            val reduced = PropLogic.substExpr(lam.body, mapOf(lam.params[0] to member))
+            val rp = PropLogic.fromExpr(reduced)
+            if (rp is PAtom && atomsCmpEq(rp, goal)) return true
+        }
+        return false
+    }
+
+    /** 两个原子相等（比较运算允许 ASCII/Unicode 写法等价；其余要求 head 精确一致） */
+    private fun atomsCmpEq(a: PAtom, b: PAtom): Boolean {
+        if (a.terms.size != b.terms.size) return false
+        if (!a.terms.zip(b.terms).all { PropLogic.termEq(it.first, it.second) }) return false
+        if (a.head == b.head) return true
+        val ca = cmpCanon(a.head) ?: return false
+        return ca == cmpCanon(b.head)
+    }
+
+    private fun cmpCanon(h: String): String? = when (h) {
+        "=", "==" -> "=="
+        "!=", "≠" -> "!="
+        "<", ">" -> h
+        "<=", "≤" -> "<="
+        ">=", "≥" -> ">="
+        else -> null
     }
 
     /**
@@ -513,28 +629,5 @@ class Prover(private val maxRounds: Int = 3, private val maxDepth: Int = 4) {
                 eqReachable(eqs, f.terms[0], goal.terms[0])
         }
     }
-
-    /**
-     * 规则 3：浅层等量代换。对预提取的每个等式（两个方向），把目标 PAtom 的顶层项整体替换，
-     * 若替换后的目标可直接/递归证明则成立。
-     * 约束（v1.0 §6.3）：只替换一层、不连锁代换；只在目标侧、不动事实库；d+1 参与 maxDepth 检查。
-     * 预筛：目标项不落在任何等式端点上时直接失败（无代换可能，省掉无谓替换尝试）。
-     */
-    private fun proveWithSubst(facts: List<Prop>, goal: PAtom, d: Int, visited: MutableSet<Prop>, eqs: List<PAtom>): Boolean {
-        if (eqs.isEmpty()) return false
-        // 目标项必须与某个等式端点结构相等，代换才有意义
-        val hits = goal.terms.any { gt ->
-            eqs.any { PropLogic.termEq(gt, it.terms[0]) || PropLogic.termEq(gt, it.terms[1]) }
-        }
-        if (!hits) return false
-        for (eq in eqs) {
-            val (l, r) = eq.terms
-            for ((from, to) in listOf(l to r, r to l)) {
-                val t = goal.terms.map { if (PropLogic.termEq(it, from)) to else it }
-                if (t == goal.terms) continue
-                if (prove(facts, PAtom(goal.head, t), d + 1, visited, eqs)) return true
-            }
-        }
-        return false
-    }
 }
+

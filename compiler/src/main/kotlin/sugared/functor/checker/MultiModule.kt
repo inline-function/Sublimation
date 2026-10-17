@@ -27,7 +27,7 @@ class MultiModule(root: File) {
 
     private val allSymbols = LinkedHashMap<String, Symbols>()
     private val checkers = LinkedHashMap<String, Checker>()
-    private val asts: Map<String, FileAst>
+    private var asts: MutableMap<String, FileAst>
     private var checked = false
 
     init {
@@ -58,6 +58,56 @@ class MultiModule(root: File) {
     fun checkAll(): DiagBag {
         if (checked) return bag
         checked = true
+        runPhases()
+        return bag
+    }
+
+    /**
+     * 注解处理器阶段（root doc/注解处理器.md 13：插在 checker 后、codegen 前）。
+     *
+     * processor 对每个模块跑一次：输入（模块路径 / 该模块合并 AST / 符号表 / 诊断汇入闭包），
+     * 输出变换后的 AST（未变则返回原引用）。任一模块有变化 → 全树重建 Checker 并统一重跑
+     * 阶段 B/C——处理器产出视为新代码，模块间交叉引用的重新检查只在模块层做才完整；
+     * 重查产生的重复诊断经袋内去重吸收。返回处理器自身的诊断袋。
+     */
+    fun processModules(processor: (modulePath: String, ast: FileAst, symbols: Symbols, sink: (Diag) -> Unit) -> FileAst): DiagBag {
+        // 阶段 A（init 已完成符号收集）后、B/C 前跑处理器——处理器产出（如 @allMut 引入的 @mut）
+        // 是要被合法化的代码，先变换再统一检查；已检查过的情形也兼容（重跑 B/C）。
+        val out = DiagBag()
+        var anyChanged = false
+        for (p in asts.keys.toList()) {
+            val oldAst = asts.getValue(p)
+            val newAst = processor(p, oldAst, checkers.getValue(p).syms) { d ->
+                when (d.severity) {
+                    Severity.ERROR -> out.error(d.code, d.pos, d.message)
+                    Severity.WARN -> out.warn(d.code, d.pos, d.message)
+                    Severity.HINT -> out.hint(d.code, d.pos, d.message)
+                    Severity.SUPPLEMENT -> out.supplement(d.code, d.pos, d.message)
+                }
+            }
+            if (newAst !== oldAst) { asts[p] = newAst; anyChanged = true }
+        }
+        if (anyChanged) {
+            // 阶段 A 重跑：每模块重建 Checker（收集声明）后再统一跑 B/C
+            for (p in asts.keys.toList()) {
+                val chk = Checker(file = asts.getValue(p), modulePath = p, allSymbols = allSymbols, moduleTree = driver)
+                chk.collectPrelude()
+                chk.collectDecls(listOf(asts.getValue(p)))
+                allSymbols[p] = chk.syms
+                checkers[p] = chk
+            }
+            runPhases()
+            if (checked) bag.dedupe() else checked = true
+        } else if (!checked) {
+            runPhases()
+            checked = true
+        }
+        return out
+    }
+
+    /** 阶段 B/C + 入口唯一性 + 诊断吸收（checkAll 与 processModules 重查共用）。 */
+    // 修复：函数体 return bag（DiagBag），签名须一致——并发 WIP 遗留的 Unit 签名
+    private fun runPhases(): DiagBag {
         // 阶段 B：类型可解析性 + impl 完整性 + pure 事实（此时全树符号已齐）
         for ((p, chk) in checkers) chk.finishCollect(listOf(asts.getValue(p)))
         // 阶段 C：声明体与顶层语句
@@ -76,7 +126,7 @@ class MultiModule(root: File) {
         if (mains.size > 1)
             bag.error("E-DUP-DECL", "", "多个模块声明了入口 main：${mains.joinToString(", ")}")
         for (chk in checkers.values) bag.absorb(chk.d)
-        // v4 诊断：只保留根模块的补充级诊断——stdlib 等挂载模块内部的推导/方法糖是噪声
+        // v4 诊断：只保留根模块的补充级诊断——core 标准库等挂载模块内部的推导/方法糖是噪声
         bag.dropSupplementsOutside("")
         return bag
     }
@@ -91,8 +141,6 @@ class MultiModule(root: File) {
         val sugarHits = IdentityHashMap<CallExpr, List<Expr>>()
         val awaitHits = IdentityHashMap<CallExpr, Boolean>()
         val receiveSmarts = IdentityHashMap<CallExpr, Boolean>()
-        val varUnwrapHits = IdentityHashMap<VarStmt, Expr>()
-        val funBodyUnwrapHits = IdentityHashMap<Expr, Expr>()
         val flowEmitHits = IdentityHashMap<CallExpr, Boolean>()
         val hktKindHits = IdentityHashMap<CallExpr, Int>()
         val funRefTargets = IdentityHashMap<Expr, String>()
@@ -118,8 +166,6 @@ class MultiModule(root: File) {
             sugarHits.putAll(chk.methodSugarArgs)
             awaitHits.putAll(chk.asyncAwaitHits)
             receiveSmarts.putAll(chk.receiveSmartHits)
-            varUnwrapHits.putAll(chk.varUnwrapHits)
-            funBodyUnwrapHits.putAll(chk.funBodyUnwrapHits)
             flowEmitHits.putAll(chk.flowEmitHits)
             hktKindHits.putAll(chk.hktKindPosHits)
             if (chk.channelUsed) channelUsed = true
@@ -131,7 +177,7 @@ class MultiModule(root: File) {
             deepCopyHits.putAll(chk.deepCopyHits)
             listMethodHits.putAll(chk.listMethodHits)
         }
-        return JsCodeGen().generateUnits(asts.toList(), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, mutexUsed, atomicUsed, flowUsed, rangeHits, rangeUsed, receiveSmarts, varUnwrapHits, funBodyUnwrapHits, flowEmitHits, hktKindHits, funRefTargets, funRefFree.keys, lambdaDestructKeys, emptyMap(), deepCopyHits, listMethodHits)
+        return JsCodeGen().generateUnits(asts.toList(), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, mutexUsed, atomicUsed, flowUsed, rangeHits, rangeUsed, receiveSmarts, flowEmitHits, hktKindHits, funRefTargets, funRefFree.keys, lambdaDestructKeys, emptyMap(), deepCopyHits, listMethodHits)
     }
 }
 
@@ -155,8 +201,6 @@ fun generateSingle(chk: Checker, ast: FileAst): String = JsCodeGen().generate(
     rangeHits = chk.rangeHits,
     rangeUsed = chk.rangeUsed,
     receiveSmartHits = chk.receiveSmartHits,
-    varUnwrapHits = chk.varUnwrapHits,
-    funBodyUnwrapHits = chk.funBodyUnwrapHits,
     flowEmitHits = chk.flowEmitHits,
     hktKindPosHits = chk.hktKindPosHits,
     funRefTargets = chk.funRefTargets,

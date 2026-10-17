@@ -1,0 +1,1 @@
+fun f4(): Bool <$ ↔ ∃a. a ∈ fa ∧ p(a)> = true

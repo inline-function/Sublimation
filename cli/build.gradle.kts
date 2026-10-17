@@ -16,6 +16,7 @@ dependencies {
     implementation(project(":compiler"))
     implementation(project(":interpreter"))
     implementation(project(":language-service"))
+    implementation(project(":annotationproc"))
     testImplementation(kotlin("test"))
 }
 

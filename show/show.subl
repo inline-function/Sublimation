@@ -1,34 +1,40 @@
-struct Student(
-    name : Str,
-    score : Nat,
-) <
-    score ≤ 100
->
-
-enum Grade { A,B,C,D }
-
-class Gradable {
-    fun grade() : Grade
-}
-
-impl Gradable for Student {
-    fun grade() : Grade =
-        when {
-            score in (90..100) -> Grade::A
-            score in (80..89 ) -> Grade::B
-            score in (60..79 ) -> Grade::C
-            score in (0 ..59 ) -> Grade::D
-        }
-}
-
 @impure
 fun main() =
-    setOf(
-        Student("Sun XiaoChuan",54),
-        Student("Fluvoxamine",75),
-        Student("Thirty-Seven",100),
-        Student("Sugared Functor",91),
-    )
-        .map { (_.name,_.score,_.grade()) }
-        .forEach { (name,score,grade) => print("$name:$score:$grade") }
-
+    print("证明成功!")
+@classic
+@theorem
+fun `irrational to irrational power irrationality`<
+    rational<2>,
+    irrational<sqrt(2)>,
+    toReal(2) : Real,
+    sqrt(2) : Real,
+    sqrt(2) > 0,
+    ∀a b c.((a : Real) ∧ (a > 0) ∧ (b : Real) ∧ (c : Real)) → (((a ^ b) ^ c) = (a ^ (b * c))),
+    ∀a.(a : Real) → (sqrt(a) * sqrt(a) = a),
+    ∀a.(a : Real) → (sqrt(a) ^ 2 = a),
+    ∀n.¬<irrational<n>> ↔ rational<n>
+> : <∃a b.irrational<a> ∧ irrational<b> ∧ rational<a ^ b>> {
+    var power = sqrt(2) ^ sqrt(2)
+    if[irrational<power>]{
+        ∵ ∀a b c.((a : Real) ∧ (a > 0) ∧ (b : Real) ∧ (c : Real)) → (((a ^ b) ^ c) = (a ^ (b * c))),
+          sqrt(2) : Real,sqrt(2) > 0
+        ∴ ((sqrt(2) ^ sqrt(2)) ^ sqrt(2)) = (sqrt(2) ^(sqrt(2) * sqrt(2)))
+        ∵ ∀a.(a : Real) → (sqrt(a) * sqrt(a) = a),
+          sqrt(2) : Real
+        ∴ sqrt(2) * sqrt(2) = 2
+        ∵ ∀a.(a : Real) → (sqrt(a) ^ 2 = a),
+          toReal(2) : Real
+        ∴ sqrt(2) ^ 2 = 2
+        @subst[((sqrt(2) ^ sqrt(2)) ^ sqrt(2)) = (sqrt(2) ^ 2)]
+        @subst[((sqrt(2) ^ sqrt(2)) ^ sqrt(2)) = 2]
+        @subst[power ^ sqrt(2) = 2]
+        @subst[rational<power ^ sqrt(2)>]
+        ∃a = power,b = sqrt(2) .irrational<a> ∧ irrational<b> ∧ rational<a ^ b>
+    }else{
+        ∵ ∀n.¬<irrational<n>> ↔ rational<n>,
+          ¬<irrational<power>>
+        ∴ rational<power>
+        @subst[rational<sqrt(2) ^ sqrt(2)>]
+        ∃a = sqrt(2),b = sqrt(2) .irrational<a> ∧ irrational<b> ∧ rational<a ^ b>
+    }
+}

@@ -245,6 +245,45 @@ class ModuleTreeTest {
         assertTrue(errs(checked(spec)).contains("E-UNBOUND-NAME"), "挂载不存在的模块应报错")
     }
 
+    // ============ core 统一标准库：挂载完整包名（决策：`mount core.math` 形） ============
+
+    @Test
+    fun `core 点分完整包名等价于斜杠形挂载`() {
+        // `mount core.math` 与 `mount core/math` 等价：归一化到同一目标模块
+        val spec = mapOf(
+            "p/p.settings" to "mount core.math",
+            "p/main.subl" to "fun main() { unchecked print(math.gcd(3, 4)) }",
+            "core/math/math.subl" to "fun gcd(a: Nat, b: Nat): Nat = a + b",
+        )
+        val bag1 = checked(spec)
+        assertFalse(bag1.hasError, "点分挂载应解析到 core/math：" + bag1.report())
+    }
+
+    @Test
+    fun `core 多段挂载前缀包隐式挂载 - 全限定调用可达`() {
+        // mount core.math → 前缀包 core 隐式挂载：p 内 core.math.gcd(...) 与 math.gcd(...) 皆可
+        val spec = mapOf(
+            "p/p.settings" to "mount core.math",
+            "p/main.subl" to "fun main() { unchecked print(core.math.gcd(3, 4)) }",
+            "core/math/math.subl" to "fun gcd(a: Nat, b: Nat): Nat = a + b",
+        )
+        val bag2 = checked(spec)
+        assertFalse(bag2.hasError, "前缀包 core 应隐式可见（全限定调用可达）：" + bag2.report())
+    }
+
+    @Test
+    fun `core 前缀包本地名被占用时不注入`() {
+        // p 自身有 core 子目录（真子模块优先），隐式前缀挂载应让位——不报 E-DUP-DECL、不串扰
+        val spec = mapOf(
+            "p/p.settings" to "mount core.math",
+            "p/main.subl" to "fun main() { unchecked print(math.gcd(3, 4)) }",
+            "p/core/inner.subl" to "fun x(): Nat = 1",
+            "core/math/math.subl" to "fun gcd(a: Nat, b: Nat): Nat = a + b",
+        )
+        val bag3 = checked(spec)
+        assertFalse(bag3.hasError, "本地子目录优先，挂载仍按目标名生效：" + bag3.report())
+    }
+
     // ============ M6：impl 也要挂载 ============
 
     @Test
@@ -346,34 +385,39 @@ class ModuleTreeTest {
         }
     }
 
-    // ============ P2：stdlib 隐式挂载（决策 78） ============
-
-    private val MIN_STDLIB = """
-        enum List[T] { Nil(), Cons(T, List[T]) }
-        fun listLength[T](xs: List[T]): Nat = when(xs) {
-            Nil -> 0
-            is Cons(_, t) -> 1 + listLength(t)
-        }
-    """.trimIndent()
+    // ============ P2：core 标准库隐式挂载（决策 78；stdlib → core 改名） ============
 
     @Test
-    fun `P2 stdlib 隐式挂载 - 子模块无需 settings 即可引用`() {
-        // proj 没有任何 settings 文件，仍应经隐式挂载看到 stdlib
+    fun `P2 core 隐式挂载 - 子模块无需 settings 即可引用`() {
+        // proj 没有任何 settings 文件，仍应经隐式挂载看到 core 标准库（裸名 + 限定）
         val bag = checked(mapOf(
-            "stdlib/list.subl" to MIN_STDLIB,
-            "proj/use.subl" to "fun u(): Nat = stdlib.listLength(stdlib.Cons(1, stdlib.Nil()))",
+            "core/math/math.subl" to "fun gcd(a: Nat, b: Nat): Nat = a + b",
+            "proj/use.subl" to "fun u(): Nat = gcd(3, 4) + core.math.gcd(5, 6)",
         ))
-        assertTrue(errs(bag).isEmpty(), "子模块应经隐式挂载看到 stdlib：${bag.report()}")
+        assertTrue(errs(bag).isEmpty(), "子模块应经隐式挂载看到 core 标准库：${bag.report()}")
     }
 
     @Test
-    fun `P2 stdlib 隐式挂载 - 本地同名子目录占用时跳过注入`() {
-        // proj 自带 stdlib/ 子目录时，自动挂载被跳过；proj 的 stdlib.xxx 指自身子模块
+    fun `P2 core 隐式挂载 - 本地同名子目录优先`() {
+        // proj 自带 core/ 子目录时，本地子目录优先；proj 的 core.own() 指自身子模块
         val bag = checked(mapOf(
-            "stdlib/list.subl" to MIN_STDLIB,
-            "proj/stdlib/own.subl" to "fun own(): Nat = 7",
-            "proj/use.subl" to "fun u(): Nat = stdlib.own()",
+            "core/math/math.subl" to "fun gcd(a: Nat, b: Nat): Nat = a + b",
+            "proj/core/own.subl" to "fun own(): Nat = 7",
+            "proj/use.subl" to "fun u(): Nat = core.own()",
         ))
-        assertTrue(errs(bag).isEmpty(), "本地 stdlib 子目录应遮挡自动挂载：${bag.report()}")
+        assertTrue(errs(bag).isEmpty(), "本地 core 子目录应优先于自动挂载：${bag.report()}")
+    }
+
+    @Test
+    fun `P2 core 标准库 - test-core 仓库布局嫁接为 core 包`() {
+        // sublimation 仓库布局：标准库位于 <根>/test/core。编译入口取仓库根时，test/core 嫁接为
+        // 根的 core 子树（absPath 前缀 core/...），内部 `mount core.math` 完整包名按根可达
+        val bag = checked(mapOf(
+            "test/core/math/math.subl" to "fun gcd(a: Nat, b: Nat): Nat = a + b",
+            "test/core/logic/logic.subl" to "fun usesGcd(): Nat = gcd(3, 4)",   // logic 挂 core.math
+            "test/core/logic/logic.settings" to "mount core.math",
+            "proj/use.subl" to "fun u(): Nat = gcd(5, 6) + core.math.gcd(7, 8)",
+        ))
+        assertTrue(errs(bag).isEmpty(), "test/core 布局应嫁接为 core 标准库包：${bag.report()}")
     }
 }

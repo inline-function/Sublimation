@@ -10,4 +10,10 @@ dependencies {
     implementation(project(":frontend"))
     implementation(project(":compiler"))
     implementation(project(":interpreter"))
+    testImplementation(kotlin("test"))
+}
+
+tasks.test {
+    useJUnitPlatform()
+    workingDir = rootDir
 }

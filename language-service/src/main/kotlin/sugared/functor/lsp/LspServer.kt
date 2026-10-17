@@ -40,8 +40,8 @@ object LspServer {
 
     /** 启动服务器：监听 stdin，按 LSP Content-Length 分帧读取 JSON-RPC 消息 */
     fun start(input: InputStream, output: OutputStream) {
-        // 载入内建 prelude；尽力从 cwd 的 stdlib 目录补全标准库符号（找不到则跳过）
-        analysis.loadPrelude(java.io.File("stdlib"))
+        // 载入内建 prelude；尽力从 cwd 的 core 标准库（test/core 包目录，递归）补全标准库符号（找不到则跳过）
+        analysis.loadPrelude(java.io.File("test/core"))
         val writer = LspWriter(output)
         var running = true
 

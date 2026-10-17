@@ -88,14 +88,14 @@ object AnnotationScanner {
             is ReturnStmt -> stmt.expr?.let { walkExpr(it, file, out) }
             is AxiomStmt -> stmt.props.forEach { walkExpr(it, file, out) }
             is ByStmt -> stmt.props.forEach { walkExpr(it, file, out) }
-            is BecauseStmt -> walkExpr(stmt.prop, file, out)
-            is ThereforeStmt -> walkExpr(stmt.prop, file, out)
-            is PlusBecauseStmt -> walkExpr(stmt.prop, file, out)
+            is BTSStmt -> { walkExpr(stmt.form, file, out); stmt.premises.forEach { walkExpr(it, file, out) }; walkExpr(stmt.conclusion, file, out) }
+            is WhenPropStmt -> { walkExpr(stmt.disjunction, file, out); stmt.arms.forEach { a -> walkExpr(a.condition, file, out); a.body.forEach { scanStmt(it, file, out) } } }
+            is StrategyStmt -> walkExpr(stmt.goal, file, out)
             is IfPropStmt -> {
                 stmt.thenStmts.forEach { scanStmt(it, file, out) }
                 stmt.elseStmts.forEach { scanStmt(it, file, out) }
             }
-            is ExistIntroStmt -> walkExpr(stmt.prop, file, out)
+            is ExistIntroStmt -> { stmt.witnesses.forEach { walkExpr(it, file, out) }; walkExpr(stmt.prop, file, out) }
             is ExistsElimStmt -> {
                 walkExpr(stmt.prop, file, out)
                 stmt.body.forEach { scanStmt(it, file, out) }
@@ -140,10 +140,8 @@ object AnnotationScanner {
                     walkExpr(arm.body, file, out)
                 }
             }
-            is SafeCallExpr -> { walkExpr(expr.target, file, out); expr.args.forEach { walkExpr(it, file, out) } }
-            is ElvisExpr -> { walkExpr(expr.left, file, out); walkExpr(expr.right, file, out) }
-            is CastExpr -> walkExpr(expr.target, file, out)
             is TypeTestExpr -> walkExpr(expr.target, file, out)
+        is IsPatExpr -> walkExpr(expr.target, file, out)   // ifis 哨兵（正常经 parseIf 脱糖为 when，此处保守遍历）
             is TaskExpr -> walkExpr(expr.body, file, out)
             is FlowExpr -> walkExpr(expr.body, file, out)
             is QuantExpr -> walkExpr(expr.body, file, out)

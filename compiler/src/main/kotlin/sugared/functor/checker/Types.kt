@@ -7,7 +7,7 @@ import sugared.functor.ast.*
  *  当前仅 Any：恒满足、零方法无字典（原硬编码 v2.1 语义，机制化为 autoTraits 一员）。 */
 val autoTraits = setOf("Any")
 
-val BASE_TYPES = setOf("Nat", "Int", "Rat", "Str", "Bool", "Null", "Nothing", "Any",
+val BASE_TYPES = setOf("Nat", "Int", "Rat", "Real", "Str", "Bool", "Null", "Nothing", "Any",
     "EmptyTuple", "SingleTuple",
     "Task", "Channel",   // v2.0 异步（决策 93）：内建泛类型类型（无用户声明）
     "Mutex",           // v2.0 异步（root doc《异步》）：异步互斥锁（无类型参数）
@@ -18,6 +18,20 @@ val BASE_TYPES = setOf("Nat", "Int", "Rat", "Str", "Bool", "Null", "Nothing", "A
 /** 合成类型（v1 类型推导不完整时的占位：泛型未绑定、lambda、$ 命题变量等） */
 fun syntheticT(reason: String): Type = namedT("(推导:$reason)")
 fun Type.isSynthetic(): Boolean = this is NamedType && name.startsWith("(推导:") && args.isEmpty()
+
+/** 类型里是否含**未解析的类型变量**（任意深度 NamedType 零实参、不是基类型/已声明类型/合成占位）。
+ *  P2（决策 78）只豁免裸类型参数位；v4（core 类型类）扩展到嵌套位：flatMap 的期望返回 List[B]
+ *  与 listOf[T] 回退签名泄漏的 List[T]，都属「由调用点/lambda 体反推」的变量位，报了是误报。 */
+internal fun Checker.containsUnresolvedTp(t: Type): Boolean = when (t) {
+    is NamedType ->
+        (t.args.isEmpty() && t.name !in BASE_TYPES && t.name !in syms.enums &&
+            t.name !in syms.structs && t.name !in syms.classes && !t.isSynthetic()) ||
+            t.args.any { containsUnresolvedTp(it) }
+    is FunType -> t.params.any { containsUnresolvedTp(it) } || containsUnresolvedTp(t.ret)
+    is TupleType -> t.items.any { containsUnresolvedTp(it) }
+    is MutType -> containsUnresolvedTp(t.inner)
+    else -> false
+}
 
 /** 名义类型判定：仅 NamedType 首字母大写 或 跨模块限定类型（函数/元组类型不是名义类型，T1/决策 57） */
 fun Type.isNominal(): Boolean =
@@ -40,7 +54,7 @@ fun builtinimpure(name: String): FunDecl? = when (name) {
         preps = emptyList(), retType = namedT("Null"), posts = emptyList(), body = null,
     )
     // ---- P3 IO（v1.0 计划 §5）：全部 @impure；v2.0 异步（异步 §6 阶段 6）：readFile/readLine/writeFile 也标 @async——挂起操作须在 async 上下文调用（main 天然 async，Task 体天然 async）----
-    // P5（决策 81）：IO 失败可携带错误信息——readFile/writeFile/readLine 返回 Result（Ok/Err，stdlib/result.subl）
+    // P5（决策 81）：IO 失败可携带错误信息——readFile/writeFile/readLine 返回 Result（Ok/Err，core/collection/result.subl）
     "readLine" -> FunDecl("readLine", listOf("impure", "async"), emptyList(), emptyList(),
         emptyList(), namedT("Result", listOf(namedT("Str"), namedT("Str"))), emptyList(), null)
     "readFile" -> FunDecl("readFile", listOf("impure", "async"), emptyList(),
@@ -68,6 +82,62 @@ fun builtinimpure(name: String): FunDecl? = when (name) {
         emptyList(), namedT("Nat"), emptyList(), null)
     "rand" -> FunDecl("rand", listOf("impure"), emptyList(), emptyList(),
         emptyList(), namedT("Rat"), emptyList(), null)
+    // ---- core.async 内建运行时层（root 无体签名，编译期 JS 特判）：调度/缓冲/唤醒/并发组合
+    // 无法在语言层正确表达，全部 impure+async；表内签名 = 调用点缺声明时的回退签名。
+    // delay：显式延时（毫秒）——sleep 的语义包装。
+    "delay" -> FunDecl("delay", listOf("impure", "async"), emptyList(),
+        listOf(Param("ms", namedT("Nat"))), emptyList(),
+        namedT("Null"), emptyList(), null)
+    // runBoth：并发跑完两件事（先启动 f，主路径继续 g，join 等 f 收尾）。
+    "runBoth" -> FunDecl("runBoth", listOf("impure", "async"), emptyList(),
+        listOf(Param("f", FunType(listOf(namedT("Null")), namedT("Null"))),
+               Param("g", FunType(listOf(namedT("Null")), namedT("Null")))), emptyList(),
+        namedT("Null"), emptyList(), null)
+    // runSeq：先做完 f 再做 g（串行语义）。
+    "runSeq" -> FunDecl("runSeq", listOf("impure", "async"), emptyList(),
+        listOf(Param("f", FunType(listOf(namedT("Null")), namedT("Null"))),
+               Param("g", FunType(listOf(namedT("Null")), namedT("Null")))), emptyList(),
+        namedT("Null"), emptyList(), null)
+    // Flow 收集三件套：collectToList（发送序保持成表）、collectCount（计数）、collectAll（谓词短路）。
+    "collectToList" -> FunDecl("collectToList", listOf("impure", "async"), listOf(TypeParam("T", null)),
+        listOf(Param("fl", namedT("Flow", listOf(namedT("T"))))), emptyList(),
+        namedT("List", listOf(namedT("T"))), emptyList(), null)
+    "collectCount" -> FunDecl("collectCount", listOf("impure", "async"), listOf(TypeParam("T", null)),
+        listOf(Param("fl", namedT("Flow", listOf(namedT("T"))))), emptyList(),
+        namedT("Nat"), emptyList(), null)
+    "collectAll" -> FunDecl("collectAll", listOf("impure", "async"), listOf(TypeParam("T", null)),
+        listOf(Param("fl", namedT("Flow", listOf(namedT("T")))),
+               Param("p", FunType(listOf(namedT("T")), namedT("Bool")))), emptyList(),
+        namedT("Bool"), emptyList(), null)
+    // Mutex 临界区：withMutex = m.withLock(f)；bumpCounter/bumpPair 是计数器的读-改-写复合操作
+    // （counter 形参按 @mut T 回退签名——实际声明见 core.async.mutex 的 Counter 结构体）。
+    "withMutex" -> FunDecl("withMutex", listOf("impure", "async"), emptyList(),
+        listOf(Param("m", namedT("Mutex")),
+               Param("f", FunType(listOf(namedT("Null")), namedT("Null")))), emptyList(),
+        namedT("Null"), emptyList(), null)
+    "bumpCounter" -> FunDecl("bumpCounter", listOf("impure", "async"), listOf(TypeParam("T", null)),
+        listOf(Param("m", namedT("Mutex")), Param("c", MutType(namedT("T")))), emptyList(),
+        namedT("Null"), emptyList(), null)
+    "bumpPair" -> FunDecl("bumpPair", listOf("impure", "async"), listOf(TypeParam("T", null)),
+        listOf(Param("m1", namedT("Mutex")), Param("m2", namedT("Mutex")),
+               Param("c1", MutType(namedT("T"))), Param("c2", MutType(namedT("T")))), emptyList(),
+        namedT("Null"), emptyList(), null)
+    // Channel 配套四件套：channelFromList（建通道发完即关）、sendAll（逐一发送）、
+    // channelDrain（收到关闭为止，FIFO）、channelPipe（src 收一个往 dst 发一个，src 关则关 dst）。
+    "channelFromList" -> FunDecl("channelFromList", listOf("impure", "async"), listOf(TypeParam("T", null)),
+        listOf(Param("xs", namedT("List", listOf(namedT("T"))))), emptyList(),
+        namedT("Channel", listOf(namedT("T"))), emptyList(), null)
+    "sendAll" -> FunDecl("sendAll", listOf("impure", "async"), listOf(TypeParam("T", null)),
+        listOf(Param("ch", namedT("Channel", listOf(namedT("T")))),
+               Param("xs", namedT("List", listOf(namedT("T"))))), emptyList(),
+        namedT("Null"), emptyList(), null)
+    "channelDrain" -> FunDecl("channelDrain", listOf("impure", "async"), listOf(TypeParam("T", null)),
+        listOf(Param("ch", namedT("Channel", listOf(namedT("T"))))), emptyList(),
+        namedT("List", listOf(namedT("T"))), emptyList(), null)
+    "channelPipe" -> FunDecl("channelPipe", listOf("impure", "async"), listOf(TypeParam("T", null)),
+        listOf(Param("src", namedT("Channel", listOf(namedT("T")))),
+               Param("dst", namedT("Channel", listOf(namedT("T"))))), emptyList(),
+        namedT("Null"), emptyList(), null)
     else -> null
 }
 
@@ -102,12 +172,17 @@ fun builtinPure(name: String): FunDecl? = when (name) {
     // 类型上不限定实参（文档记限制：预期 Nat/Int 使用；运行时 Number() 语义），避免双签名复杂度
     "toRat" -> FunDecl("toRat", emptyList(), listOf(TypeParam("T", null)),
         listOf(Param("n", namedT("T"))), emptyList(), namedT("Rat", emptyList()), emptyList(), null)
+    "toReal" -> FunDecl("toReal", emptyList(), listOf(TypeParam("T", null)),
+        listOf(Param("n", namedT("T"))), emptyList(), namedT("Real", emptyList()), emptyList(), null)
     "parseRat" -> FunDecl("parseRat", emptyList(), emptyList(),
         listOf(Param("s", namedT("Str"))), emptyList(),
         namedT("Optional", listOf(namedT("Rat"))), emptyList(), null)
+    "panic" -> FunDecl("panic", emptyList(), emptyList(), emptyList(), emptyList(), namedT("Nothing"), emptyList(), null)
+    // ---- P51：in 为普通函数（v3.0 V1 区间成员，点名特判 + 内建表登记供 findFun/纯度判定）----
+    "in" -> FunDecl("in", emptyList(), listOf(TypeParam("T", null)),
+        listOf(Param("x", syntheticT("任意")), Param("r", namedT("Range", listOf(namedT("T"))))),
+        emptyList(), namedT("Bool", emptyList()), emptyList(), null)
     "abs" -> FunDecl("abs", emptyList(), emptyList(),
-        listOf(Param("x", namedT("Rat"))), emptyList(), namedT("Rat", emptyList()), emptyList(), null)
-    "sqrt" -> FunDecl("sqrt", emptyList(), emptyList(),
         listOf(Param("x", namedT("Rat"))), emptyList(), namedT("Rat", emptyList()), emptyList(), null)
     "floor" -> FunDecl("floor", emptyList(), emptyList(),
         listOf(Param("x", namedT("Rat"))), emptyList(), namedT("Rat", emptyList()), emptyList(), null)
@@ -155,7 +230,7 @@ fun builtinPure(name: String): FunDecl? = when (name) {
         listOf(Param("x", namedT("Rat"))), emptyList(), namedT("Rat"), emptyList(), null)
     "mathTan" -> FunDecl("mathTan", emptyList(), emptyList(),
         listOf(Param("x", namedT("Rat"))), emptyList(), namedT("Rat"), emptyList(), null)
-    // ---- v2.0 基本库（内建 JS 实现）：JSON —— 编译成 JS 原生 JSON.parse/对象访问，语义保空安全（Optional）----
+    // ---- v2.0 基本库（内建 JS 实现）：JSON —— 编译成 JS 原生 JSON.parse/对象访问，失败返回 None（Optional 包装）----
     "jsonParse" -> FunDecl("jsonParse", emptyList(), emptyList(),
         listOf(Param("s", namedT("Str"))), emptyList(),
         namedT("Optional", listOf(namedT("Json"))), emptyList(), null)
@@ -203,15 +278,28 @@ val ROOT_WHITELIST: Set<String> = setOf(
     // builtinimpure（IO/副作用入口）
     "print", "readLine", "readFile", "writeFile", "getArgs", "sleep",
     "appendFile", "fileExists", "readDir", "timeNow", "rand",
+    // core.async 内建运行时层：delay/runBoth/runSeq（任务组合）、collect*（Flow 收集）、
+    // withMutex/bump*（Mutex 临界区）、channel*（Channel 配套）——全部 @impure @async，
+    // 白名单与表一一对应，codegen 编译期 JS 特判（Channel/Mutex/Flow 小运行时）。
+    "delay", "runBoth", "runSeq",
+    "collectToList", "collectCount", "collectAll",
+    "withMutex", "bumpCounter", "bumpPair",
+    "channelFromList", "sendAll", "channelDrain", "channelPipe",
     // builtinPure：元组 / 字符串（P1 + v2.0 补全）/ 浮点（P10）/ Math（v2.0 补全）/ JSON（v2.0）
     "emptyTuple", "singleTuple",
     "concat", "length", "charAt", "substring", "strCmp", "toStr", "parseNat",
     "strUpper", "strLower", "strTrim", "startsWith", "endsWith", "strReplace", "strSplit", "strIndexOf",
     "mathMin", "mathMax", "mathClamp", "mathRound", "mathSin", "mathCos", "mathTan",
-    "toRat", "parseRat", "abs", "sqrt", "floor", "ceil", "pow",
+    "toReal", "toRat", "parseRat", "abs", "floor", "ceil", "pow",
     "jsonParse", "jsonGet", "jsonAt", "jsonLen", "jsonStr", "jsonNum", "jsonBool",
     "jsonIsNull", "jsonIsArr", "jsonToStr", "jsonToList",
 )
+
+/** core.async 内建运行时层：调用这些 @root 内建即用到对应运行时——checker 在调用点置位，codegen 注入小运行时 class。
+ *  与 ROOT_WHITELIST 交叠部分按名匹配；用户自定义同名函数不参与特判（白名单门 + codegen 按名特判同源）。 */
+val CHANNEL_BUILTINS = setOf("channelFromList", "sendAll", "channelDrain", "channelPipe")
+val MUTEX_BUILTINS = setOf("withMutex", "bumpCounter", "bumpPair")
+val FLOW_BUILTINS = setOf("collectToList", "collectCount", "collectAll")
 
 /** 类型 → 命题层的项表示；函数/元组类型用哨兵名（v1 不参与命题推理） */
 fun typeToExpr(t: Type): Expr = when (t) {
@@ -308,7 +396,7 @@ class Symbols {
         is MutType -> MutType(expand(t.inner, depth + 1))
         is AtomicType -> AtomicType(expand(t.inner, depth + 1))
         is UnionType -> UnionType(t.variants.map { expand(it, depth + 1) })
-        is FunType -> FunType(t.params.map { expand(it, depth + 1) }, expand(t.ret, depth + 1), t.purity, t.theory)
+        is FunType -> FunType(t.params.map { expand(it, depth + 1) }, expand(t.ret, depth + 1), t.purity, t.theory, t.context)
         is TupleType -> TupleType(t.items.map { expand(it, depth + 1) })
         is NamedType -> expandNamed(t, depth)
     }

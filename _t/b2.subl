@@ -1,0 +1,1 @@
+fun f2(): Bool <$ ↔ ∃a. a = x> = true

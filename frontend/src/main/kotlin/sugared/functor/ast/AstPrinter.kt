@@ -74,11 +74,11 @@ private fun Stmt.toTree(): Tree = when (this) {
     is AssignStmt -> Tree("assign", listOf(target.toTree(), value.toTree()))
     is AxiomStmt -> Tree("axiom[${props.joinToString(", ") { it.toTag() }}]")
     is ByStmt -> Tree("by[${props.joinToString(", ") { it.toTag() }}]")
-    is BecauseStmt -> Tree("∵${prop.toTag()}")
-    is ThereforeStmt -> Tree("∴${prop.toTag()}")
-    is PlusBecauseStmt -> Tree("+∵${prop.toTag()}")
+    is BTSStmt -> Tree("∵ " + form.toTag() + " ∴ " + conclusion.toTag(), premises.map { it.toTree() })
+    is WhenPropStmt -> Tree("when[" + disjunction.toTag() + "]", arms.map { a -> Tree(a.condition.toTag(), a.body.map { it.toTree() }) })
+    is StrategyStmt -> Tree("@" + strategy + "[" + goal.toTag() + "]")
     is IfPropStmt -> Tree("if[${prop.toTag()}]", thenStmts.map { it.toTree() } + elseStmts.map { it.toTree() })
-    is ExistIntroStmt -> Tree("∃$name = ${witness.toTag()} . ${prop.toTag()}")
+    is ExistIntroStmt -> Tree("∃" + names.zip(witnesses).joinToString(", ") { (n, w) -> "$n = ${w.toTag()}" } + " . ${prop.toTag()}")
     is ExistsElimStmt -> Tree("∃$name . ${prop.toTag()}", body.map { it.toTree() })
     is FunStmt -> fn.toTree()
     is UncheckedStmt -> Tree("unchecked", listOf(inner.toTree()))
@@ -97,10 +97,7 @@ private fun Expr.toTree(): Tree = when (this) {
     BotExpr -> Tree("⊥")
     is BinExpr -> Tree("bin ${op}", listOf(left.toTree(), right.toTree()))
     is UniExpr -> Tree("un ${op}", listOf(operand.toTree()))
-    is ElvisExpr -> Tree("elvis", listOf(left.toTree(), right.toTree()))
-    is SafeCallExpr -> Tree("safecall .${name}", listOf(target.toTree()) + args.map { it.toTree() })
-    is CastExpr -> Tree("cast >: ${type.toTag()}", listOf(target.toTree()))
-    is TypeTestExpr -> Tree("typetest ? ${type.toTag()}", listOf(target.toTree()))
+    is TypeTestExpr -> Tree("typetest is ${type.toTag()}", listOf(target.toTree()))
     is TaskExpr -> Tree("task", body.stmts.map { it.toTree() })
     is FlowExpr -> Tree("flow", body.stmts.map { it.toTree() })
     is CallExpr -> Tree("call ${callee.toTag()}(${args.joinToString(", ") { it.toTag() }})")
@@ -121,6 +118,7 @@ private fun Expr.toTree(): Tree = when (this) {
     is StructCtorExpr -> Tree("ctor $struct", assigns.map { (n, v) -> Tree("$n = ${v.toTag()}") })
     is QuantExpr -> Tree("$q ${names.joinToString(", ")} .", listOf(body.toTree()))
     is VarExpr -> Tree("var-expr ${annTag(annotations)}$name${type?.let { ": ${it.toTag()}" } ?: ""}", listOf(value.toTree()))
+    is IsPatExpr -> Tree("ispat ${target.toTag()}", listOf(Tree(pat.toTag())))
     is AnonFunExpr -> Tree(
         "fun-expr $name${theoryTag(theory)}(${params.joinToString(", ") { it.toTag() }})" +
             "${angleTag(preps)}${retType?.let { ": ${it.toTag()}" } ?: ""}${angleTag(posts)}",
@@ -139,10 +137,7 @@ private fun Expr.toTag(): String = when (this) {
     BotExpr -> "⊥"
     is BinExpr -> "($op ${left.toTag()} ${right.toTag()})"
     is UniExpr -> "($op ${operand.toTag()})"
-    is ElvisExpr -> "(${left.toTag()} ?: ${right.toTag()})"
-    is SafeCallExpr -> "${target.toTag()}?.${name}(${args.joinToString(", ") { it.toTag() }})"
-    is CastExpr -> "(${target.toTag()} >: ${type.toTag()})"
-    is TypeTestExpr -> "(${target.toTag()} ? ${type.toTag()})"
+    is TypeTestExpr -> "(${target.toTag()} is ${type.toTag()})"
     is TaskExpr -> "Task {${body.stmts.joinToString("; ") { it.toPlain() }}}"
     is FlowExpr -> "Flow {${body.stmts.joinToString("; ") { it.toPlain() }}}"
     is CallExpr -> "${callee.toTag()}(${args.joinToString(", ") { it.toTag() }})"
@@ -161,6 +156,7 @@ private fun Expr.toTag(): String = when (this) {
     is StructCtorExpr -> "$struct(" + assigns.joinToString(", ") { (n, v) -> "$n = ${v.toTag()}" } + ")"
     is QuantExpr -> "$q ${names.joinToString(", ")} . ${body.toTag()}"
     is VarExpr -> "var $name = ${value.toTag()}"
+    is IsPatExpr -> "(${target.toTag()} is ${pat.toTag()})"
     is AnonFunExpr -> "fun $name(${params.joinToString(", ") { it.toTag() }})" +
         (retType?.let { ": ${it.toTag()}" } ?: "") + (body?.let { " = ${it.toTag()}" } ?: "")
 }
@@ -170,11 +166,11 @@ private fun Stmt.toPlain(): String = when (this) {
     is AssignStmt -> "${target.toTag()} = ${value.toTag()}"
     is AxiomStmt -> "axiom[${props.joinToString(", ") { it.toTag() }}]"
     is ByStmt -> "by[${props.joinToString(", ") { it.toTag() }}]"
-    is BecauseStmt -> "∵ ${prop.toTag()}"
-    is ThereforeStmt -> "∴ ${prop.toTag()}"
-    is PlusBecauseStmt -> "+∵ ${prop.toTag()}"
+    is BTSStmt -> "∵ " + form.toTag() + " ∴ " + conclusion.toTag()
+    is WhenPropStmt -> "when[" + disjunction.toTag() + "]"
+    is StrategyStmt -> "@" + strategy + "[" + goal.toTag() + "]"
     is IfPropStmt -> "if[${prop.toTag()}]"
-    is ExistIntroStmt -> "∃ $name = ${witness.toTag()} . ${prop.toTag()}"
+    is ExistIntroStmt -> "∃ " + names.zip(witnesses).joinToString(", ") { (n, w) -> "$n = ${w.toTag()}" } + " . ${prop.toTag()}"
     is ExistsElimStmt -> "∃ $name . ${prop.toTag()}"
     is FunStmt -> "fun ${fn.name}"
     is UncheckedStmt -> "unchecked ${inner.toPlain()}"

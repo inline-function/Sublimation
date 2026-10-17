@@ -148,17 +148,22 @@ data class FunType(
     // v3.0（完美函数类型）：理论参数（多态函数类型 `[T](T)=>T`）。theory 里的名字是**绑定者**——
     // substT 时被屏蔽（α 安全）；类型比对（typeEq/unifyInto/typeLooseEq）V1 忽略 theory 位（宽松，后续收紧）。
     val theory: List<TypeParam> = emptyList(),
+    // 函数类型携带上下文（根文档·上下文系统）：`(T)<$1 ∈ xs> => Null`。
+    // context 是命题表达式列表（解析自 <>），为 null 表示无上下文。
+    val context: List<Expr>? = null,
 ) : Type {
     override val name: String get() = "(fn)"
     override val args: List<Type> get() = params + ret
     override fun render(): String =
         (if (purity.isEmpty()) "" else "$purity ") +
             (if (theory.isEmpty()) "" else "[" + theory.joinToString(", ") { it.name } + "]") +
-            "(" + params.joinToString(", ") { it.render() } + ")=>" + ret.render()
+            "(" + params.joinToString(", ") { it.render() } + ")" +
+            (context?.let { "<" + it.joinToString("; ") { e -> e.toString() } + ">" } ?: "") +
+            "=>" + ret.render()
     override fun substT(sub: Map<String, Type>): Type {
         val bound = theory.map { it.name }.toSet()
         val inner = if (bound.isEmpty()) sub else sub.filterKeys { it !in bound }
-        return FunType(params.map { it.substT(inner) }, ret.substT(inner), purity, theory)
+        return FunType(params.map { it.substT(inner) }, ret.substT(inner), purity, theory, context)
     }
 }
 
@@ -249,23 +254,52 @@ data class UncheckedStmt(val inner: Stmt, override val pos: String = "") : Stmt
 
 data class ExprStmt(val expr: Expr, override val pos: String = "") : Stmt
 
-// ---------- v3.0 特性 5：∵ / ∴ 语句（命题层，语句位） ----------
+// ---------- 根文档《手动证明》—— 因为-所以 / 非真即假 / 分类讨论 / 策略 ----------
 
-/** `∵ p` —— "因为 p"：优先尝试证明，证不出则信任注入 Γ（留痕 D-BECAUSE-TRUSTED） */
-data class BecauseStmt(val prop: Expr, override val pos: String = "") : Stmt
+/** 因为-所以语句（根文档《手动证明》）：
+ *  `∵ form, p₁, p₂ ∴ conclusion`——
+ *  form 是定理的全称形式（如 ∀a b.(a: Rat ∧ b: Rat)→...）；
+ *  premises 是前提（自动证明验证）；conclusion 是结论（须与定理后件合一
+ *  且与前提同义）；编译器从定理空间中匹配定理后注入 conclusion 到 Γ。 */
+data class BTSStmt(
+    val form: Expr,
+    val premises: List<Expr>,
+    val conclusion: Expr,
+    override val pos: String = "",
+) : Stmt
 
-/** `∴ q` —— "所以 q"：检查 Γ ⊢ q（现有 proveOrDeep + @theorem 搜索），通过后 q 自动加入 Γ（连续 ∴ 累积） */
-data class ThereforeStmt(val prop: Expr, override val pos: String = "") : Stmt
+/** 分类讨论语句（根文档《手动证明》）：
+ *  `when[p ∨ q] { p -> { ... ∴ r } q -> { ... ∴ r } }`——
+ *  对析取式做 case 分析，每个分支假设一个析取支成立并证明相同结论 r；
+ *  所有分支的公共结论注入 Γ。 */
+data class WhenPropStmt(
+    val disjunction: Expr,
+    val arms: List<WhenPropArm>,
+    override val pos: String = "",
+) : Stmt
 
-/** `+∵ r` —— "又因为 r"：等价于把 r 与先前结论一起注入 Γ */
-data class PlusBecauseStmt(val prop: Expr, override val pos: String = "") : Stmt
+data class WhenPropArm(
+    val condition: Expr,
+    val body: List<Stmt>,
+    override val pos: String = "",
+) : Node
+
+/** 策略调用（根文档《手动证明》）：
+ *  `@simp[(3*2+6)=12]`——调用命名策略证明目标命题；
+ *  strategy 即 @x 里的 x（如 "simp"），goal 是方括号里的命题。 */
+data class StrategyStmt(
+    val strategy: String,
+    val goal: Expr,
+    override val pos: String = "",
+) : Stmt
 
 // ---------- v3.0 特性 6：if[p] 排中律（语句位，纯证明构造，零运行时代码） ----------
 
 // ---------- v3.0 特性 7：量词（∃引入/∃消去/∀引入=局部函数） ----------
 
 /** `∃ x = t . P(x)` —— ∃ 引入：替换 x→t 后证明 P(t)，成功注入 `∃ x. P(x)` 到 Γ */
-data class ExistIntroStmt(val name: String, val witness: Expr, val prop: Expr, override val pos: String = "") : Stmt
+/** `∃ x₁ = t₁, x₂ = t₂, … . P(x₁, x₂, …)` —— ∃ 引入（多见证）：替换 xᵢ→tᵢ 后证明 P(t₁, t₂, …)，成功注入 `∃ x₁, x₂, … . P` 到 Γ */
+data class ExistIntroStmt(val names: List<String>, val witnesses: List<Expr>, val prop: Expr, override val pos: String = "") : Stmt
 
 /** `∃ x . P(x) { ∴ q… }` —— ∃ 消去：前提 ∃x. P(x) 在 Γ（否则 E-PROP-UNBOUND），块内新帧注入 x 与 P(x)，块外 Γ += 结论 */
 data class ExistsElimStmt(val name: String, val prop: Expr, val body: List<Stmt>, override val pos: String = "") : Stmt
@@ -348,27 +382,13 @@ data object BotExpr : Expr                   // '⊥'
 data class BinExpr(val op: String, val left: Expr, val right: Expr, override val pos: String = "") : Expr
 data class UniExpr(val op: String, val operand: Expr, override val pos: String = "") : Expr
 
-/**
- * v2.0 空安全运算符（决策 88-92）。
- * 不做 BinExpr 复用——语义层需特判（Optional 解构/包装、分支注入），独立节点更清晰。
- */
-
-/** `a ?: b` 空替代：a 为 Some(x) → x；a 为 None → b。类型 = a 内层与 b 的 join */
-data class ElvisExpr(val left: Expr, val right: Expr, override val pos: String = "") : Expr
-
-/** `a?.f(b)` 安全调用（含中缀 `a ?.f b`，INFIX-7 解析层 desugar）：a 为 Some(x) → Some(x.f(b))；None → None */
-data class SafeCallExpr(
-    val target: Expr,
-    val name: String,
-    val args: List<Expr>,
-    override val pos: String = "",
-) : Expr
-
-/** `a >: T` 安全转换：尝试把 a 转为 T（结构判定），成功 → Some(a)，失败 → None；不抛异常 */
-data class CastExpr(val target: Expr, val type: Type, override val pos: String = "") : Expr
-
-/** `a ? T` 运行时类型测：结构判定 a 是否为 T，返回 Bool；`if (a ? T)` 分支内智能转换 a : T */
+/** `a is T` 运行时类型测：结构判定 a 是否为 T，返回 Bool；`if (a is T)` 分支内智能转换 a : T */
 data class TypeTestExpr(val target: Expr, val type: Type, override val pos: String = "") : Expr
+
+/** `a is Some(e)` 模式条件哨兵（parse 期独有）：仅诞生于 if 条件位，parseIf 立即脱糖为
+ *  `when (a) { is Some(e) -> …; else -> … }`（复用 when 全套模式匹配：枚举/结构体/元组/嵌套）。
+ *  正常 AST 里不应出现——checker/codegen 对它的分派是防御性报错。 */
+data class IsPatExpr(val target: Expr, val pat: Pattern, override val pos: String = "") : Expr
 
 /** `Task { ... }` 创建任务（TASK-1：仅创建不启动）。体是代码块（闭包语义，天然 @async）；类型 Task[T]。 */
 data class TaskExpr(val body: BlockExpr, override val pos: String = "") : Expr

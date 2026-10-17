@@ -8,7 +8,7 @@ data class Diag(
     val code: String,
     val pos: String,          // "line:col"，"" 表示无位置
     val message: String,
-    val modulePath: String = "",   // 产生该诊断的模块 absPath（根=""; stdlib="stdlib"）
+    val modulePath: String = "",   // 产生该诊断的模块 absPath（根=""; core 标准库="core/..."）
 ) {
     fun render(source: String? = null): String {
         val tag = when (severity) {
@@ -47,7 +47,7 @@ class DiagBag {
     /** 合并（P0 多模块：各模块 Checker 的 d 汇入总袋） */
     fun absorb(other: DiagBag) { all += other.all }
 
-    /** 多模块合并后：只保留来自指定模块的补充级诊断（其余模块的补充是内部噪声，如 stdlib 自身的推导） */
+    /** 多模块合并后：只保留来自指定模块的补充级诊断（其余模块的补充是内部噪声，如 core 标准库自身的推导） */
     fun dropSupplementsOutside(rootPath: String) {
         all.removeAll { it.severity == Severity.SUPPLEMENT && it.modulePath != rootPath }
     }

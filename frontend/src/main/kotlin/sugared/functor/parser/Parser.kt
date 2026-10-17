@@ -18,6 +18,14 @@ class ParseFailure(val fileName: String, val tok: Token, message: String) :
  */
 class Parser(private val toks: List<Token>, private val fileName: String, private val scriptMode: Boolean = false) {
     private var pos = 0
+    // HKT 标准库简写判定用：本文件已解析的类型类名集合（impl Trait[…] 头须是类型类才当简写，见 parseImpl）
+    private val classNames = LinkedHashSet<String>()
+    // 命题位 if-then-else 的停止词：`then`/`else` 是 IDENT 非关键词，解析子表达式时以它们作停止边界
+    private var stopIdents: Set<String> = emptySet()
+
+/** ifis 智能解构：解析 if 条件期间为真——条件位的 `a is Ctor(...)` 按构造子模式解析（哨兵 IsPatExpr），
+ *  脱糖为 when（普通 if 条件的布尔语义不变；when 分支体里的 `is Ctor(...)` 仍按下一分支模式起始切分） */
+private var ifIsCond: Boolean = false
     // P2：提示/补充留痕改为实例字段——消除 companion 全局可变状态（并发/嵌套解析互相污染）。
     private val hints = mutableListOf<Pair<String, String>>()
     private val supplements = mutableListOf<Triple<String, String, String>>()
@@ -33,7 +41,7 @@ class Parser(private val toks: List<Token>, private val fileName: String, privat
         // 指导思路：`=` 命题等式、`:` 类型测（均可中缀）；`==` `!=` 是 Bool 函数，
         // v1.1 Kotlin 化：EQ/NEQ 允许中缀（a == b / a != b，值相等），前缀 ==(a,b) 仍保留。
         val binops = setOf(
-            Kind.PLUS, Kind.MINUS, Kind.STAR, Kind.SLASH, Kind.PERCENT, Kind.ASSIGN, Kind.COLON,
+            Kind.PLUS, Kind.MINUS, Kind.STAR, Kind.SLASH, Kind.PERCENT, Kind.POW, Kind.ASSIGN, Kind.COLON,
             Kind.LE, Kind.GE, Kind.AMP, Kind.PIPE, Kind.ARROW, Kind.IFF,
             Kind.EQ, Kind.NEQ,
             Kind.LAND, Kind.LOR, Kind.IMPLIES, Kind.EQUIV,
@@ -132,8 +140,9 @@ class Parser(private val toks: List<Token>, private val fileName: String, privat
             val anns = parseAnnotations()
             when (cur().kind) {
                 Kind.FUN -> DeclEntry(parseFun(anns))
-                Kind.STRUCT -> if ("mut" in anns) DeclEntry(parseStruct(anns)) else { pos = save; throw noTopLevel() }
-                Kind.CLASS -> if ("mut" in anns) DeclEntry(parseClass(anns)) else { pos = save; throw noTopLevel() }
+                // 注解名字空间由宿主/注解处理器定义（root doc）：struct/class 上的注解一律放行，由后续处理器解释
+                Kind.STRUCT -> DeclEntry(parseStruct(anns))
+                Kind.CLASS -> DeclEntry(parseClass(anns))
                 else -> if (scriptMode) { pos = save; StmtEntry(parseStmt()) } else { pos = save; throw noTopLevel() }
             }
         }
@@ -241,7 +250,7 @@ class Parser(private val toks: List<Token>, private val fileName: String, privat
         val nm = toks.getOrNull(pos + 1)
         val op = toks.getOrNull(pos + 2)
         return nm?.kind == Kind.IDENT && op != null && op.precededBySpace &&
-            op.kind in setOf(Kind.LE, Kind.GE, Kind.EQ, Kind.NEQ, Kind.IN)   // v3.0：LT/GT 排除——`<a < b>` 上文命题（ParserTest）与约束表歧义；`<=`/`>=`/`==` 等约束走新义
+            op.kind in setOf(Kind.LE, Kind.GE, Kind.EQ, Kind.NEQ) || (op != null && op.kind == Kind.IDENT && op.text == "in")     // P51：in 去关键字化后按文本识别；v3.0：LT/GT 排除——约束表与 `<a < b>` 上文命题歧义
     }
 
     /** v3.0：解析 `score <= 100, n > 0` 约束表（`<...>` 内，逗号分隔）——只登记不校验 */
@@ -253,7 +262,9 @@ class Parser(private val toks: List<Token>, private val fileName: String, privat
             val opTok = cur()
             pos++
             val rhs = parseExpr(angle = true)
-            out += BinExpr(opTok.text, NameRef(cname), rhs, "$cname$opTok")
+            // P51：in 为普通函数——约束项也按调用形态登记（命题层 PAtom("in") 与旧 BinExpr 同构）
+            out += if (opTok.text == "in") CallExpr(NameRef("in"), listOf(NameRef(cname), rhs))
+            else BinExpr(opTok.text, NameRef(cname), rhs, "$cname$opTok")
             if (peek(Kind.COMMA)) { pos++; if (peek(Kind.GT)) break; continue }
             break
         }
@@ -286,9 +297,11 @@ class Parser(private val toks: List<Token>, private val fileName: String, privat
                     }
                     at(Kind.RBRACKET)
                 }
+                // HKT-4（《高阶类型.md》§8 路线，解禁）：kind 形参可带类型类约束——`[F[_]: Foldable]`。
+                // 约束 c 是类型类名字符串（与普通形参 `[T: Show]` 同形）；arity>0 与约束不再互斥。
+                // 语义：函数体内 F 的类型类方法走约束字典槽 d_<约束>_<F>；调用点按 tsub[F] 解出
+                // 具体构造子并注入字典实参（Checker P6 通道 + CallCheck 约束解析）。
                 val c = if (peek(Kind.COLON)) { pos++; nameToken() } else null
-                if (arity > 0 && c != null)
-                    throw ParseFailure(fileName, cur(), "高阶类型构造子暂不支持约束（主人拍板后补）")
                 out += TypeParam(n, c, arity)
             }
             if (peek(Kind.COMMA)) {
@@ -432,40 +445,32 @@ class Parser(private val toks: List<Token>, private val fileName: String, privat
             val an = at(Kind.IDENT).text
             if (an == "mut") return MutType(parseType())
             if (an == "atomic") return AtomicType(parseType())
-            throw ParseFailure(fileName, cur(), "类型位注解只支持 @mut / @atomic")
+            // HKT 标准库（Kotlin 风）：@impure 函数类型——f: @impure (A) => Null
+            // （根文档《异步》withLock(f : @impure ()=>Null) 同形态）：注解只能修饰函数类型，
+            // purity 字段记 "impure"，checker 按此把纯度随函数值传递（checkInlineFunCall）。
+            if (an == "impure") {
+                val t = parseType()
+                return if (t is FunType) t.copy(purity = "impure")
+                       else throw ParseFailure(fileName, cur(), "@impure 类型注解只能修饰函数类型（写法：f: @impure (A) => Null）")
+            }
+            throw ParseFailure(fileName, cur(), "类型位注解只支持 @mut / @atomic / @impure")
         }
         // v3.0（完美函数类型）：`[T]` 前缀先试多态函数类型（`[T](T)=>T`），否则回退普通类型
         val base = if (peek(Kind.LBRACKET)) {
             parsePolyFunType()
                 ?: if (peek(Kind.LPAREN)) parseFunOrTupleType() else parseNamedType()
         } else if (peek(Kind.LPAREN)) parseFunOrTupleType() else parseNamedType()
-        // v2.0 空安全（决策 88-89）：`T?` 后缀 = `Optional[T]` 语法糖；`T??` 嵌套 = Optional[Optional[T]]。
-        // `?` 紧贴类型名（无空格）才是后缀；带空格的 `?` 是运行时类型测中缀（由表达式层处理）。
         var t = base
-        // 变体级 Optional 后缀先绑（`A | B?` = A | (B?)）
-        while (peek(Kind.QUEST) && !cur().precededBySpace) {
-            pos++
-            t = namedT("Optional", listOf(t))
-        }
-        // v2.0 和类型：`A | B | C` 联合（枚举=和类型，此为内联无 tag 形式，变体同款 `T?` 后缀）
+        // v2.0 和类型：`A | B | C` 联合（枚举=和类型，此为内联无 tag 形式）
         if (peek(Kind.PIPE)) {
             val variants = ArrayList<Type>()
             variants += t
             while (peek(Kind.PIPE)) {
                 pos++
-                var v = if (peek(Kind.LPAREN)) parseFunOrTupleType() else parseNamedType()
-                while (peek(Kind.QUEST) && !cur().precededBySpace) {
-                    pos++
-                    v = namedT("Optional", listOf(v))
-                }
+                val v = if (peek(Kind.LPAREN)) parseFunOrTupleType() else parseNamedType()
                 variants += v
             }
             t = UnionType(variants)
-        }
-        // 整体 `?` 后缀：(A|B)? = Optional[A|B]
-        while (peek(Kind.QUEST) && !cur().precededBySpace) {
-            pos++
-            t = namedT("Optional", listOf(t))
         }
         return t
     }
@@ -508,7 +513,9 @@ class Parser(private val toks: List<Token>, private val fileName: String, privat
             }
         }
         at(Kind.RPAREN)
-        return if (peek(Kind.DARROW)) { pos++; FunType(ps, parseType()) }   // ()=>C / (A,B)=>C
+        // 根文档·上下文系统：函数类型可携带上下文 `(T)<$1 ∈ xs> => Null`
+        val ctx = if (peek(Kind.LT)) parseAngleList() else null
+        return if (peek(Kind.DARROW)) { pos++; FunType(ps, parseType(), context = ctx) }   // ()=>C / (A,B)=>C
         else TupleType(ps)                                                   // (T,U)；()=> 已归函数
     }
 
@@ -563,14 +570,29 @@ class Parser(private val toks: List<Token>, private val fileName: String, privat
         if (peek(Kind.FUN)) { val fn = parseFun(if (peek(Kind.AT)) parseAnnotations() else emptyList()); return FunStmt(fn, fn.pos) }
         // v3.0 特性 6：`if[p]` 命题层排中律（IF 后紧跟 [ 与值层 if ( 区分）
         if (peek(Kind.IF) && toks.getOrNull(pos + 1)?.kind == Kind.LBRACKET) return parseIfProp()
-        // v3.0 特性 5：∵ / ∴ / +∵ 语句（命题裸表达式，无需括号）
-        if (peek(Kind.BECAUSE)) { val t = next(); return BecauseStmt(parseExpr(angle = false), "${t.line}:${t.col}") }
-        if (peek(Kind.THEREFORE)) { val t = next(); return ThereforeStmt(parseExpr(angle = false), "${t.line}:${t.col}") }
-        if (peek(Kind.PLUS_BECAUSE)) { val t = next(); return PlusBecauseStmt(parseExpr(angle = false), "${t.line}:${t.col}") }
+        // 根文档《手动证明》：分类讨论 when[p ∨ q] { p -> {…} q -> {…} }
+        if (peek(Kind.WHEN) && toks.getOrNull(pos + 1)?.kind == Kind.LBRACKET) return parseWhenProp()
+        // v3.0 特性 5 旧形兼容：裸 ∴ q（自动填入 ⊤ 作为形式）——等价于 ∵ ⊤, ∴ q
+        // （根文档《手动证明》只保留复合 ∵ form, p₁…pₙ ∴ conclusion 形态，旧则移除。）
+        if (peek(Kind.THEREFORE)) {
+            val t = next(); val q = parseExpr(angle = false)
+            return BTSStmt(TopExpr, emptyList(), q, "${t.line}:${t.col}")
+        }
+        // 根文档《手动证明》：因为-所以语句 ∵ form, p₁, p₂ ∴ conclusion
+        if (peek(Kind.BECAUSE)) return parseBTS()
         if (peek(Kind.UNCHECKED)) return parseUnchecked()
         if (peek(Kind.RET)) return parseReturn()
         if (peek(Kind.BY)) { pos++; return ByStmt(parseBracketList()) }
         if (peek(Kind.AT)) {
+            // 根文档《手动证明》：@策略名[命题] 策略调用
+            if (toks.getOrNull(pos + 1)?.kind == Kind.IDENT && toks.getOrNull(pos + 2)?.kind == Kind.LBRACKET) {
+                val t = next() // 消费 @
+                val strategy = at(Kind.IDENT).text
+                at(Kind.LBRACKET)
+                val goal = parseExpr(angle = true)
+                at(Kind.RBRACKET)
+                return StrategyStmt(strategy, goal, "${t.line}:${t.col}")
+            }
             val anns = parseAnnotations()
             if (peek(Kind.VAR)) return parseVar(anns)
             throw ParseFailure(fileName, cur(), "var")
@@ -588,6 +610,44 @@ class Parser(private val toks: List<Token>, private val fileName: String, privat
             pos = save
         } catch (_: ParseFailure) { pos = save }
         return ExprStmt(parseExpr(angle = false))
+    }
+
+    /** 根文档《手动证明》：`∵ form, p₁, p₂ ∴ conclusion` —— 因为-所以语句 */
+    private fun parseBTS(): Stmt {
+        val t = next()   // ∵ 消费 BECAUSE
+        val form = parseExpr(angle = false)
+        // 裸 ∵ p（后面没有逗号也没有 ∴）→ 兼容旧形：反糖为 ∵ ⊤ ∴ p（先证 p 再注入 p）
+        if (!peek(Kind.COMMA) && !peek(Kind.THEREFORE))
+            return BTSStmt(TopExpr, emptyList(), form, "${t.line}:${t.col}")
+        val premises = ArrayList<Expr>()
+        while (peek(Kind.COMMA)) {
+            pos++  // 消费逗号
+            if (peek(Kind.THEREFORE)) break   // 尾随逗号
+            premises += parseExpr(angle = false)
+        }
+        at(Kind.THEREFORE)  // ∴
+        val conclusion = parseExpr(angle = false)
+        return BTSStmt(form, premises, conclusion, "${t.line}:${t.col}")
+    }
+
+    /** 根文档《手动证明》：`when[p ∨ q] { p -> {…} q -> {…} }` —— 分类讨论语句 */
+    private fun parseWhenProp(): Stmt {
+        val t = next()   // when
+        at(Kind.LBRACKET)
+        val disjunction = parseExpr(angle = true)
+        at(Kind.RBRACKET)
+        at(Kind.LBRACE)
+        val arms = ArrayList<WhenPropArm>()
+        while (!peek(Kind.RBRACE)) {
+            val cond = parseExpr(angle = false)
+            // 允许可选的箭头 ->
+            if (peek(Kind.ARROW)) pos++
+            val body = parseBlock().stmts
+            arms += WhenPropArm(cond, body)
+            if (peek(Kind.COMMA)) pos++
+        }
+        at(Kind.RBRACE)
+        return WhenPropStmt(disjunction, arms, "${t.line}:${t.col}")
     }
 
     /** v3.0 特性 6：`if[p] { … } else { … }` —— 命题层排中律；块内是语句（常为 ∴） */
@@ -622,11 +682,21 @@ class Parser(private val toks: List<Token>, private val fileName: String, privat
         val t = next()   // EXISTS
         val x = at(Kind.IDENT).text
         if (peek(Kind.ASSIGN)) {
-            pos++
-            val witness = parseExpr(angle = false)
+            // 多见证引入：∃ a = t1, b = t2, … . P
+            val names = ArrayList<String>()
+            val witnesses = ArrayList<Expr>()
+            names.add(x)
+            pos++ // 消费 =
+            witnesses.add(parseExpr(angle = false))
+            while (peek(Kind.COMMA)) {
+                pos++ // 消费 ,
+                names.add(at(Kind.IDENT).text)
+                at(Kind.ASSIGN)
+                witnesses.add(parseExpr(angle = false))
+            }
             at(Kind.DOT)
             val prop = parseExpr(angle = true)
-            return ExistIntroStmt(x, witness, prop, "${t.line}:${t.col}")
+            return ExistIntroStmt(names, witnesses, prop, "${t.line}:${t.col}")
         }
         at(Kind.DOT)
         val prop = parseExpr(angle = true)
@@ -723,6 +793,7 @@ class Parser(private val toks: List<Token>, private val fileName: String, privat
     private fun parseClass(anns: List<String> = emptyList()): ClassDecl {
         at(Kind.CLASS)
         val name = nameToken()
+        classNames += name   // 供 parseImpl 的 Trait[…] 简写判定
         val theory = if (peek(Kind.LBRACKET)) parseTheory() else emptyList()
         // v2.1 子类型类：`class Sub[T] : Base[T] , Ord[T]`（父类型类列表，逗号分隔）
         val parents = ArrayList<Type>()
@@ -814,7 +885,19 @@ class Parser(private val toks: List<Token>, private val fileName: String, privat
         // impl 无 for（`impl T { … }`）= 单纯方法添加（用户拍板：承担重载职责）：trait 置 null，成员在 parseFile 展开为自由函数
         val trait: Type?
         val self: Type
-        if (peek(Kind.FOR)) { pos++; trait = t0; self = parseType() } else { trait = null; self = t0 }
+        // HKT 标准库简写（无 for）：`impl Trait[Head[…]]`（Trait 是本文件已声明的类型类）≡ 经典
+        // `impl Trait for Head[…]`——Head 零实参（impl Functor[List]）时补 kind 占位成 List[a]；
+        // `_` 是 kind 应用槽（Result[_, E] = Result 对第二参数应用 Functor），E/K 等零实参大写名
+        // 是**成员可引用的隐式类型变量**（并入各成员 theory 尾部，与 parseFile 扩展 impl 占位提升同套路）
+        val shorthandVars: List<String>
+        if (peek(Kind.FOR)) { pos++; trait = t0; self = parseType(); shorthandVars = emptyList() }
+        else if (t0 is NamedType && t0.args.size == 1 && t0.name in classNames) {
+            // trait 只取头名（Functor）；实参整体移作 self（Head[…]）
+            trait = namedT(t0.name)
+            val arg = t0.args[0]
+            self = if (arg is NamedType && arg.args.isEmpty()) namedT(arg.name, listOf(namedT("a"))) else arg
+            shorthandVars = collectShorthandVars(self)
+        } else { trait = null; self = t0; shorthandVars = emptyList() }
         // v3.0 特性 2：`impl C for T by field` 委托——by 后必须跟字段名（IDENT）
         var delegate: String? = null
         if (peek(Kind.BY)) {
@@ -836,7 +919,28 @@ class Parser(private val toks: List<Token>, private val fileName: String, privat
             }
             at(Kind.RBRACE)
         }
-        return ImplDecl(trait, self, members, delegate)
+        // 简写：self 里用户显式命名的类型变量（Result[_, E] 的 E、Map[K, _] 的 K）并入成员 theory，
+        // 供成员签名引用（E 在 Result[B, E] 等处解析）
+        val finalMembers = if (shorthandVars.isEmpty()) members
+            else members.map { it.copy(theory = it.theory + shorthandVars.map { TypeParam(it, null) }) }
+        return ImplDecl(trait, self, finalMembers, delegate)
+    }
+
+    /** impl 简写 self[…] 里用户显式命名的类型变量：零实参大写名（`Result[_, E]` 的 E、`Map[K, _]` 的 K）。
+     *  `_`（kind 应用槽）与小写占位（经典形态）不算——只收「成员可引用的绑定名」 */
+    private fun collectShorthandVars(t: Type): List<String> {
+        val out = LinkedHashSet<String>()
+        fun walk(tp: Type) {
+            when (tp) {
+                is NamedType ->
+                    if (tp.args.isEmpty() && tp.name != "_" && tp.name.firstOrNull()?.isUpperCase() == true) out.add(tp.name)
+                    else tp.args.forEach { walk(it) }
+                is TupleType -> tp.items.forEach { walk(it) }
+                else -> {}
+            }
+        }
+        walk(t)
+        return out.toList()
     }
 
     // ---------- 表达式 ----------
@@ -848,6 +952,8 @@ class Parser(private val toks: List<Token>, private val fileName: String, privat
             // when 守卫在首个顶层 `->` 处停（`->` 既是蕴含中缀又是分支箭头，蕴含需加括号）
             // 模板 when：空格 LPAREN（紧跟 body 的下一 arm 模式 `(11..20)` 前导）也停——防 `print(1) (11..20)` 后缀调用吞 arm；
             // 无空格调用 `print(1)` / `f(x)` 不受影响。
+            // HKT 标准库：if-then-else 命题形态的停止词边界（then/else 作 IDENT 时不得被 infix 糖吞）
+            if (t.kind == Kind.IDENT && t.text in stopIdents) break
             if (stopArrow && t.kind == Kind.ARROW) break
             if (stopArrow && t.kind == Kind.LPAREN && t.precededBySpace) break
             if (t.kind == Kind.BY) { pos++; left = ByExpr(left, parseBracketList()); continue }
@@ -855,22 +961,15 @@ class Parser(private val toks: List<Token>, private val fileName: String, privat
                 // 修复（#1）：angle 上下文中 `>` 作中缀须「前有空格且后有操作数」；
                 // 紧贴的 `>`（valid<7> 终止符、>> 序列、T>() 调用）仍是终止符
                 if (angle && !(t.precededBySpace && nextStartsOperand())) break
-                // v2.0 空安全：`a >: T` 安全转换。词法层不粘连 `>:`（避免 `<valid<7>>` 终止符序列误判），
-                // 由 parser 在表达式位合成：GT 后紧跟 COLON 即安全转换，右操作数是**类型**不是值。
-                val nxTok = toks.getOrNull(pos + 1)
-                if (nxTok?.kind == Kind.COLON && t.line == nxTok.line) {
-                    pos += 2
-                    left = CastExpr(left, parseType())
-                    continue
-                }
-                pos++; left = BinExpr(">", left, parseUnary()); continue
+                // 修复（HKT 标准库）：中缀右操作数必须继承 angle 上下文——否则 `<p ∧ ∃a. a = x>` 里
+                // ∃ 体以 angle=false 解析，收尾 `>` 被当成比较中缀，吞掉 ` = body` 后报「期望表达式」。
+                pos++; left = BinExpr(">", left, parseUnary(stopArrow, angle)); continue
             }
             if (t.kind == Kind.LT) {
                 if (!t.precededBySpace) break   // 紧贴的 < 属于 postfix 实例化
-                pos++; left = BinExpr("<", left, parseUnary()); continue
+                pos++; left = BinExpr("<", left, parseUnary(stopArrow, angle)); continue
             }
-            // v2.0 空安全：`T?` 后缀、`a ?: b` 空替代、`a ?.f` 安全调用继续保留；
-            // v2.1（对齐 Rust）：`a ? T` 运行时类型测正式改为中缀 `a is T`（is 复用模式匹配关键词），
+            // v2.1（对齐 Rust）：运行时类型测是中缀 `a is T`（is 复用模式匹配关键词），
             // 右操作数是类型名（结构判定目标），非值表达式；类型类判定由 checkTypeTest 拦截。
             // 同行约束：is 与被测表达式必须同一行（否则会被 when 分支体的换行 is 误吞，
             // 如 `is Str -> 0 \n is Nat -> o`——0 之后的换行 is 属于下一个分支的模式）。
@@ -878,38 +977,43 @@ class Parser(private val toks: List<Token>, private val fileName: String, privat
                 // is 前一个 token 的行即左操作数结束行；跨行的 is 不是中缀（when 分支体换行后的 is 属下一分支模式）
                 val leftEnd = toks.getOrNull(pos - 1)?.line
                 if (leftEnd != null && leftEnd != t.line) break
-                // 消歧（构造子解构须 is）：`is Ctor(...)` 的右侧是构造子调用形态（圆括号），绝不可能是类型——
+                // 消歧（构造子解构须 is）：`is Ctor(...)` / `is E::A(...)` 的右侧是构造子调用形态（圆括号），绝不可能是类型——
                 // 视为 when 下一分支的模式起始而非中缀类型测（单行 when 内 `-> 0 is Some(x) ->` 必须这样切）
-                val nxt = toks.getOrNull(pos + 1)
-                if (nxt?.kind == Kind.IDENT && toks.getOrNull(pos + 2)?.kind == Kind.LPAREN) break
+                if (isCtorForm(pos + 1)) {
+                    // ifis 智能解构：if 条件位把它解成模式哨兵（宿主表达式由 parseIf 脱糖为 when）
+                    if (ifIsCond) {
+                        val p = "${t.line}:${t.col}"
+                        left = IsPatExpr(left, parsePattern(), p)   // parsePattern 消费 is 前缀并解出构造子模式
+                        continue
+                    }
+                    break
+                }
                 pos++
                 left = TypeTestExpr(left, parseType())
                 continue
             }
-            // root doc《空安全系统》：`o as T` 内置安全转换关键词——与 `a >: T` 等价（词法层 as 是 IDENT，此处表达式中缀解析）。
-            if (t.kind == Kind.IDENT && t.text == "as") {
-                pos++
-                left = CastExpr(left, parseType())
-                continue
-            }
-            // v2.0 空安全：`a ?: b` 空替代
-            if (t.kind == Kind.ELVIS) {
-                pos++; left = ElvisExpr(left, parseUnary()); continue
-            }
             // v3.0（区间）：`..` 中缀——先于通用 binops（in 的右操作数吃 `lo..hi`）
             if (t.kind == Kind.RANGE) {
-                pos++; left = BinExpr("..", left, parseUnary()); continue
+                pos++; left = BinExpr("..", left, parseUnary(stopArrow, angle)); continue
             }
-            if (t.kind == Kind.IN) {
-                pos++; left = BinExpr("in", left, parseRangeOperand()); continue
+            // P51：in 去关键字化——中缀 a in b 解析为普通函数调用 in(a, b)（右操作数仍吃 lo..hi，见 parseRangeOperand）
+            if (t.kind == Kind.IDENT && t.text == "in") {
+                pos++; left = CallExpr(NameRef("in"), listOf(left, parseRangeOperand(stopArrow, angle))); continue
             }
             if (t.kind in binops) {
                 maybeArithHint(left, t.text, t)
-                pos++; left = BinExpr(t.text, left, parseUnary()); continue
+                pos++; left = BinExpr(t.text, left, parseUnary(stopArrow, angle)); continue
             }
             // 两参解糖：带空格的符号名中缀 `q ○ p` → BinExpr("○")，左结合、无优先级
             if (t.kind == Kind.SYMBOL && t.precededBySpace) {
-                pos++; left = BinExpr(t.text, left, parseUnary()); continue
+                pos++; left = BinExpr(t.text, left, parseUnary(stopArrow, angle)); continue
+            }
+            // HKT 标准库（中文命题风格）：`e 的内部值`——Optional 内部值的命题位读法（后缀一元选择子），
+            // 解糖为原子谓词 的内部值(e)（命题层结构保留；定义性事实由 @axiom 信任，见 Checker）。
+            if (t.kind == Kind.IDENT && t.text == "的内部值" && t.precededBySpace) {
+                pos++
+                left = CallExpr(NameRef("的内部值"), listOf(left))
+                continue
             }
             // P0 补全（决策 88）：标识符两参中缀调用 `a f b`（f 前后均有空格，等价 f(a, b)）。
             // 右操作数也须带空格前缀，避免误吞 `f(x)`（函数调用）与相邻表达式；且要求**同一行**
@@ -917,18 +1021,13 @@ class Parser(private val toks: List<Token>, private val fileName: String, privat
             if (t.kind == Kind.IDENT && t.precededBySpace && infixOperandAhead()) {
                 val name = next().text
                 supplements += Triple("D-INFIX", "${t.line}:${t.col}", "中缀 `a ${name} b` 展开为自由函数 `${name}(a, b)`（中缀糖）")
-                left = CallExpr(NameRef(name), listOf(left, parseUnary()))
+                left = CallExpr(NameRef(name), listOf(left, parseUnary(stopArrow, angle)))
                 continue
             }
             break
         }
         return left
     }
-
-    /** v2.0 空安全（INFIX-5/7，决策 92）：`a ?.f b` 受限中缀——SAFECALL 后的下一 token（b）须为合法表达式起始。
-     *  与标识符中缀同套路：排除分支箭头/逗号/右括号/行尾等，避免误吞相邻表达式。 */
-    private fun safeCallArgStart(nx: Token): Boolean =
-        nx.kind !in setOf(Kind.ARROW, Kind.COMMA, Kind.RBRACE, Kind.RBRACKET, Kind.SEMI, Kind.RPAREN, Kind.ASSIGN, Kind.RET)
 
     /** P0 补全（决策 88）：标识符中缀要求右操作数也带空格前缀，且 f 与左右操作数同在一行（`a f b` 成立；`f(x)` 与跨行 `1\nx` 不是中缀）。
      *  右操作数还必须是合法表达式起始 token——排除 `->`（when 分支分隔/蕴含）、`,`、`}` 等，
@@ -958,6 +1057,7 @@ class Parser(private val toks: List<Token>, private val fileName: String, privat
     /** 修复（#2，用户拍板「语言特性、不实现优先级」）：算术优先级提示——
      *  仅当右侧算子优先级高于左侧已存算子（如 `a + b * c` 左结合会算成 `(a+b)*c`）时提示加括号。 */
     private fun arithPrec(op: String): Int = when (op) {
+        "^" -> 3
         "*", "/", "%" -> 2
         "+", "-" -> 1
         else -> 0
@@ -975,9 +1075,9 @@ class Parser(private val toks: List<Token>, private val fileName: String, privat
     }
 
     /** v3.0（区间 in）：`in` 的右操作数——`lo..hi`（括号 `/无括号`）*/ 
-    private fun parseRangeOperand(): Expr {
-        var e = parseUnary()
-        if (peek(Kind.RANGE)) { pos++; e = BinExpr("..", e, parseUnary()) }
+    private fun parseRangeOperand(stopArrow: Boolean = false, angle: Boolean = false): Expr {
+        var e = parseUnary(stopArrow, angle)
+        if (peek(Kind.RANGE)) { pos++; e = BinExpr("..", e, parseUnary(stopArrow, angle)) }
         return e
     }
 
@@ -1003,23 +1103,6 @@ class Parser(private val toks: List<Token>, private val fileName: String, privat
             when {
                 // 模板 when body：空格 LPAREN（下一 arm 模式前导）在 stopArrow 下不再作后缀调用
                 stopArrow && t.kind == Kind.LPAREN && t.precededBySpace -> break
-                // v2.0 空安全：`a?.f(b)` 标准形式；`a ?.f b` 受限中缀（INFIX-5/7：f 为两参函数或单参方法时，
-                // 解析层无脑取同一行后继表达式为参数，合法性由语义层裁定）
-                t.kind == Kind.SAFECALL -> {
-                    pos++
-                    val name = nameToken()
-                    val args = if (peek(Kind.LPAREN)) {
-                        val (pa, na) = parseArgs()
-                        if (na.isNotEmpty()) throw ParseFailure(fileName, cur(), "安全调用不支持命名参数")
-                        pa
-                    } else {
-                        val nx = toks.getOrNull(pos)
-                        if (nx != null && nx.line == t.line && nx.precededBySpace && safeCallArgStart(nx))
-                            listOf(parseUnary())
-                        else emptyList()
-                    }
-                    e = SafeCallExpr(e, name, args)
-                }
                 t.kind == Kind.COLON2 -> {
                     // v2.1（对齐 Rust 关联项）：`E::A` 枚举成员访问 → 折叠为构造子复合名
                     // （语义层按 syms.ctors 复合键解析构造；后随 `(` 则为构造调用）
@@ -1211,10 +1294,16 @@ class Parser(private val toks: List<Token>, private val fileName: String, privat
 
     private fun parseQuant(q: String, angle: Boolean): Expr {
         // 根文档：多变量量词 `∀ a b c . body`（DOT 前都是名字；逗号分隔兼容 `∀ a, b .`）
+        // 根文档《手动证明》：`∀@p` 全称命题量化——@ 前缀标注命题参数；`∀#A` 全称类型量化——# 前缀标注类型参数。
+        // 名字存成 @p / #A 与普通值参数区分。
         val names = ArrayList<String>()
         while (cur().kind != Kind.DOT) {
             if (cur().kind == Kind.EOF) throw ParseFailure(fileName, cur(), "量词变量列表后的句点（如 ∀x. body）")
-            names += nameToken()
+            val isProp = peek(Kind.AT)
+            if (isProp) pos++
+            val isType = peek(Kind.HASH)
+            if (isType) pos++
+            names += (if (isProp) "@" else if (isType) "#" else "") + nameToken()
             if (peek(Kind.COMMA)) {
                 pos++
                 if (peek(Kind.RPAREN) || peek(Kind.RBRACKET) || peek(Kind.RBRACE)) break   // v3.0：尾随逗号
@@ -1224,15 +1313,97 @@ class Parser(private val toks: List<Token>, private val fileName: String, privat
         return QuantExpr(q, names, parseExpr(angle = angle))
     }
 
+    /** `is` 之后是否构成构造子模式形态：`Ctor(` 或枚举路径 `E::A(`（圆括号实参，与类型方括号区分） */
+    private fun isCtorForm(i: Int): Boolean {
+        if (toks.getOrNull(i)?.kind != Kind.IDENT) return false
+        if (toks.getOrNull(i + 1)?.kind == Kind.LPAREN) return true
+        if (toks.getOrNull(i + 1)?.kind == Kind.COLON2)
+            return toks.getOrNull(i + 2)?.kind == Kind.IDENT && toks.getOrNull(i + 3)?.kind == Kind.LPAREN
+        return false
+    }
+
     private fun parseIf(): Expr {
+        val ip = "${cur().line}:${cur().col}"   // if 关键词位——脱糖后 WhenExpr 的出错点
         at(Kind.IF)
         // v1.1 Kotlin 化：if 条件必须用 ()；then/else 分支可单表达式（不带 {}）或块
-        at(Kind.LPAREN)
+        if (peek(Kind.LPAREN)) {
+            pos++
+            // ifis 智能解构：条件解析期间放行 `a is Ctor(...)` → IsPatExpr 哨兵
+            val saved = ifIsCond
+            ifIsCond = true
+            val cond = try { parseExpr(angle = false) } finally { ifIsCond = saved }
+            at(Kind.RPAREN)
+            // 组合条件里的模式哨兵（`a is Some(e) && e > 0` 之类）——模式绑定无法进入组合作用域，按解析错挡住
+            if (cond !is IsPatExpr && containsIsPat(cond))
+                throw ParseFailure(fileName, cur(),
+                    "ifis 智能解构条件须单独为 `表达式 is 构造模式`（如 `o is Some(e)`）；组合条件请改用 when 表达式")
+            val thenB = parseBranchBlock()
+            val elseB = if (peek(Kind.ELSE)) { pos++; parseBranchBlock() } else null
+            return if (cond is IsPatExpr) {
+                // 脱糖（S-11）：`if (o is PAT) A else B` → `when (o) { is PAT -> A (else -> B) }`——
+                // 复用 when 的模式匹配（枚举/结构体/元组/嵌套）、穷尽性提示与智能转换；else 缺省不补：
+                // 与 if 无 else 同义（值类型退化），枚举主题按既有规则给 W-NON-EXHAUSTIVE 提示
+                val arms = ArrayList<WhenArm>()
+                arms += WhenArm(cond.pat, null, thenB, cond.pos)
+                if (elseB != null) arms += WhenArm(PatElse(cond.pos), null, elseB, cond.pos)
+                WhenExpr(cond.target, null, arms, ip)
+            } else IfExpr(cond, thenB, elseB)
+        }
+        // HKT 标准库（命题位，数学风）：`if c then a else b`——then/else 是 IDENT 非关键词；
+        // c 与分支均为裸表达式，以 then/else 作停止词（否则两参中缀糖会把 then/else 误当中缀函数名）。
+        // 命题层条件式，体不运行；declarative 上下文专用（checkEval 不执行 IfExpr 命题位形态）。
+        val saved = stopIdents
+        stopIdents = setOf("then")
         val cond = parseExpr(angle = false)
-        at(Kind.RPAREN)
-        val thenB = parseBranchBlock()
-        val elseB = if (peek(Kind.ELSE)) { pos++; parseBranchBlock() } else null
-        return IfExpr(cond, thenB, elseB)
+        stopIdents = saved
+        val tt = cur()
+        if (tt.kind != Kind.IDENT || tt.text != "then")
+            throw ParseFailure(fileName, tt, "then")
+        pos++
+        stopIdents = setOf("else")
+        val thenE = parseExpr(angle = false)
+        stopIdents = saved
+        val et = cur()
+        // else 是关键词（Kind.ELSE）；非关键词形态（IDENT "else"）也兼容
+        if (et.kind != Kind.ELSE && (et.kind != Kind.IDENT || et.text != "else"))
+            throw ParseFailure(fileName, et, "else")
+        pos++
+        val elseE = parseExpr(angle = false)
+        return IfExpr(cond, BlockExpr(listOf(ExprStmt(thenE))), BlockExpr(listOf(ExprStmt(elseE))))
+    }
+
+    /** 表达式里是否藏着 IsPatExpr 哨兵——防止组合条件（`a is Some(e) && p` / 实参位等）吞掉模式绑定 */
+    private fun containsIsPat(e: Expr): Boolean = when (e) {
+        is IsPatExpr -> true
+        is BinExpr -> containsIsPat(e.left) || containsIsPat(e.right)
+        is UniExpr -> containsIsPat(e.operand)
+        is CallExpr -> containsIsPat(e.callee) || e.args.any { containsIsPat(it) } || e.namedArgs.values.any { containsIsPat(it) }
+        is FieldExpr -> containsIsPat(e.target)
+        is InstExpr -> containsIsPat(e.target) || e.terms.any { containsIsPat(it) }
+        is TupleExpr -> e.items.any { containsIsPat(it) }
+        is ByExpr -> containsIsPat(e.target) || e.props.any { containsIsPat(it) }
+        is TypeTestExpr -> containsIsPat(e.target)
+        is IfExpr -> containsIsPat(e.cond) || containsIsPat(e.thenBlock) || (e.elseBlock?.let { containsIsPat(it) } ?: false)
+        is WhenExpr -> (e.subject?.let { containsIsPat(it) } ?: false) ||
+            e.arms.any { a -> (a.guard?.let { containsIsPat(it) } ?: false) || (a.cond?.let { containsIsPat(it) } ?: false) || containsIsPat(a.body) }
+        is LambdaExpr -> containsIsPat(e.body)
+        is BlockExpr -> e.stmts.any { containsIsPatStmt(it) }
+        is StructCtorExpr -> e.assigns.any { containsIsPat(it.second) }
+        is FunRefExpr -> containsIsPat(e.target)
+        is SymbolCallExpr -> e.args.any { containsIsPat(it) }
+        is TaskExpr -> containsIsPat(e.body)
+        is FlowExpr -> containsIsPat(e.body)
+        is QuantExpr -> containsIsPat(e.body)
+        else -> false   // 字面量/名字引用等无子表达式节点
+    }
+
+    private fun containsIsPatStmt(s: Stmt): Boolean = when (s) {
+        is ExprStmt -> containsIsPat(s.expr)
+        is VarStmt -> containsIsPat(s.value)
+        is AssignStmt -> containsIsPat(s.target) || containsIsPat(s.value)
+        is ReturnStmt -> s.expr?.let { containsIsPat(it) } ?: false
+        is UncheckedStmt -> containsIsPatStmt(s.inner)
+        else -> false
     }
 
     /** if/when 分支体：`{ 语句… }` 块，或单表达式（自动包装成块，值语义由调用位决定） */
@@ -1263,9 +1434,12 @@ class Parser(private val toks: List<Token>, private val fileName: String, privat
             at(Kind.RPAREN)
             // v3.0 第三批 4.1 模板模式匹配：`when(t in _)` —— 主题为 `in _` 时脱糖为无主题 when，
             // 每个分支模式 p 自动包成条件 `t in p`（`_` 内联到判别表达式右操作数）。
-            (subject as? BinExpr)?.let { be ->
-                val r = be.right
-                if (be.op == "in" && r is NameRef && r.name == "_") { templateBase = be.left; subject = null }
+            // P51：in 中缀已解为调用——主题是 CallExpr("in", [t, _]) 时脱糖为模板 when
+            (subject as? CallExpr)?.let { ce ->
+                val r = ce.args.getOrNull(1)
+                if ((ce.callee as? NameRef)?.name == "in" && r is NameRef && r.name == "_") {
+                    templateBase = ce.args[0]; subject = null
+                }
             }
         }
         at(Kind.LBRACE)
@@ -1281,7 +1455,7 @@ class Parser(private val toks: List<Token>, private val fileName: String, privat
                 else {
                     val pe = parseExpr(angle = false, stopArrow = true)
                     if (pe is NameRef && pe.name == "_") pat = PatElse("$al:$ac")
-                    else { pat = PatCond; cond = BinExpr("in", templateBase, pe, "$al:$ac") }
+                    else { pat = PatCond; cond = CallExpr(NameRef("in"), listOf(templateBase, pe)) }
                 }
                 guard = if (peek(Kind.IF)) { pos++; parseExpr(angle = false, stopArrow = true) } else null
             } else if (subject == null && peek(Kind.ELSE)) {

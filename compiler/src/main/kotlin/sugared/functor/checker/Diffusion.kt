@@ -92,7 +92,7 @@ internal fun constTypeAtom(p: Prop): Boolean? {
     if (p !is PAtom || p.head != ":" || p.terms.size != 2) return null
     val t = (p.terms[1] as? NameRef)?.name ?: return null
     return when (p.terms[0]) {
-        is IntLit -> t == "Nat" || t == "Int"
+        is IntLit -> t in setOf("Nat", "Int", "Rat")
         is StrLit -> t == "Str"
         else -> null
     }
@@ -152,8 +152,6 @@ private fun Checker.containsImpureCall(e: Expr): Boolean = when (e) {
     }
     is BinExpr -> containsImpureCall(e.left) || containsImpureCall(e.right)
     is UniExpr -> containsImpureCall(e.operand)
-    is ElvisExpr -> containsImpureCall(e.left) || containsImpureCall(e.right)
-    is SafeCallExpr -> containsImpureCall(e.target) || e.args.any { containsImpureCall(it) }
     is FieldExpr -> containsImpureCall(e.target)
     is InstExpr -> containsImpureCall(e.target) || e.terms.any { containsImpureCall(it) }
     is TupleExpr -> e.items.any { containsImpureCall(it) }
@@ -235,14 +233,21 @@ internal fun Checker.proveOrDeep(gamma: List<Prop>, goal: Prop): Boolean {
     if (goal is PAtom && goal.head == ":" && goal.terms.size == 2 && typeJudgement(gamma, goal)) return true
     // v3.0 特性 1：目标含变量但等式事实可归约到常量（var m = 5 事实 → 目标 ≠<m,0> 归约为 ≠<5,0>）
     reduceGoalToConstants(gamma, goal)?.let { rg -> constAtomValue(rg)?.let { return it } }
+    // 通道 11：Real 代数重写 — 等式两边能转成 Real → normalize + structuralEqual
+    // （草案 §9.2）：仅判 "="/"=="，两边 normalization 后结构相等即证得。
+    if (goal is PAtom && goal.head in setOf("=", "==") && goal.terms.size == 2) {
+        val a = realFromExpr(goal.terms[0])
+        val b = realFromExpr(goal.terms[1])
+        if (a != null && b != null && structuralEqual(normalize(a), normalize(b))) return true
+    }
     // 通用线性算术通道（整数域）：不等式/等式/in 区间的蕴含与析取反证——when 穷尽、前件、∴ 一律受益。
     // 只有判 **成立** 才短路；判不成立（false）或形态不支持（null）都继续走通用证明器，
     // 避免掐断等式图/等量代换等其它推理（P4 链式代换回归教训）。
     if (ArithProve.proves(gamma, goal) == true) return true
-    val res = prover.proves(globalFacts + gamma, goal)
+    val res = prover.proves(gamma, goal, globalFacts)
     if (prover.deepAborted) d.error("E-DEEP-SATURATION", "", "证明义务太复杂，自动证明器走到最深也没证出。把大结论拆成几个小步骤，一步一步用 `+…` 和 `∴ …` 来推")
     if (res) return true
-    // 加强（自动证明全流程）：把定理空间（stdlib 跨模块 + 用户 @theorem）纳入任意目标的判定——
+    // 加强（自动证明全流程）：把定理空间（core 标准库跨模块 + 用户 @theorem）纳入任意目标的判定——
     // 目标与某定理后件结构合一即成立。原只 ∴/∵/∃/if[p] 位查询，现前件/后件/伴生命题/构造位一律受益。
     return searchTheorems(goal, 0)
 }

@@ -1,0 +1,3 @@
+﻿@allMut
+struct Box(v: Nat)
+

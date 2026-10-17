@@ -41,6 +41,21 @@ class CheckerTest {
     }
 
     @Test
+    fun `filter 后置全称e属于结果不等于0可证 notZero`() {
+        val src =
+            "enum List[T] { Nil(), Cons(T, List[T]) }\n" +
+            "fun filter[T](xs: List[T], f: (T) => Bool): List[T] = when(xs) {\n" +
+            "    Nil -> Nil()\n" +
+            "    is Cons(h, t) -> if (f(h)) { Cons(h, filter(t, f)) } else { filter(t, f) }\n" +
+            "}\n" +
+            "fun notZero(list : List[Nat]) : List[Nat]\n" +
+            "   <∀ e . e ∈ \$ → (e ≠ 0)> =\n" +
+            "   list.filter { _ != 0 }\n"
+        val e = errs(src)
+        assertTrue(e.isEmpty(), "错误码: " + e.joinToString(", ") + " | 全部诊断: " + checkFile(parseSource(src, "t")).diags.joinToString(" | ") { it.render() })
+    }
+
+    @Test
     fun `全称合一特化供给`() {
         val src = "fun need7()<valid<7>>: Null {}\nfun main() { unchecked.axiom[forall n. valid<n>]\nneed7() }"
         assertTrue(ok(src))
@@ -737,6 +752,80 @@ class CheckerTest {
         assertEquals("dict_Functor_List", dictNameOf("Functor", namedT("List", listOf(namedT("a")))))
     }
 
+    // ============ HKT-4 解禁：kind 形参带约束（标准库 Foldable/size 形态）+ 简写 impl ============
+
+    @Test
+    fun `HKT-4 解禁 kind 形参约束（size F 恒 Foldable 端到端）`() {
+        // 解禁前 parseTheory 对「arity>0 且带约束」抛「高阶类型构造子暂不支持约束」，整条标准库路线被堵。
+        // 形态：约束泛型 fun size[F[_]: Foldable, A](fa: F[A])，体内经约束槽调 fold，外部调用合一 F:=List。
+        // 实现体同标准库：fold 成员带上归纳 post（结构归纳两支：Nil/Cons），size 的镜像 post
+        //（$ = fold(...)）靠调用点注入的被调 post 事实自证（命题箭头是 Unicode → / ∀，ASCII => 在尖括号命题位不可用）。
+        assertTrue(ok("enum List[T] { Nil(), Cons(T, List[T]) }\n" +
+            "class Foldable[F[_]] { fun fold[A, R](fa: F[A], init: R, f: (R, A) => R): R }\n" +
+            "impl Foldable[List] {\n" +
+            "  @axiom fun fold[A, R](fa: List[A], init: R, f: (R, A) => R): R\n" +
+            "        <(fa = Nil()) → (\$ = init),\n" +
+            "         (∀h t. fa = Cons(h, t)) → (\$ = fold(t, f(init, h), f))>\n" +
+            "        = when(fa) {\n" +
+            "            Nil -> init\n" +
+            "            is Cons(h, t) -> fold(t, f(init, h), f)\n" +
+        "        }\n" +
+        "}\n" +
+        "@axiom fun size[F[_]: Foldable, A](fa: F[A]): Nat\n" +
+        "    <\$ = fold(fa, 0, { acc, _ => acc + 1 })>\n" +
+        "    = fold(fa, 0, { acc, _ => acc + 1 })\n" +
+        "fun main() { size(Cons(1, Cons(2, Nil()))) }"))
+    }
+
+    @Test
+    fun `HKT 简写 impl Trait Head 部分应用（Result 下划线槽 + E 保留）`() {
+        // impl Functor[Result[_, E]] ≡ impl Functor for Result[_, E]：
+        // F[X] → Result[X, E]（_ 是应用槽；E 是成员可引用的隐式类型变量）。
+        assertTrue(ok("enum Result[T, E] { Ok(T), Err(E) }\n" +
+            "class Functor[F[_]] { fun map[A, B](fa: F[A], f: (A) => B): F[B] }\n" +
+            "impl Functor[Result[_, E]] {\n" +
+            "  fun map[A, B](fa: Result[A, E], f: (A) => B): Result[B, E] = when (fa) {\n" +
+    "    is Ok(v) -> Ok(f(v))\n" +
+    "    is Err(e) -> Err(e)\n" +
+    "  }\n" +
+    "}\n" +
+    "fun main() { }"))
+    }
+
+    @Test
+    fun `HKT 简写 Map K 下划线槽（K 保留不作应用位）`() {
+        // Map[K, _]：K 是保留绑定（键），只有 _ 是 F 的应用槽（值位）→ F[X] → Map[K, X]。
+        assertTrue(ok("enum Map[K, V] { MapNil(), MapCons(K, V, Map[K, V]) }\n" +
+            "class Functor[F[_]] { fun map[A, B](fa: F[A], f: (A) => B): F[B] }\n" +
+            "impl Functor[Map[K, _]] {\n" +
+            "  @axiom fun map[A, B](fa: Map[K, A], f: (A) => B): Map[K, B]\n" +
+        "        = when(fa) {\n" +
+        "            MapNil -> MapNil()\n" +
+        "            is MapCons(k, v, t) -> MapCons(k, f(v), map(t, f))\n" +
+        "        }\n" +
+    "}\n" +
+    "fun main() { }"))
+    }
+
+    @Test
+    fun `axiom 注解信任不可证 post（D-AXIOM-POST 补充诊断）`() {
+        // 标准库的语义性 post（size($) = 0 之属）机器不可证（无归纳证明器）——@axiom 信任 post，
+        // 未注解时保持 E-POST-UNPROVEN 硬错误（信任的内容仅是 post，prep 仍在调用点强校验）。
+        val body = "fun spec(n: Nat): Nat <\$ = 999> = n\n"
+        assertTrue(errs(body).contains("E-POST-UNPROVEN"), "未注解的不可证 post 应报 E-POST-UNPROVEN")
+        assertTrue(ok("@axiom " + body), "@axiom 应放行不可证 post")
+        val diags = checkFile(parseSource("@axiom " + body, "t")).diags.map { it.code }
+        assertTrue(diags.contains("D-AXIOM-POST"), "应给出 D-AXIOM-POST 补充诊断，实际: $diags")
+    }
+
+    @Test
+    fun `借用效应 @impure 函数值形参可被调用（forEach 形态）`() {
+        // f: @impure (Nat)=>Null 是本函数声明的形参 → 体内调用放行（形参即显式效应能力；
+        // 能构造 impure lambda 的调用方本身必非纯，纯洁性不被破坏）。
+        assertTrue(ok("fun forEach(f: @impure (Nat) => Null): Null = f(1)\n" +
+            "@impure fun go(): Null = forEach({ x -> null })"))
+    }
+
     // ============ HKT-2：多参构造子（《高阶类型.md》§7.2 Bifunctor[F[_,_]]） ============
 
     @Test
@@ -1035,14 +1124,14 @@ class CheckerTest {
     fun `rootdoc 不可变var绑定等式进入上下文`() {
         // root doc「用新的不可变变量赋值它，或 let 函数」——无 @mut var 即不可变绑定，绑定等式应入上下文
         val src = "@impure fun main() { var y = 0\n var z = y\n ∵ z = y }"
-        assertTrue(warns(src).none { it.contains("W-CANNOT-PROVE") }, "不可变 z=y 应可证，WS=" + warns(src).joinToString(" | "))
+        assertTrue(errs(src).none { it.contains("E-CANNOT-PROVE") }, "不可变 z=y 应可证，WS=" + warns(src).joinToString(" | "))
     }
 
     @Test
     fun `rootdoc @mut变量不承认绑定相等`() {
         // root doc 第 9 行：可变变量除了自反外，不承认与其他表达式的相等命题
         val src = "@impure fun main() { @mut var x = 0\n var y = x\n ∵ y = x }"
-        assertTrue(warns(src).any { it.contains("W-CANNOT-PROVE") }, "期望 y=x 不可证（@mut 仅自反），实际 WS=" + warns(src).joinToString(" | "))
+        assertTrue(errs(src).any { it.contains("E-CANNOT-PROVE") }, "期望 y=x 不可证（@mut 仅自反），实际 WS=" + warns(src).joinToString(" | "))
     }
 
     @Test
@@ -1050,23 +1139,23 @@ class CheckerTest {
         // root doc：《副作用与可变性控制》——上下文对引用变量态度与可变变量一致，
         // @ref 绑定的变量不注入相等命题（初值可经别名变更）。用普通结构体隔离 @ref 规则。
         val src = "struct T(n: Nat)\n@impure fun main() { @ref var a : T = T(0)\n var b : T = a\n ∵ b = a }"
-        assertTrue(warns(src).any { it.contains("W-CANNOT-PROVE") }, "期望 b=a 不可证（@ref 仅自反），实际 WS=" + warns(src).joinToString(" | "))
+        assertTrue(errs(src).any { it.contains("E-CANNOT-PROVE") }, "期望 b=a 不可证（@ref 仅自反），实际 WS=" + warns(src).joinToString(" | "))
         // 对照组：普通不可变绑定应注入相等（可证）
         val ctl = "struct T(n: Nat)\n@impure fun main() { var c : T = T(0)\n var d : T = c\n ∴ d = c }"
-        assertTrue(warns(ctl).none { it.contains("W-CANNOT-PROVE") }, "普通绑定 d=c 应可证，实际 WS=" + warns(ctl).joinToString(" | "))
+        assertTrue(errs(ctl).none { it.contains("E-CANNOT-PROVE") }, "普通绑定 d=c 应可证，实际 WS=" + warns(ctl).joinToString(" | "))
     }
 
     @Test
     fun `rootdoc @mut自反相等可证`() {
         val src = "@impure fun main() { @mut var x = 0\n ∵ x = x }"
-        assertTrue(warns(src).none { it.contains("W-CANNOT-PROVE") }, "@mut 自反应可证，WS=" + warns(src).joinToString(" | "))
+        assertTrue(errs(src).none { it.contains("E-CANNOT-PROVE") }, "@mut 自反应可证，WS=" + warns(src).joinToString(" | "))
     }
 
     @Test
     fun `rootdoc 不纯表达式不承认相等含自反`() {
         // root doc 第 17 行：不纯函数的调用是不纯表达式，不承认相等命题，包括自反
         val src = "@impure fun main() { ∵ print(\"a\") = print(\"a\") }"
-        assertTrue(warns(src).any { it.contains("W-CANNOT-PROVE") }, "不纯表达式不应承认相等（含自反），实际 WS=" + warns(src).joinToString(" | "))
+        assertTrue(errs(src).any { it.contains("E-CANNOT-PROVE") }, "不纯表达式不应承认相等（含自反），实际 WS=" + warns(src).joinToString(" | "))
     }
 
     @Test
@@ -1111,19 +1200,19 @@ class CheckerTest {
     @Test
     fun `rootdoc 可变结构体不承认相等`() {
         val src = "@mut struct T(@mut n: Nat)\n@impure fun main() { var a = T(0)\n var b = T(0)\n ∵ a = b }"
-        assertTrue(warns(src).any { it.contains("W-CANNOT-PROVE") }, "可变结构体 a=b 不应可证，WS=" + warns(src).joinToString(" | "))
+        assertTrue(errs(src).any { it.contains("E-CANNOT-PROVE") }, "可变结构体 a=b 不应可证，WS=" + warns(src).joinToString(" | "))
     }
 
     @Test
     fun `rootdoc 可变结构体自反可证`() {
         val src = "@mut struct T(@mut n: Nat)\n@impure fun main() { var a = T(0)\n ∵ a = a }"
-        assertTrue(ok(src) && warns(src).none { it.contains("W-CANNOT-PROVE") }, "可变结构体 a=a 自反应可证，WS=" + warns(src).joinToString(" | "))
+        assertTrue(ok(src) && errs(src).none { it.contains("E-CANNOT-PROVE") }, "可变结构体 a=a 自反应可证，WS=" + warns(src).joinToString(" | "))
     }
 
     @Test
     fun `rootdoc 不可变结构体相等不受影响`() {
         val src = "struct S(n: Nat)\n@impure fun main() { var x = S(1)\n var y = x\n ∵ y = x }"
-        assertTrue(ok(src) && warns(src).none { it.contains("W-CANNOT-PROVE") }, "不可变结构体 y=x 应可证，WS=" + warns(src).joinToString(" | "))
+        assertTrue(ok(src) && errs(src).none { it.contains("E-CANNOT-PROVE") }, "不可变结构体 y=x 应可证，WS=" + warns(src).joinToString(" | "))
     }
 
     @Test
@@ -1297,14 +1386,14 @@ class CheckerTest {
 
     @Test
     fun `Because 注入与 Therefore 证明特性五`() {
-        val src = "@impure fun main() { ∵ 1 = 1\n∴ 1 = 1\n+∵ 1 = 1\n∴ 1 = 1 }"
-        assertTrue(ok(src), "∵ 注入后 ∴ 应证明 x = 1；+∵ 累积不报错")
+        val src = "@impure fun main() { ∵ 1 = 1\n∴ 1 = 1\n∵ 1 = 1\n∴ 1 = 1 }"
+        assertTrue(ok(src), "裸 ∵ 与 ∴ 反糖为 ∵⊤∴p：先证再注入")
     }
 
     @Test
     fun `Therefore 证不出封存为警告特性五`() {
         val src = "@impure fun main() { ∵ 1 = 1\n∴ x = 2 }"
-        assertTrue(warns(src).contains("W-CANNOT-PROVE"), "封存：证明失败降级为警告 W-CANNOT-PROVE（不阻塞主流程）")
+        assertTrue(errs(src).contains("E-CANNOT-PROVE"), "证明失败报错 E-CANNOT-PROVE（不阻塞主流程）")
     }
 
     @Test
@@ -1333,9 +1422,9 @@ class CheckerTest {
 
     @Test
     fun `根文档 自定义命题 def 原子谓词无等价定义`() {
-        // 无 ↔ 的 def 是原子谓词：∃ 引入实例/∵ 须 Γ 中有事实才成立（封存期失败降级为警告）
+        // 无 ↔ 的 def 是原子谓词：∃ 引入实例/∵ 须 Γ 中有事实才成立（证不出报错）
         val src = "def Odd<n>\n@impure fun main() { ∃ x = 3 . Odd<3> }"
-        assertTrue(ok(src), "Odd<3> 无等价定义时 ∵/∃ 注入视为成立（封存宽容）；此处 ∵ 前件 Odd<3> 未证出但不再报错")
+        assertTrue(errs(src).contains("E-QUANT-UNPROVEN"), "Odd<3> 无等价定义时 ∃ 引入证不出报 E-QUANT-UNPROVEN")
     }
 
     @Test
@@ -1386,7 +1475,7 @@ class CheckerTest {
     fun `根文档 不纯表达式不参与结构相等`() {
         // 纯度结构相等：@impure 调用结果不确定——print("ok") = print("ok") 不自动为真（∵ 证不出 → 封存警告）
         val src = "@impure fun log(n: Nat): Nat = n\n@impure fun main() { ∵ log(1) = log(1) }"
-        assertTrue(warns(src).any { it.contains("W-CANNOT-PROVE") }, "log(1) = log(1) 含不纯调用，不得凭结构相等成立，∵ 证不出(warn)")
+        assertTrue(errs(src).any { it.contains("E-CANNOT-PROVE") }, "log(1) = log(1) 含不纯调用，不得凭结构相等成立，∵ 证不出(warn)")
     }
 
     @Test
@@ -1395,6 +1484,193 @@ class CheckerTest {
         val src = "fun f(): <this = f> { }"
         assertTrue(ok(src), "this 内联为函数名 f，后件 f = f 自反成立")
     }
+
+    @Test
+    fun `根文档 内联标识 self 调用点内联为接收者`() {
+        // a.f() 后 self 内联为 a（p<self> → p<a>）：后件 self.x = 7 -> a.x = 7，供 getX 前件 a.x = 7
+        val src = "struct A(x: Nat)\n" +
+            "class F { fun f(): Null }\n" +
+            "impl F for A {\n" +
+            "    fun f(): Null <self.x = 7> { unchecked.axiom[self.x = 7]\n return null }\n" +
+            "}\n" +
+            "fun getX(a: A)<a.x = 7>: Null { return null }\n" +
+            "@impure fun main() {\n" +
+            "    var a = A(0)\n" +
+            "    a.f()\n" +
+            "    getX(a)\n" +
+            "}"
+        assertTrue(ok(src), "a.f() 后后件 self 内联为 a，Γ 得 a.x = 7，getX 前件 a.x = 7 应满足")
+    }
+
+    @Test
+    fun `根文档 内联标识 this 调用点内联为函数名`() {
+        // 自由函数 g() 的后件 this 内联为 g（p<this> → p<g>），调用后仍成立
+        val src = "fun g(): Null <this = g> { return null }\n" +
+            "@impure fun main() { g()\n∴ g = g }"
+        assertTrue(ok(src), "g() 后后件 this 内联为函数名 g，Γ 得 g = g")
+    }
+
+    @Test
+    fun `根文档 内联标识 dollar n 调用点内联为实参`() {
+        // mark(9) 的后件 $1 内联为首实参 9（p<$1> → p<9>）
+        val src = "fun mark(v: Nat): Null <$1 = v> { return null }\n" +
+            "@impure fun main() { mark(9)\n∴ 9 = 9 }"
+        assertTrue(ok(src), "mark(9) 后后件 $1 内联为实参 9，Γ 得 9 = 9")
+    }
+    // ============ 自动证明测试（≥10 例） ============
+
+    @Test
+    fun `自动证明 01-自然命题var申明`() {
+        val src = "@impure fun main() { var n = 5\n∴ n ≥ 0 }"
+        assertTrue(ok(src), "var n=5 注入 n≥0，∴ 应可证")
+    }
+
+    @Test
+    fun `自动证明 02-等式自反`() {
+        val src = "fun f(x: Nat): Null <x = x> { return null }\n@impure fun main() { f(7) }"
+        assertTrue(ok(src), "后件 x=x 自反成立")
+    }
+
+    @Test
+    fun `自动证明 03-常量折叠`() {
+        val src = "@impure fun main() { var r = 1 + 1\n∴ r = 2 }"
+        assertTrue(ok(src), "常量折叠：1+1=2")
+    }
+
+    @Test
+    fun `自动证明 04-蕴含传播MP`() {
+        val src = "@impure fun main() { unchecked.axiom[(1 < 2) → (2 < 3)]\nunchecked.axiom[1 < 2]\n∴ 2 < 3 }"
+        assertTrue(ok(src), "MP：p 与 p→q 推出 q")
+    }
+
+    @Test
+    fun `自动证明 05-全称实例化`() {
+        val src = "@impure fun main() { unchecked.axiom[∀ n. n = n]\n∴ 7 = 7 }"
+        assertTrue(ok(src), "∀n.n=n 实例化 n=7 应可证")
+    }
+
+    @Test
+    fun `自动证明 06-矩阵双变量定理`() {
+        val src = "@theorem fun t(): <∀ a b . a + b = b + a>\nfun need()<1 + 2 = 2 + 1>: Null { }\n@impure fun main() { t()\nneed() }"
+        assertTrue(ok(src), "公理 ∀ab 矩阵实例化 a=1,b=2 → 1+2=2+1 供 need 前件")
+    }
+
+    @Test
+    fun `自动证明 07-构造子同余`() {
+        val src = "@impure fun main() { var x = 3\nvar y = 3\nunchecked.axiom[x = y]\n∴ Some(x) = Some(y) }"
+        assertTrue(ok(src), "构造子同余：x=y → Some(x)=Some(y)")
+    }
+
+    @Test
+    fun `自动证明 08-矛盾爆炸`() {
+        val src = "@impure fun main() { unchecked.axiom[1 = 1]\nunchecked.axiom[¬<1 = 1>]\n∴ x = 2 }"
+        assertTrue(ok(src), "p ∧ ¬p → ⊥，矛盾通过爆炸证出 x = 2")
+    }
+
+    @Test
+    fun backtickFun() {
+        val src = "fun `x plus one`(n: Nat): Nat = n + 1\n@impure fun main() { var r = `x plus one`(5) }"
+        assertTrue(ok(src), "反引号标识符函数名")
+    }
+
+    @Test
+    fun btsCompound() {
+        val src = "@impure fun main() {\n" +
+            "    var x = 2\n" +
+            "    var y = 3\n" +
+            "    \u2235 1 + 1 = 2\n" +
+            "    \u2234 (2 + 1) = 3\n" +
+            "}"
+        assertTrue(ok(src), "因为-所以复合形态：\u2235 形式+前提 \u2234 结论")
+    }
+
+    @Test
+    fun bareTherefore() {
+        val src = "@impure fun main() { var n = 5\n\u2234 n \u2265 0 }"
+        assertTrue(ok(src), "裸\u2234反糖 n\u22650 可证")
+    }
+
+    @Test
+    fun ifPropNewStyle() {
+        val src = "@classic\n@impure fun main() { if[1 = 1] { \u2234 1 = 1 } else { \u2234 1 = 1 } }"
+        assertTrue(ok(src), "if[p] 排中律：两支同证 1=1")
+    }
+
+    @Test
+    fun simpEq() {
+        val src = "@impure fun main() { @simp[(3 * 2 + 6) = 12] }"
+        assertTrue(ok(src), "@simp 化简 (3*2+6)=12")
+    }
+
+    @Test
+    fun simpLt() {
+        val src = "@impure fun main() { @simp[3 * 2 < 10] }"
+        assertTrue(ok(src), "@simp 化简 3*2<10")
+    }
+
+    @Test
+    fun typeQuant() {
+        val src = "@impure fun main() { unchecked.axiom[\u2200#T. \u22a4] }"
+        assertTrue(ok(src), "\u2200#T \u5168\u79f0\u7c7b\u578b\u91cf\u5316\u89e3\u6790\u65e0\u9519")
+    }
+
+    @Test
+    fun substLeibniz() {
+        val src = "@impure fun main() { var x = 3\n var y = 3\n \u2234 x = y\n @subst[(2 * x) = (2 * y)] }"
+        assertTrue(ok(src), "@subst: x=y \u2192 2x=2y \u4ee3\u6362\u53ef\u8bc1")
+    }
+
+    @Test
+    fun substSingleTerm() {
+        // x=y 且 p<y> 在 \u0393，@subst[p<x>] \u5e94\u901a\u8fc7
+        val src = "@impure fun main() { var x = 3\n var y = 3\n \u2234 x = y\n unchecked.axiom[p<y>]\n @subst[p<x>] }"
+        assertTrue(ok(src), "@subst: x=y, p<y> \u2192 p<x> \u4ee3\u6362\u901a\u8fc7")
+    }
+
+    @Test
+    fun substPropIff() {
+        // p \u2194 q \u5728 \u0393\uff0c@subst[\u00acp] \u5e94\u8bc1\u51fa \u00acq
+        val src = "@impure fun main() { unchecked.axiom[p \u2194 q]\n unchecked.axiom[\u00acq]\n @subst[\u00acp] }"
+        assertTrue(ok(src), "@subst: p\u2194q, \u00acq \u2192 \u00acp \u4ee3\u6362\u901a\u8fc7")
+    }
+
+
+
+
+    @Test
+    fun `自动证明 09-forall链式MP`() {
+        val src = "@theorem fun ax(): <∀ e . valid<e> → valid2<e>>\nfun has2()<valid2<7>>: Null { }\n@impure fun main() { unchecked.axiom[valid<7>]\nax()\nhas2() }"
+        assertTrue(ok(src), "∀e.(valid<e>→valid2<e>) + valid<7> → valid2<7>（MP + 全称实例化）")
+    }
+
+    @Test
+    fun `自动证明 10-自反与伴生链`() {
+        val src = "@theorem fun refl(): <∀ x . x = x>\n@impure fun main() { refl()\n∴ 3 = 3 }"
+        assertTrue(ok(src), "∀x.x=x → 3=3 实例化后自反成立")
+    }
+
+    @Test
+    fun `自动证明 11-入式type判定`() {
+        val src = "@impure fun main() { var a = 1\n∴ a : Nat }"
+        assertTrue(ok(src), "var a=1 注入 a:Nat 自然命题")
+    }
+
+    @Test
+    fun `自动证明 12-函数类型上下文`() {
+        val src = "enum List[T] { Nil(), Cons(T, List[T]) }\n" +
+            "fun forEach[T](xs: List[T], f: (T)<\$1 ∈ xs> => Null) {\n" +
+            "    when(xs) { Nil -> null\n is Cons(h, t) -> { f(h); forEach(t, f) } }\n" +
+            "    return null\n" +
+            "}\n" +
+            "fun needNotZero(n: Nat)<n ≠ 0> { }\n" +
+            "@impure fun main() {\n" +
+            "    var xs = Cons(1, Cons(2, Nil()))\n" +
+            "    unchecked.axiom[∀ e. e ∈ xs → (e ≠ 0)]\n" +
+            "    xs.forEach { _.needNotZero() }\n" +
+            "}"
+        assertTrue(ok(src), "函数类型上下文：forEach 的 f: (T)<\$1 ∈ xs> => Null，lambda 应能证 \$1≠0")
+    }
+
 
     @Test
     fun `根文档 自动证明矩阵 - 多变量定理笛卡尔实例化`() {
@@ -1443,7 +1719,7 @@ class CheckerTest {
 
     @Test
     fun `算术通道 常量表达式折叠`() {
-        val src = "@impure fun main() { ∵ 1 + 1 = 2\n∴ 2 = 1 + 1\n∴ 1 + 2 * 3 = 7\n∴ 10 / 2 = 5 }"
+        val src = "@impure fun main() { ∴ (1 + 1) = 2\n∴ 2 = (1 + 1)\n∴ 1 + (2 * 3) = 7\n∴ 10 / 2 = 5 }"
         assertTrue(ok(src), "常量算术 +-*/ 折叠后判定真值")
     }
 
@@ -1524,7 +1800,7 @@ class CheckerTest {
     @Test
     fun `IfProp 结论集不同封存为警告特性六`() {
         val src = "@classic\n@impure fun main() { ∵ y = 1\nif[z = 2] { ∴ y = 1 } }"
-        assertTrue(warns(src).contains("E-IF-CONCLUSION-MISMATCH"), "封存：两支 ∴ 结论集不同降级为警告")
+        assertTrue(errs(src).contains("E-IF-CONCLUSION-MISMATCH"), "if[p] 两支结论集不同报错 E-IF-CONCLUSION-MISMATCH")
     }
 
     @Test
@@ -1548,7 +1824,7 @@ class CheckerTest {
     @Test
     fun `Exists 引入实例证不出封存为警告特性七`() {
         val src = "@impure fun main() { ∃ x = 1 . x = 2 }"
-        assertTrue(warns(src).contains("E-QUANT-UNPROVEN"), "封存：实例 1 = 2 证不出降级为警告")
+        assertTrue(errs(src).contains("E-QUANT-UNPROVEN"), "∃ 实例 1=2 证不出报错 E-QUANT-UNPROVEN")
     }
 
     @Test

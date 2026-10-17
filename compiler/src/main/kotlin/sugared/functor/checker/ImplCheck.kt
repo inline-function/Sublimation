@@ -28,7 +28,9 @@ internal fun Checker.checkImplsFrom(files: List<FileAst>) {
             val clsArity = tpArityOf(cls)
             val sub: Map<String, Type> = tpNamesOf(cls).mapIndexed { i, pname ->
                 val ar = clsArity[pname] ?: 0
-                if (ar > 0) pname to (when (val s = impl.self) { is NamedType -> NamedType(s.name); else -> s })
+                // HKT 简写（impl Functor[Result[_, E]]）：kind 形参绑定到**完整 self**（含槽位），
+                // 由 kindExpand 按槽位做部分应用（F[X] → Result[X, E]）；零实参本体（impl Functor[List] → List[a]）同路。
+                if (ar > 0) pname to impl.self
                 else pname to (impl.self.args.getOrNull(i) ?: impl.self)
             }.toMap()
             // v3.0 特性 2：`impl C for T by field` 委托展开——转发字段方法补齐缺省方法
@@ -74,9 +76,10 @@ internal fun Checker.checkImplsFrom(files: List<FileAst>) {
  *  无模块前缀（单文件/根模块）时保持旧名 dict_<Trait>_<Type>，向后兼容既有产物。 */
 internal fun dictNameOf(trait: String, self: Type, modulePath: String = ""): String {
     val p = mangleModule(modulePath)
-    // HKT-D1（《高阶类型.md》§6.1）：kind 类型类 self 是构造子应用占位（`List[a]` 的 a 为小写裸名）时，
-    // 字典名只取**构造子名**（dict_Functor_List），不含 `[a]`（列表/可选同类型类区分保持）。
-    val selfName = if (self is NamedType && self.args.any { it is NamedType && isKindPlaceholder(it) }) self.name
+    // HKT-D1（《高阶类型.md》§6.1）+ 标准库简写：kind 类型类 self 是构造子应用占位（`List[a]` 的 a、
+    // `Result[_, E]` 的 _ / E）时，字典名只取**构造子名**（dict_Functor_List / dict_Functor_Result）。
+    // 判据为语法级（code 生成期无符号表）：_ / 单个大写字母（类型参数约定，根文档）/ 小写裸名。
+    val selfName = if (self is NamedType && self.args.any { it is NamedType && isPlaceholderName(it.name) }) self.name
                    else self.render()
     return if (p.isEmpty()) "dict_${trait}_${sanitize(selfName)}"
            else "dict_${p}_${trait}_${sanitize(selfName)}"
@@ -177,18 +180,28 @@ internal fun Checker.signatureMatch(sig: FunDecl, impl: FunDecl, sub: Map<String
     return sig.params.zip(impl.params).all { typeEq(kindExpand(it.first.type, sub), it.second.type) }
 }
 
-/** HKT（《高阶类型.md》HKT-S6，方案 A）：把类签名里的 kind 形参应用展开为构造子应用——
- *  `F[B]`（arity>0 的形参在 sub 里绑到构造子名 List）→ `List[B]`；普通形参仍走 substT-substT。 */
-private fun kindExpand(t: Type, sub: Map<String, Type>): Type = when (t) {
+/** HKT（《高阶类型.md》HKT-S6 方案 A + 标准库简写）：把类签名里的 kind 形参应用展开为构造子应用。
+ *  绑定（impl self）三种形态：
+ *  - 部分应用（简写 `Result[_, E]`）：槽位 = `_`（按序对应 F 的应用位） → `F[X]` → `Result[X, E]`（E 保留）；
+ *  - 经典小写占位（`impl Functor for List[a]`）：槽位 = a → `F[X]` → `List[X]`；
+ *  - 无槽位（self 退化为头名）→ 旧径：实参逐个展开。普通形参仍走 substT。 */
+private fun Checker.kindExpand(t: Type, sub: Map<String, Type>): Type = when (t) {
     is NamedType ->
         if (t.args.isNotEmpty()) {
-            // 形参是 kind 形参（sub 里有绑定且是零实参构造子名）→ 应用展开为构造子应用
             val binding = sub[t.name]
-            if (binding is NamedType && binding.args.isEmpty())
-                NamedType(binding.name, t.args.map { kindExpand(it, sub) })
-            else NamedType(t.name, t.args.map { kindExpand(it, sub).substTRec(sub) })
+            if (binding is NamedType) {
+                // 槽位（F 的应用位）：`_`（简写，Map[K, _] 的 _）或经典小写占位（List[a] 的 a）。
+                // 用户显式命名的大写变量（K/E）是**保留绑定**（成员可引用），不是应用槽。
+                val slots = binding.args.map { it is NamedType && isSlotOf(it) }
+                if (slots.any { it }) {
+                    val xs = t.args.iterator()
+                    NamedType(binding.name, binding.args.mapIndexed { i, arg ->
+                        if (i < slots.size && slots[i] && xs.hasNext()) kindExpand(xs.next(), sub) else arg
+                    })
+                } else NamedType(binding.name, t.args.map { kindExpand(it, sub) })
+            } else NamedType(t.name, t.args.map { kindExpand(it, sub).substTRec(sub) })
         } else t.substT(sub)
-    is FunType -> FunType(t.params.map { kindExpand(it, sub) }, kindExpand(t.ret, sub), t.purity)
+    is FunType -> FunType(t.params.map { kindExpand(it, sub) }, kindExpand(t.ret, sub), t.purity, context = t.context)
     is TupleType -> TupleType(t.items.map { kindExpand(it, sub) })
     else -> t
 }
@@ -231,22 +244,54 @@ internal fun Checker.doesSelfMatch(self: Type, argT: Type): Boolean {
     return kindWildcardMatch(self, eff)
 }
 
-private fun kindWildcardMatch(self: Type, argT: Type): Boolean = when {
+/** 语法级占位名（dictNameOf / codegen 等无符号表场景用）：`_`、单大写字母（类型参数约定）、小写裸名 */
+internal fun isPlaceholderName(name: String): Boolean =
+    name == "_" || (name.length == 1 && name[0].isUpperCase()) || name.firstOrNull()?.isLowerCase() == true
+
+/** kind 应用槽判据（kindExpand）：`_`（简写形态）或经典小写占位（未声明类型的零实参名）。
+ *  大写用户变量（Result[_, E] 的 E、Map[K, _] 的 K）是保留绑定而非应用槽。 */
+private fun Checker.isSlotOf(t: NamedType): Boolean =
+    t.args.isEmpty() && (t.name == "_" || (t.name.firstOrNull()?.isLowerCase() == true && isTypePlaceholder(t)))
+
+private fun Checker.kindWildcardMatch(self: Type, argT: Type): Boolean = when {
     // v3.0 第三批 4.3：Tuple 类型族 impl——`impl Tuple for (a,b)` 的 self 元素占位匹配具体元组（逐项容器匹配）
     self is TupleType && argT is TupleType ->
-        self.items.size == argT.items.size && self.items.zip(argT.items).all { (s, a) -> kindWildcardMatch(s, a) || (s is NamedType && isKindPlaceholder(s)) }
+        self.items.size == argT.items.size && self.items.zip(argT.items).all { (s, a) -> kindWildcardMatch(s, a) || (s is NamedType && isTypePlaceholder(s)) }
     // 构造子本体通配（HKT-D2）：约束/合一解出的裸构造子名 `List`（零实参）匹配任何同类型类占位
     // 应用 self `List[a]`（占位数任意）——字典 self 是构造子，不是具体类型。size 不等则归此分支。
     self is NamedType && argT is NamedType && self.args.isNotEmpty() && argT.args.isEmpty() &&
-        self.name == argT.name && self.args.all { it is NamedType && isKindPlaceholder(it) } -> true
+        self.name == argT.name && self.args.all { it is NamedType && isTypePlaceholder(it) } -> true
     self is NamedType && argT is NamedType && self.name == argT.name && self.args.size == argT.args.size ->
-        self.args.zip(argT.args).all { (s, a) -> kindWildcardMatch(s, a) || (s is NamedType && isKindPlaceholder(s)) }
+        self.args.zip(argT.args).all { (s, a) -> kindWildcardMatch(s, a) || (s is NamedType && isTypePlaceholder(s)) }
     else -> false
 }
 
-/** 占位变量判据（HKT-S6）：零实参、名字首字母小写、未声明为类型别名/基类型——即 `List[a]` 里的 a */
-private fun isKindPlaceholder(t: NamedType): Boolean =
-    t.name.firstOrNull()?.isLowerCase() == true && t.args.isEmpty()
+/** 占位变量判据（HKT-S6 + 标准库简写）：零实参且**未声明为具体类型**（本模块符号表与跨模块可见集合都查不到）。
+ *  覆盖经典小写占位（`List[a]` 的 a）、简写槽位 `_`、用户显式命名变量（`Result[_, E]` 的 E、`Map[K, _]` 的 K）。
+ *  用符号表而非「首字母小写」判据，使简写形态的占位同样通配匹配与字典命名。 */
+private fun Checker.isTypePlaceholder(t: NamedType): Boolean =
+    t.args.isEmpty() && syms.baseOf(t) == null && !typeVisible(t.name)
+
+/** impl self 的 kind 占位变量集合（HKT-S6；经典与简写同构）：self 里所有零实参未声明名，按出现序去重。
+ *  供成员签名的类型解析（checkFun 的 tps 并入）与 self 声明检查（Symbols 的 selfTps）。 */
+internal fun Checker.selfPlaceholders(t: Type): List<String> {
+    val out = LinkedHashSet<String>()
+    fun walk(tp: Type) {
+        when (tp) {
+            is NamedType ->
+                if (tp.args.isEmpty() && isTypePlaceholder(tp)) out.add(tp.name)
+                else tp.args.forEach { walk(it) }
+            is TupleType -> tp.items.forEach { walk(it) }
+            is FunType -> { tp.params.forEach { walk(it) }; walk(tp.ret) }
+            is UnionType -> tp.variants.forEach { walk(it) }
+            is MutType -> walk(tp.inner)
+            is AtomicType -> walk(tp.inner)
+            else -> {}
+        }
+    }
+    walk(t)
+    return out.toList()
+}
 
 /** v3.0 特性 2：impl C for T by field 委托展开——为缺的方法生成转发 m(args) = field.m(args)。
  *  字段不存在（或 self 非结构体）报 E-BY-UNBOUND；E-BY-TYPE 为可选检查，v1 不做。
