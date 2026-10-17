@@ -1,6 +1,20 @@
+// @allMut 演示（注解处理器 show/apt/allMut.subs）：标在结构体上，
+// 等价于 struct 全部字段可变（@mut struct Counter(@mut score: Nat)）。
+@allMut
+struct Counter(score: Nat)
+
 @impure
-fun main() =
+fun bump(c: @mut Counter): Null {
+    c.score = c.score + 1
+}
+
+@impure
+fun main() {
+    var c : @mut Counter = Counter(0)
+    bump(c)
+    print("计数器=" + toStr(c.score))
     print("证明成功!")
+}
 @classic
 @theorem
 fun `irrational to irrational power irrationality`<

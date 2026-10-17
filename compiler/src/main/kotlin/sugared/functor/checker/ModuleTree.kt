@@ -50,7 +50,7 @@ const val STDLIB_MODULE = "core"
 
 /** 标准库包目录候选（相对编译入口根，按优先级）：
  *  - `core/`：core 统一标准库的包目录惯例（《模块系统》"core 作为 <根>/core/ 包目录存在"）；
- *  - `test/core/`：sublimation 仓库布局——标准库位于 sublimation/test/core，编译入口取仓库根即可识别。
+ *  - `test/core/`：备选布局（test 目录下托管标准库的惯例布局），命中即嫁接。【sublimation 仓库布局：标准库位于仓库根 <仓库根>/core/，编译入口取仓库根即可识别】
  *  命中后一律按 `core` 名嫁接到模块树根（见 graftStdlib），其内部 settings 的
  *  `mount core.xxx` 完整包名挂载按根可达。 */
 val STDLIB_DIR_CANDIDATES = listOf("core", "test/core")
@@ -78,7 +78,7 @@ fun scanModuleTree(root: File): ModuleNode {
 }
 
 /** 嫁接标准库包：`test/core/` → 根的 `core` 子模块（重算 absPath 为 `core/...`）。
- *  根已有 `core` 子目录（编译入口即 core 的父目录，如 `compile test`）时不動。 */
+ *  根已有 `core` 子目录（编译入口即 core 的父目录）时不動。 */
 private fun graftStdlib(root: ModuleNode) {
     if (STDLIB_MODULE in root.children) return
     val test = root.children["test"] ?: return

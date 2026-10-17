@@ -1,4 +1,0 @@
-@impure
-fun main() {
-    ∴ size(Cons(1, Cons(2, Nil()))) = 2
-}

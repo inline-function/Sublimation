@@ -352,7 +352,7 @@ class LspAnalysisTest {
     }
 
     @Test fun `prelude core 标准库文件符号（存在才验）`() {
-        val stdlib = java.io.File("test/core")
+        val stdlib = java.io.File("core")
         if (!stdlib.isDirectory) return  // 无标准库目录则跳过
         val a = opened("fun main() { }")
         a.loadPrelude(stdlib)

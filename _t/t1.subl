@@ -1,3 +1,0 @@
-fun contains[F[_]: Foldable, A](fa: F[A], x: A): Bool
-    <$ ↔ ∃a. a ∈ fa ∧ a = x>
-    = fold(fa, false, { acc, y => acc || y == x })

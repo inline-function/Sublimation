@@ -18,8 +18,8 @@ object BuiltinProcessors {
     /** 默认处理器目录（相对工作目录；仓库根下含 allMut.subs 等内建脚本）。 */
     val DEFAULT_DIR = File("annotation processer")
 
-    /** 标准库目录（跑处理器脚本的解释器用；core 统一标准库位于仓库 test/core）。 */
-    private val stdlibDir = File("test/core")
+    /** 标准库目录（跑处理器脚本的解释器用；core 统一标准库位于仓库根 core/）。 */
+    private val stdlibDir = File("core")
 
     /**
      * 从目录装载全部 `.subs` 处理器（按文件名排序，保证注册序稳定）。

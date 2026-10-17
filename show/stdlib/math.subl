@@ -1,2 +1,0 @@
-// Math stdlib: 供证明用的未实现函数
-fun sqrt(_n: Nat): Real = panic()

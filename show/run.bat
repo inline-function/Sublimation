@@ -1,9 +1,10 @@
 @echo off
 setlocal
 rem ============================================================
-rem  Sublimation v2.0 app example builder (standalone jar)
-rem  Self-contained: run.bat + show.subl + students.json + stdlib\ + sublimation.jar
-rem  App: read students.json -> parse JSON -> score statistics
+rem  Sublimation v4 app example builder (standalone jar)
+rem  Self-contained: run.bat + show.subl + core\ + apt\ + sublimation.jar
+rem  App: @classic 经典定理证明 + @allMut 注解处理器演示
+rem  Processors: apt\allMut.subs（@allMut 注解处理）+ apt\twice.subs
 rem  Usage:
 rem    run.bat         compile this show dir -> show.js, run it,
 rem                    compile+run output -> show.log (UTF-8)
@@ -18,9 +19,9 @@ if defined JAVA_HOME if exist "%JAVA_HOME%\bin\java.exe" set "JAVA_CMD=%JAVA_HOM
 if not exist "%JAR%" goto :nojar
 if /i "%~1"=="run" goto :runonly
 echo.
-echo [1/3] Compiling this show dir (show.subl + stdlib) ...
+echo [1/3] Compiling this show dir (show.subl + core + apt processors) ...
 if exist show.js del show.js
-"%JAVA_CMD%" -jar "%JAR%" compile . -o show.js > show.log 2>&1
+"%JAVA_CMD%" -jar "%JAR%" compile . -p apt -o show.js > show.log 2>&1
 if errorlevel 1 goto :compilefail
 echo [1/3] compile OK.
 echo [2/3] Running show.js ...

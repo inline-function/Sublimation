@@ -1,5 +1,88 @@
-[警告][194:8] W-UNUSED: 参数 xs 声明后从未使用（可加 _ 前缀抑制）
-[警告][458:8] W-UNUSED: 参数 p 声明后从未使用（可加 _ 前缀抑制）
-[警告][500:8] W-UNUSED: 参数 items 声明后从未使用（可加 _ 前缀抑制）
-[完成] 已生成 show.js（27421 字节）
+[提示][9:7] H-ROOT-BUILTIN: @root 函数 runBoth 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][12:7] H-ROOT-BUILTIN: @root 函数 runSeq 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][15:7] H-ROOT-BUILTIN: @root 函数 delay 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][10:7] H-ROOT-BUILTIN: @root 函数 channelFromList 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][12:7] H-ROOT-BUILTIN: @root 函数 channelDrain 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][15:7] H-ROOT-BUILTIN: @root 函数 channelPipe 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][18:7] H-ROOT-BUILTIN: @root 函数 sendAll 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][11:7] H-ROOT-BUILTIN: @root 函数 collectToList 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][14:7] H-ROOT-BUILTIN: @root 函数 collectCount 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][17:7] H-ROOT-BUILTIN: @root 函数 collectAll 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][10:7] H-ROOT-BUILTIN: @root 函数 withMutex 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][13:7] H-ROOT-BUILTIN: @root 函数 bumpCounter 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][16:7] H-ROOT-BUILTIN: @root 函数 bumpPair 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[警告][184:1] W-UNUSED: 参数 xs 声明后从未使用（可加 _ 前缀抑制）
+[警告][28:1] W-UNUSED: 参数 items 声明后从未使用（可加 _ 前缀抑制）
+[警告][7:1] W-UNUSED: 参数 s 声明后从未使用（可加 _ 前缀抑制）
+[警告][9:1] W-UNUSED: 参数 s 声明后从未使用（可加 _ 前缀抑制）
+[警告][12:1] W-UNUSED: 参数 s 声明后从未使用（可加 _ 前缀抑制）
+[警告][14:1] W-UNUSED: 参数 s 声明后从未使用（可加 _ 前缀抑制）
+[提示][9:7] H-ROOT-BUILTIN: @root 函数 print 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][14:7] H-ROOT-BUILTIN: @root 函数 readLine 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][19:7] H-ROOT-BUILTIN: @root 函数 readFile 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][22:7] H-ROOT-BUILTIN: @root 函数 writeFile 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][25:7] H-ROOT-BUILTIN: @root 函数 appendFile 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][28:7] H-ROOT-BUILTIN: @root 函数 fileExists 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][31:7] H-ROOT-BUILTIN: @root 函数 readDir 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][36:7] H-ROOT-BUILTIN: @root 函数 getArgs 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][41:7] H-ROOT-BUILTIN: @root 函数 sleep 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][7:7] H-ROOT-BUILTIN: @root 函数 jsonParse 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][11:7] H-ROOT-BUILTIN: @root 函数 jsonGet 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][13:7] H-ROOT-BUILTIN: @root 函数 jsonAt 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][15:7] H-ROOT-BUILTIN: @root 函数 jsonLen 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][18:7] H-ROOT-BUILTIN: @root 函数 jsonStr 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][19:7] H-ROOT-BUILTIN: @root 函数 jsonNum 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][20:7] H-ROOT-BUILTIN: @root 函数 jsonBool 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][22:7] H-ROOT-BUILTIN: @root 函数 jsonIsNull 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][23:7] H-ROOT-BUILTIN: @root 函数 jsonIsArr 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][26:7] H-ROOT-BUILTIN: @root 函数 jsonToStr 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][28:7] H-ROOT-BUILTIN: @root 函数 jsonToList 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][8:7] H-ROOT-BUILTIN: @root 函数 mathMin 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][9:7] H-ROOT-BUILTIN: @root 函数 mathMax 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][11:7] H-ROOT-BUILTIN: @root 函数 mathClamp 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][13:7] H-ROOT-BUILTIN: @root 函数 mathRound 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][15:7] H-ROOT-BUILTIN: @root 函数 mathSin 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][16:7] H-ROOT-BUILTIN: @root 函数 mathCos 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][17:7] H-ROOT-BUILTIN: @root 函数 mathTan 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][21:7] H-ROOT-BUILTIN: @root 函数 sqrt 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[警告][10:1] W-UNUSED: 参数 url 声明后从未使用（可加 _ 前缀抑制）
+[警告][14:1] W-UNUSED: 参数 url 声明后从未使用（可加 _ 前缀抑制）
+[警告][14:1] W-UNUSED: 参数 body 声明后从未使用（可加 _ 前缀抑制）
+[警告][19:1] W-UNUSED: 参数 host 声明后从未使用（可加 _ 前缀抑制）
+[警告][19:1] W-UNUSED: 参数 port 声明后从未使用（可加 _ 前缀抑制）
+[提示][7:7] H-ROOT-BUILTIN: @root 函数 rand 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][8:7] H-ROOT-BUILTIN: @root 函数 toRat 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][10:7] H-ROOT-BUILTIN: @root 函数 toReal 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][12:7] H-ROOT-BUILTIN: @root 函数 parseRat 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][15:7] H-ROOT-BUILTIN: @root 函数 abs 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][16:7] H-ROOT-BUILTIN: @root 函数 floor 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][17:7] H-ROOT-BUILTIN: @root 函数 ceil 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][19:7] H-ROOT-BUILTIN: @root 函数 pow 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[警告][7:1] W-UNUSED: 参数 s 声明后从未使用（可加 _ 前缀抑制）
+[警告][7:1] W-UNUSED: 参数 pattern 声明后从未使用（可加 _ 前缀抑制）
+[警告][10:1] W-UNUSED: 参数 s 声明后从未使用（可加 _ 前缀抑制）
+[警告][10:1] W-UNUSED: 参数 pattern 声明后从未使用（可加 _ 前缀抑制）
+[警告][13:1] W-UNUSED: 参数 s 声明后从未使用（可加 _ 前缀抑制）
+[警告][13:1] W-UNUSED: 参数 pattern 声明后从未使用（可加 _ 前缀抑制）
+[警告][16:1] W-UNUSED: 参数 s 声明后从未使用（可加 _ 前缀抑制）
+[警告][16:1] W-UNUSED: 参数 pattern 声明后从未使用（可加 _ 前缀抑制）
+[警告][16:1] W-UNUSED: 参数 repl 声明后从未使用（可加 _ 前缀抑制）
+[提示][7:7] H-ROOT-BUILTIN: @root 函数 concat 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][9:7] H-ROOT-BUILTIN: @root 函数 length 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][11:7] H-ROOT-BUILTIN: @root 函数 charAt 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][13:7] H-ROOT-BUILTIN: @root 函数 substring 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][15:7] H-ROOT-BUILTIN: @root 函数 strCmp 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][19:7] H-ROOT-BUILTIN: @root 函数 toStr 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][21:7] H-ROOT-BUILTIN: @root 函数 parseNat 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][24:7] H-ROOT-BUILTIN: @root 函数 strUpper 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][25:7] H-ROOT-BUILTIN: @root 函数 strLower 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][26:7] H-ROOT-BUILTIN: @root 函数 strTrim 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][28:7] H-ROOT-BUILTIN: @root 函数 startsWith 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][29:7] H-ROOT-BUILTIN: @root 函数 endsWith 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][31:7] H-ROOT-BUILTIN: @root 函数 strReplace 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][33:7] H-ROOT-BUILTIN: @root 函数 strSplit 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][35:7] H-ROOT-BUILTIN: @root 函数 strIndexOf 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[提示][7:7] H-ROOT-BUILTIN: @root 函数 timeNow 由编译器内建 JS 实现，调用点直接翻译为原生 JS（不生成函数定义）
+[完成] 已生成 show.js（32477 字节）
+计数器=1
 证明成功!

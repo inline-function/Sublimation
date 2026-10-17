@@ -1,1 +1,0 @@
-fun f(): Bool <∃a. p(a)> = true

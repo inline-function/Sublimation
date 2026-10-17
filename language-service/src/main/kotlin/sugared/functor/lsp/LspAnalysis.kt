@@ -86,7 +86,7 @@ class LspAnalysis {
             add(name, "fun", "fun " + name + funSignature(fn), BUILTIN_FUN_DOCS[name])
         }
 
-        // 可选 core 标准库文件（包目录，递归收集；core 统一标准库位于 test/core）：解析后灌入顶层声明签名
+        // 可选 core 标准库文件（包目录，递归收集；core 统一标准库位于仓库根 core/）：解析后灌入顶层声明签名
         if (stdlibDir != null && stdlibDir.isDirectory) {
             for (f in stdlibDir.walkTopDown().filter { it.isFile && it.name.endsWith(".subl") }.sortedBy { it.path }) {
                 try {

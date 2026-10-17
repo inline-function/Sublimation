@@ -15,7 +15,7 @@ import java.io.File
  */
 class Interpreter(
     /** 标准库目录（Sublimation 自举标准库 .subl 源文件；core 统一标准库为包目录，递归收集） */
-    private val stdlibDir: File = File("test/core"),
+    private val stdlibDir: File = File("core"),
 ) {
 
     // 宿主函数注册（含类型签名）

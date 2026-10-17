@@ -1,1 +1,0 @@
-fun f1(): Bool <$ ↔ a = x> = true

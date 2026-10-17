@@ -47,10 +47,10 @@ class ModuleE2ETest {
         } finally { dir.deleteRecursively() }
     }
 
-    /** core 统一标准库（test/core 包目录）载入临时树规格：key 形如 "core/collection/list.subl"。
-     *  v4 改名后标准库位于仓库 sublimation/test/core，测试内联整包（stdlib → core）。 */
+    /** core 统一标准库（仓库根 core/ 包目录）载入临时树规格：key 形如 "core/collection/list.subl"。
+     *  v4 改名后标准库位于仓库根 sublimation/core，测试内联整包（stdlib → core）。 */
     private fun coreSpec(): Map<String, String> {
-        val root = File("test/core")
+        val root = File("core")
         val out = LinkedHashMap<String, String>()
         for (f in root.walkTopDown().filter { it.isFile && it.name.endsWith(".subl") }
                 .sortedBy { it.relativeTo(root).path }) {

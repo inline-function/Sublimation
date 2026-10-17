@@ -1,1 +1,0 @@
-fun f3(): Bool <$ ↔ ∃a. a ∈ fa ∧ a = x> = true
