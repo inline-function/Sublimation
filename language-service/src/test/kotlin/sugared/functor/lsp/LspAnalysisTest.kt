@@ -933,6 +933,22 @@ class LspAnalysisTest {
         assertTrue(edits.isEmpty(), "非换行触发不应产生编辑: " + edits)
     }
 
+    @Test fun `端到端 onTypeFormatting 换行缩进`() {
+        // 单行声明（无引号转义负担）；didOpen 的 text 含 JSON 转义换行，模拟用户在 { 后按了 Enter
+        val input =
+            lspFrame("""{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}""") +
+            lspFrame("""{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///t.subl","languageId":"subl","version":1,"text":"if (x > 0) {\n"}}}""") +
+            lspFrame("""{"jsonrpc":"2.0","id":2,"method":"textDocument/onTypeFormatting","params":{"textDocument":{"uri":"file:///t.subl"},"position":{"line":1,"character":0},"ch":"\n"}}""") +
+            lspFrame("""{"jsonrpc":"2.0","method":"exit"}""")
+        val output = java.io.ByteArrayOutputStream()
+        LspServer.start(java.io.ByteArrayInputStream(input.toByteArray(Charsets.UTF_8)), output)
+        val frames = parseFrames(output.toString(Charsets.UTF_8))
+        val resp = frames.lastOrNull()
+        assertNotNull(resp, "应有 onTypeFormatting 响应，实际帧: " + frames)
+        assertTrue(resp!!.contains("newText"), "响应应含 newText 编辑，实际: " + resp)
+        assertTrue(resp.contains("range"), "响应应含 range，实际: " + resp)
+    }
+
     @Test fun `补全排序 有前缀时已声明符号优先于关键字`() {
         val src = "fun main() {\n    var idx = 1\n    i\n}"
         val a = opened(src)
