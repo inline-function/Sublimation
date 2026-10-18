@@ -22,13 +22,23 @@ class Checker(
     internal val moduleTree: ModuleTreeDriver? = null,
     /** 脚本模式：顶层语句即入口（类 @impure main），纯作用域检查放宽——允许顶层调用非纯函数 */
     internal val scriptMode: Boolean = false,
+    /** 激进模式（idea doc/激进模式.md）：--prover=aggressive。默认 false——普通模式行为完全不变（§11 其四） */
+    internal val aggressive: Boolean = false,
+    /** 激进模式可观测性：进度频率/详细程度/诊断报告路径（§6、§7、§8） */
+    internal val proveVerbose: Boolean = false,
+    internal val proveIntervalMs: Long = 5_000L,
+    internal val proveDumpPath: String? = null,
 ) {
     internal val d = DiagBag().also { it.modulePath = modulePath }
     val syms = Symbols()
     /** LSP/IDE 类型导出：声明名 → 推导类型（局部 var / 解构 / 模式绑定）。
      *  check 过程填充、run 后可用（best-effort：仅已过检部分有值）。 */
     val inferredVars = LinkedHashMap<String, Type>()
-    internal val prover = Prover(maxRounds = 3, maxDepth = maxSatDepth)
+    /** 激进会话：aggressive=false 时为 null，证明器所有激进分支全部关闭 */
+    internal val session: ProverSession? =
+        if (aggressive) ProverSession(proveVerbose, proveIntervalMs, proveDumpPath).also { AggressiveRuntime.active = it }
+        else null
+    internal val prover = Prover(maxRounds = if (aggressive) Int.MAX_VALUE else 3, maxDepth = maxSatDepth, session = session)
     /** 全局事实（跨帧可见）：当前为 pure<name>（决策 34：未标 @impure 的函数自动纯） */
     internal val globalFacts = ArrayList<Prop>()
     /** 覆盖律展开的临时变量计数（每次 enumCoverageDisj 调用前重置） */

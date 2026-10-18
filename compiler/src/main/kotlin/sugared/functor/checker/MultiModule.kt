@@ -20,7 +20,18 @@ import java.util.IdentityHashMap
  * → 阶段 B 类型可解析性+impl+pure → 阶段 C 声明体检查 → 合并诊断。
  * 单文件模式（现有 `Checker(file)`）不受影响——本驱动只处理目录。
  */
-class MultiModule(root: File) {
+class MultiModule(
+    root: File,
+    /** 激进模式（idea doc/激进模式.md §6）：--prover=aggressive 透传给每个 Checker */
+    aggressive: Boolean = false,
+    proveVerbose: Boolean = false,
+    proveIntervalMs: Long = 5_000L,
+    proveDumpPath: String? = null,
+) {
+    private val agg = aggressive
+    private val pv = proveVerbose
+    private val pim = proveIntervalMs
+    private val pdp = proveDumpPath
     val tree: ModuleNode = scanModuleTree(root)
     val bag = DiagBag()
     val driver = ModuleTreeDriver(tree, bag)
@@ -46,7 +57,8 @@ class MultiModule(root: File) {
         asts = m
         // 阶段 A：prelude + 符号收集（全部模块先落 allSymbols，供交叉引用/类型可解析性）
         for ((p, ast) in asts) {
-            val chk = Checker(file = ast, modulePath = p, allSymbols = allSymbols, moduleTree = driver)
+            val chk = Checker(file = ast, modulePath = p, allSymbols = allSymbols, moduleTree = driver,
+                aggressive = agg, proveVerbose = pv, proveIntervalMs = pim, proveDumpPath = pdp)
             chk.collectPrelude()
             chk.collectDecls(listOf(ast))
             allSymbols[p] = chk.syms
@@ -90,7 +102,8 @@ class MultiModule(root: File) {
         if (anyChanged) {
             // 阶段 A 重跑：每模块重建 Checker（收集声明）后再统一跑 B/C
             for (p in asts.keys.toList()) {
-                val chk = Checker(file = asts.getValue(p), modulePath = p, allSymbols = allSymbols, moduleTree = driver)
+                val chk = Checker(file = asts.getValue(p), modulePath = p, allSymbols = allSymbols, moduleTree = driver,
+            aggressive = agg, proveVerbose = pv, proveIntervalMs = pim, proveDumpPath = pdp)
                 chk.collectPrelude()
                 chk.collectDecls(listOf(asts.getValue(p)))
                 allSymbols[p] = chk.syms

@@ -374,9 +374,23 @@ object PropLogic {
  * 前向链接 modus ponens（`p` 与 `p->q` 可推出 `q`）、⊥ 爆炸。
  * 不做：算术推理、∨/¬/→ 待证侧引入、∃! 唯一性、多名字量词（v1 限制）。
  */
-class Prover(private val maxRounds: Int = 114514, private val maxDepth: Int = 4) {
+class Prover(
+    private val maxRounds: Int = 114514,
+    private val maxDepth: Int = 4,
+    /** 激进模式会话：非空时启用三维池 / 不动点饱和 / 迭代加深 / ∨ 消去（普通模式全部关闭，行为不变） */
+    internal val session: ProverSession? = null,
+) {
     var deepAborted = false
         private set
+    /** 当前深度预算（迭代加深每层调；普通模式恒为 maxDepth）与本路径已拆析取集 */
+    private var curBudget: Int = maxDepth
+    private var curUsedOr: MutableSet<String> = HashSet()
+
+    /** 反证法：Γ ∪ {¬goal} 饱和出 ⊥ ⇒ Γ ⊢ goal（经典逻辑——调用方须确认 @classic 已挂载，§5.3） */
+    fun provesByContradiction(gamma: List<Prop>, goal: Prop): Boolean {
+        val cl = closure(gamma + PropLogic.normalizeFacts(listOf(PNot(goal))), emptyList(), gamma)
+        return cl.contains(PBot)
+    }
 
     /**
      * 饱和闭包：合取分解 + ∀ 单名实例化（候选项 = Γ 现有项 ∪ 目标项）+ MP，迭代至不动点。
@@ -388,6 +402,8 @@ class Prover(private val maxRounds: Int = 114514, private val maxDepth: Int = 4)
         // 关键表达式：一次性从程序块（初始事实 + 目标）收集**一切**表达式，此后固定——
         // 不随新增事实扩张（根文档「命题中出现的表达式再收集仅关键表达式中」），
         // 否则复合项会自我增殖（(1+2)->(1+2)+(2+1)->…）导致笛卡尔爆炸、永不达不动点。
+        // 激进模式：三维池 + 不动点饱和（无 maxRounds 截断）；普通模式沿用下方一维 keyTerms 与有界轮数
+        if (session != null) return closureAggressive(gamma, extraGoals, termSource)
         val keyTerms = (PropLogic.groundTerms(termSource) + extraTerms).distinctBy { PropLogic.termTag(it) }
         // 实例化矩阵预计算：keyTerms 固定，各 ∀ 量词的候选替换跨轮不变——每轮重建是 Kⁿ 开销（show.subl 卡顿根因）。
         val forallSubs = facts.filterIsInstance<PForall>().mapNotNull { fa ->
@@ -437,8 +453,91 @@ class Prover(private val maxRounds: Int = 114514, private val maxDepth: Int = 4)
         return facts.toList()
     }
 
+    /**
+     * 激进饱和（§5.1）：轮数无上限——**靠不动点判据退出**（本轮无新事实）。
+     * ∀ 实例化按维度分派（§4.6）：裸原子→命题池，':'右端→类型池，其余→表达式池。
+     * 命题维替换用 substPropParam，项/类型维用 substProp（类型经 typeToExpr 再装为项）。
+     */
+    private fun closureAggressive(gamma: List<Prop>, extraGoals: List<Prop>, termSource: List<Prop>): List<Prop> {
+        val sess = session!!
+        val facts = PropLogic.normalizeFacts(gamma).toMutableSet()
+        val pool = sess.prebuiltPool
+            ?: buildKeyPool(PropLogic.normalizeFacts(termSource), extraGoals, sess.typeHints, sess)
+        sess.prebuiltPool = null   // 一次性：防跨义务串用
+        sess.step(pool.sizes())
+        // 实例化矩阵：keyTerms 固定的老逻辑保留（表达式维 ∀ 仍走它），新维度 ∀ 走 instCombos
+        val extraTerms = extraGoals.flatMap { PropLogic.groundTerms(listOf(it)) }
+        val keyTerms = (PropLogic.groundTerms(termSource) + extraTerms).distinctBy { PropLogic.termTag(it) }
+        val combosPerFa = facts.filterIsInstance<PForall>().map { fa -> fa to instCombos(fa, pool, sess) }
+        // 表达式维的旧矩阵（普通模式同款，供 dimsOf 未含 TYPE/PROP 的 ∀ 命中）
+        val forallSubs = facts.filterIsInstance<PForall>().mapNotNull { fa ->
+            if (fa.names.isEmpty()) null else fa to when {
+                fa.names.size == 1 -> keyTerms.map { listOf(it) }
+                else -> {
+                    var acc: List<List<Expr>> = listOf(emptyList())
+                    repeat(fa.names.size) { acc = acc.flatMap { comb -> keyTerms.map { comb + it } } }
+                    acc
+                }
+            }
+        }
+        val seenSubs = HashSet<String>()
+        var round = 0
+        while (true) {
+            sess.checkAbort()
+            sess.step(pool.sizes())
+            var changed = false
+            // 新维度 ∀（命题/类型）实例化
+            for ((fa, combos) in combosPerFa) {
+                for ((exprSub, propSub) in combos) {
+                    if (propSub.isEmpty() && exprSub.isEmpty()) continue
+                    val key = fa.names.joinToString("\u0001") + "\u0003" +
+                        exprSub.entries.joinToString("\u0001") { it.key + "=" + PropLogic.termTag(it.value) } + "\u0004" +
+                        propSub.entries.joinToString("\u0001") { it.key + "=" + PropLogic.render(it.value) }
+                    if (!seenSubs.add(key)) continue
+                    val inst = PropLogic.substProp(fa.body, exprSub)
+                    val final = propSub.entries.fold(inst) { acc, (n, q) -> PropLogic.substPropParam(acc, n, q) }
+                    PropLogic.normalizeFacts(listOf(final)).forEach { if (facts.add(it)) changed = true }
+                }
+            }
+            // 表达式维 ∀（沿用普通模式矩阵）
+            for ((fa, combs) in forallSubs) {
+                for (comb in combs) {
+                    val key = fa.names.joinToString("\u0001") + "\u0002" + comb.joinToString("\u0001") { PropLogic.termTag(it) }
+                    if (!seenSubs.add(key)) continue
+                    val sub = fa.names.zip(comb).toMap()
+                    PropLogic.normalizeFacts(listOf(PropLogic.substProp(fa.body, sub)))
+                        .forEach { if (facts.add(it)) changed = true }
+                }
+            }
+            for (im in facts.filterIsInstance<PImp>().toList()) {
+                // 前件按规范形拆解（合取拆诸支、等价已拆双蕴含、双否已消），各支都在 Γ 即触发 MP
+                val ants = PropLogic.normalizeFacts(listOf(im.a))
+                if (ants.isNotEmpty() && ants.all { facts.contains(it) }) {
+                    PropLogic.normalizeFacts(listOf(im.b)).forEach { if (facts.add(it)) changed = true }
+                }
+            }
+            // modus tollens（后件否定推前件否定）——p→q 与 ¬q 在 Γ ⇒ ¬p（经典逻辑健全）
+            for (im in facts.filterIsInstance<PImp>().toList()) {
+                if (facts.contains(PNot(im.b))) {
+                    PropLogic.normalizeFacts(listOf(PNot(im.a))).forEach { if (facts.add(it)) changed = true }
+                }
+            }
+            // 矛盾检测：p 与 ¬p 同在 Γ → ⊥（穷尽性/不可达分支判定的基础）
+            if (!facts.contains(PBot)) {
+                val negated = facts.filterIsInstance<PNot>().map { it.p }.toHashSet()
+                if (facts.any { p -> p !is PNot && p in negated }) {
+                    facts.add(PBot); changed = true
+                }
+            }
+            if (!changed) break   // 不动点判据（§5.1）：本轮无新事实 → 停
+            round++
+        }
+        return facts.toList()
+    }
+
     fun proves(gamma: List<Prop>, goal: Prop, global: List<Prop> = emptyList()): Boolean {
         deepAborted = false
+        if (session != null) return provesAggressive(gamma, goal, global)
         val cl = closure(gamma + global, listOf(goal), termSource = gamma)
         // 目标的 ground 项并入实例化候选：否则 ∀n.p<n> 永远举不出目标里的具体项（valid<7> 证不出）
         // P4：预提取等式事实（prove 递归共享，避免每个目标重扫全部 facts）
@@ -447,10 +546,31 @@ class Prover(private val maxRounds: Int = 114514, private val maxDepth: Int = 4)
         return prove(cl, goal, 0, HashSet(), eqs)
     }
 
+    /** 激进 prove：闭包只算一次（与深度无关）；迭代加深 4→8→16…（§5.1，无上限靠 visited 剪枝 + 中断） */
+    private fun provesAggressive(gamma: List<Prop>, goal: Prop, global: List<Prop>): Boolean {
+        val key = gamma.joinToString("\u0001") { PropLogic.render(it) } + "\u0002" + PropLogic.render(goal)
+        if (session!!.memo.contains(key)) return true   // 正向记忆化（只记已证）
+        val cl = closure(gamma + global, listOf(goal), termSource = gamma)
+        val eqs = cl.filterIsInstance<PAtom>()
+            .filter { (it.head == "=" || it.head == "==") && it.terms.size == 2 }
+        var budget = 4
+        while (true) {
+            session.checkAbort()
+            deepAborted = false
+            curBudget = budget
+            if (prove(cl, goal, 0, HashSet(), eqs)) {
+                session.memo.add(key)
+                return true
+            }
+            if (!deepAborted) return false   // 未被深度截断 → 真不可证
+            budget *= 2
+        }
+    }
+
     private fun prove(
         facts: List<Prop>, goal: Prop, d: Int, visited: MutableSet<Prop>, eqs: List<PAtom>
     ): Boolean {
-        if (d > maxDepth) { deepAborted = true; return false }
+        if (d > curBudget) { deepAborted = true; return false }
         if (goal != PBot && facts.contains(PBot)) return true   // 矛盾爆炸
         // 复合目标已在事实库中（MP 产出的析取式等）：结构同一即成立
         if (goal != PBot && facts.any { it == goal }) return true
@@ -490,6 +610,23 @@ class Prover(private val maxRounds: Int = 114514, private val maxDepth: Int = 4)
                 // P4：类型事实在等式下的传播 `e:T, e=e' ⊢ e':T`
                 (goal.head == ":" && goal.terms.size == 2 && typeFactEq(facts, goal, eqs))
         }
+        // 激进模式专属：Γ 含 A∨B 时分情况证目标（∨ 消去，§5.3）——两个分支都证出才算成。
+        // usedOr 记录本路径已拆过的析取式，防同一析取被反复拆（visited 剪枝之外的终止保证）。
+        if (session != null) {
+            for (or in facts.filterIsInstance<POr>()) {
+                val k = PropLogic.render(or)
+                if (k in curUsedOr) continue
+                val fa = facts + PropLogic.normalizeFacts(listOf(or.a))
+                val fb = facts + PropLogic.normalizeFacts(listOf(or.b))
+                val savedUsed = curUsedOr
+                val u2 = HashSet(curUsedOr); u2.add(k); curUsedOr = u2
+                try {
+                    if (prove(fa, goal, d + 1, visited, eqs) &&
+                        prove(fb, goal, d + 1, visited, eqs)) return true
+                } finally { curUsedOr = savedUsed }
+            }
+        }
+        return false
     }
 
     /**

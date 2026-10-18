@@ -201,7 +201,78 @@ private fun exprArgsToTypes(ie: InstExpr): List<Type> = ie.terms.map { t1 ->
     }
 }
 
+/**
+ * 证明义务入口（激进模式套壳）：计数义务（§7.3）、预建三维池、结节流进度；
+ * 内部递归（expandDefined 展开）不重复计数。Ctrl-C 时抛 [ProverInterrupted] 一路退到 CLI。
+ */
 internal fun Checker.proveOrDeep(gamma: List<Prop>, goal: Prop): Boolean {
+    val s = prover.session
+    if (s != null) {
+        s.enter(goal, gamma)
+        buildContextPool(gamma, goal)
+    }
+    val r = try {
+        proveOrDeepInner(gamma, goal)
+    } catch (e: ProverInterrupted) {
+        s?.exit(false)
+        throw e
+    }
+    s?.exit(r)
+    return r
+}
+
+/** 激进模式：类型维池的符号表提示（结构体/枚举/类型类名经 typeToExpr 再装为项候选） */
+private fun Checker.collectTypeHints(): List<Expr> {
+    val hints = LinkedHashSet<Expr>()
+    fun put(name: String) { hints += typeToExpr(NamedType(name)) }
+    syms.structs.keys.forEach { put(it) }
+    syms.enums.keys.forEach { put(it) }
+    syms.classes.keys.forEach { put(it) }
+    allSymbols.values.forEach { sy2 ->
+        sy2.structs.keys.forEach { put(it) }
+        sy2.enums.keys.forEach { put(it) }
+        sy2.classes.keys.forEach { put(it) }
+    }
+    return hints.take(200)
+}
+
+/** 预建本义务的三维池（闭包直接复用，免重复收集）；lemAugment 亦取命题维候选 */
+private fun Checker.buildContextPool(gamma: List<Prop>, goal: Prop) {
+    val s = prover.session ?: return
+    s.typeHints = collectTypeHints()
+    s.prebuiltPool = buildKeyPool(PropLogic.normalizeFacts(gamma), listOf(goal), s.typeHints, s)
+}
+
+/** 排中律前向实例化（§5.3 item 6）：可见定理里形状为 `p ∨ ¬p` 的（如 core.classic tertiumNonDatur），
+ *  对命题池每个候选 A 注入 `A ∨ ¬A` 进 Γ——配合 prove 的 ∨ 消去完成分情况证明。
+ *  仅 @classic 挂载时启用（§5.3）。 */
+private fun Checker.lemAugment(gamma: List<Prop>, goal: Prop): List<Prop> {
+    val s = prover.session ?: return gamma
+    if (!syms.classicMounted) return gamma
+    val lems = lemPosts()
+    if (lems.isEmpty()) return gamma
+    val props = s.prebuiltPool?.props ?: return gamma
+    val add = LinkedHashSet<Prop>()
+    for (a in props) for (t in lems) add.add(POr(a, PNot(a)))
+    return if (add.isEmpty()) gamma else gamma + add
+}
+
+/** 定理后件形状 `p ∨ ¬p`（p 为无参数裸原子）= 排中律形态定理 */
+private fun Checker.lemPosts(): List<Prop> {
+    val cross = if (moduleTree == null) emptyList() else
+        visiblePaths.mapNotNull { allSymbols[it] }.flatMap { it.theorems.values }
+    val out = ArrayList<Prop>()
+    for (t in (syms.theorems.values + cross)) for (post in t.posts) {
+        val pp = PropLogic.fromExpr(post)
+        if (pp is POr && pp.a is PAtom && pp.a.terms.isEmpty() &&
+            pp.b is PNot && pp.b.p is PAtom && (pp.b.p as PAtom).terms.isEmpty() &&
+            (pp.b.p as PAtom).head == pp.a.head) out.add(pp)
+    }
+    return out
+}
+
+internal fun Checker.proveOrDeepInner(gamma0: List<Prop>, goal: Prop): Boolean {
+    val gamma = lemAugment(gamma0, goal)
     // P27（通道顺序说明）：以下通道按序尝试，**命中即短路 return**，未命中才继续下一通道：
     //  自定义命题展开 → PNot/PImp 常量拆解 → 常量原子真值 → 常量类型 → 纯度结构相等（不纯只查显式事实）
     //  → 类型判定 → 常量归约 → 线性算术（仅 ==true 短路，false/不支持继续走）→ 通用证明器 → 定理搜索。
@@ -247,6 +318,10 @@ internal fun Checker.proveOrDeep(gamma: List<Prop>, goal: Prop): Boolean {
     val res = prover.proves(gamma, goal, globalFacts)
     if (prover.deepAborted) d.error("E-DEEP-SATURATION", "", "证明义务太复杂，自动证明器走到最深也没证出。把大结论拆成几个小步骤，一步一步用 `+…` 和 `∴ …` 来推")
     if (res) return true
+    // 激进模式专属：反证法（§5.3，需 @classic）——Γ ∪ {¬goal} 饱和出 ⊥ ⇒ Γ ⊢ goal。
+    // 经典逻辑独有（直觉主义只得 ¬¬goal），未挂 core.classic 绝不启用。
+    if (prover.session != null && !prover.session.aborted && syms.classicMounted &&
+        prover.provesByContradiction(gamma + globalFacts, goal)) return true
     // 加强（自动证明全流程）：把定理空间（core 标准库跨模块 + 用户 @theorem）纳入任意目标的判定——
     // 目标与某定理后件结构合一即成立。原只 ∴/∵/∃/if[p] 位查询，现前件/后件/伴生命题/构造位一律受益。
     return searchTheorems(goal, 0)
@@ -267,6 +342,7 @@ internal fun Checker.searchTheorems(q: Prop, depth: Int, local: Map<String, FunD
     val cross = if (moduleTree == null) emptyList() else
         visiblePaths.mapNotNull { allSymbols[it] }.flatMap { it.theorems.values }
     for (t in (local.values + syms.theorems.values + cross)) {
+        prover.session?.noteTheorem(t.name)
         // v3.0 特性 7：局部函数（∀ 引入）的形参是绑定变元——并入 theory 参数一起做合一
         val vars = (t.theory.mapNotNull { when (it) { is TypeParam -> it.name; is PropParam -> it.name; else -> null } } + t.params.map { it.name }).toSet()
         for (post in t.posts) {
