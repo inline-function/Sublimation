@@ -1,0 +1,10 @@
+全局类型推导 V2：泛型化 + SCC 递归 + 上下文填充 + D-AUTO-IMPURE + E-TYPE-CONFLICT
+
+- 泛型化（§六）：参数无构造点仅算术使用点 → [T: Num]（core/number 加 class Num 做类型类，一切数值类型经 typeLooseEq 命中同一实例）；无使用点 → [T: Any]；多构造点无使用点也 [T: Any] 各自实例化（不报错）；struct 字段无构造点 → 字段级 [T: Any]
+- 成员使用点（§四）：x.length() 的接收者填具体 Str（解析器把方法糖建成 CallExpr(FieldExpr)，Collector 两处识别）；返回类型推出 Nat
+- 递归 SCC（§7.2/7.3）：Tarjan SCC（弹出顺序=被调者先）+ 3 轮假设-验证循环；未标注返回类型的 myfact、even/odd 互递归直接推出，不再依赖 §7.6 逃生舱
+- 上下文自动填充（§十）：体内调 witness[@q]<q> 的函数提升 prep q 与 PropParam @q（合并不覆盖）；所有 return 处可证命题的交集提升为后件
+- D-AUTO-IMPURE（§7.5）：停机失败自动 @impure 时附 [提示] 补充级诊断（run-script 与 Interpreter.inferNotes 两路暴露）
+- E-TYPE-CONFLICT（§十一）：构造点与使用点冲突、struct 多构造点冲突、算术+length 使用冲突三种形态的专用错误，指出两个来源；来源 pos 失填时退回声明处
+- Interpreter：infer 的 ERROR 级 InferNote 提前抛出『脚本全局类型推导冲突』；返回填充增加 Null/Any 过滤（块体无 return 不再误填成 Any）
+- 测试：GlobalInferenceTest 11 → 25；全套 717 全绿；jar、show 演示（含新 core/number 包）、wiki 同步

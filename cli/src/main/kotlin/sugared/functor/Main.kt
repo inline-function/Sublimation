@@ -33,6 +33,7 @@ const val USAGE = """sublimationc — Sublimation 编译器（M1 词法 + M2 语
 /** 报错增强（2026-10-11）：诊断码解释表——`explain <CODE>` 子命令读取 */
 /** 报错增强（新手友好）：诊断码解释表——`explain <CODE>` 子命令读取 */
 val EXPLAIN: Map<String, String> = mapOf(
+    "E-TYPE-CONFLICT" to "全局类型推导的构造点类型冲突。—— 同一个参数/字段在多个构造点给出了不同的具体类型（比如 f(1) 又 f(\"s\")、A(1) 又 A(\"x\")）。冲突就是承诺失败：检查各处使用是否一致，或在该参数/字段上显式标注类型。",
     "E-TYPE-MISMATCH" to "类型不匹配。—— 你给的值的类型跟期望的不一样。检查函数声明里参数/返回值的类型标注，确保你用对了。例如函数要 Nat 你给了 Str。",
     "E-UNBOUND-NAME" to "名字 `xxx` 没定义。—— 拼写错了？忘了先 `var xxx = …` 声明？或者它在别的模块里，需要先 `mount 模块名` 才能用。如果是跨模块构造子（如 Ok/Err），检查是否 mount 了对应模块。",
     "E-ARITY" to "实参个数不对。—— 调函数时传的参数个数跟声明的不一样（多了或少了）。检查函数声明和调用处。",
@@ -45,6 +46,7 @@ val EXPLAIN: Map<String, String> = mapOf(
     "W-NON-EXHAUSTIVE" to "when 可能没走完所有情况。—— 枚举/构造子类型的 when 少了一些分支，运行时可能没分支可走。把剩余构造子补上。如果是区间 when，检查端点是否衔接无缝。",
     "E-PRE-UNPROVEN" to "函数调用的前置条件没证明。—— 函数声明了上文 `<条件>`，调用前必须证明这个条件成立。你可以在调用前用 `+∵ 条件` 注入事实，或者换个调用参数让编译器能自动证出。",
     "E-POST-UNPROVEN" to "函数体的后置条件没证明。—— 函数声明了下文 `<\$条件>`，你的函数体必须保证返回值满足这个条件。检查 return 的值，必要时用 `by` 策略辅助证明。",
+    "D-AUTO-IMPURE" to "全局类型推导自动标注 @impure。—— 脚本模式下某函数自递归但找不到递减的参数（停机检查失败），已降级为 @impure 放行（用户自担「可能不停」风险）；该函数的效应会向上传播。想精确控制就显式标注返回类型（doc §7.6 逃生舱）。",
     "E-NON-STRUCTURAL-REC" to "纯函数的递归停止性存疑。—— 纯函数自递归时，必须有一个参数在「变小」（比如列表解构：对子列表递归）。如果不是这种模式，加上 `@impure` 允许它（编译器不会检查 @impure 函数的停机性）。",
     "E-IMMUT-ASSIGN" to "给不可变的变量赋值了。—— `xxx` 声明时没标 `@mut`，不允许重新赋值。要么改成 `@mut var xxx = …`，要么换个新变量名。",
     "E-ASSIGN-TARGET" to "赋值目标不是变量。—— 赋值号左边必须是变量名（或可变字段）。检查你是不是把函数调用、表达式写到了左边。",
@@ -278,6 +280,7 @@ private fun runScriptCmd(paths: List<String>) {
                 for (s in subs) {
                     println("[脚本] " + s.name)
                     interp.runScript(s)
+                    interp.inferNotes.forEach { n -> println("[提示] [" + n.code + "] " + n.message) }
                     ranAny = true
                 }
             } else {
@@ -289,6 +292,7 @@ private fun runScriptCmd(paths: List<String>) {
         } else {
             println("[脚本] " + f.name)
             interp.runScript(f)
+            interp.inferNotes.forEach { n -> println("[提示] [" + n.code + "] " + n.message) }
             ranAny = true
         }
     }

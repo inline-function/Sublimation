@@ -17,8 +17,10 @@ class Interpreter(
     /** 标准库目录（Sublimation 自举标准库 .subl 源文件；core 统一标准库为包目录，递归收集） */
     private val stdlibDir: File = File("core"),
     /** 全局类型推导（idea doc/全局类型推导.md，V1）：脚本模式省略标注时自动填充类型/可变性/效应。
-     *  默认关闭——开启后 run/runScript 以构造点→使用点→默认（Any）填占位、按赋值链标 @mut、
-     *  非纯调用/停机失败标 @impure；显式标注一律保留，产物仍整体过 Checker。 */
+     *  默认关闭——开启后 run/runScript 以构造点→使用点→默认填占位、按赋值链标 @mut、
+     *  非纯调用/停机失败标 @impure；显式标注一律保留，产物仍整体过 Checker。
+     *  V2（doc §六-§十一）：宽约束泛型化 [T: Num]/[T: Any]、SCC 假设-验证的递归返回类型、
+     *  前件反推/后件交集、E-TYPE-CONFLICT（冲突即 InterpreterError）、D-AUTO-IMPURE（补充级，见 inferNotes）。 */
     val globalInference: Boolean = false,
 ) {
 
@@ -26,6 +28,10 @@ class Interpreter(
     private val hostFunctionInfos = LinkedHashMap<String, HostFuncSig>()
     private val hostStructs = LinkedHashMap<String, StructInfo>()
     private var globalFrame = ScriptFrame()
+
+    /** 最近一次全局类型推导产生的补充级诊断（D-AUTO-IMPURE 等）；错误级在推导期即抛 InterpreterError。 */
+    val inferNotes: List<InferNote> get() = _inferNotes
+    private val _inferNotes = mutableListOf<InferNote>()
 
     /** 标准库目录（含子包）下的 .subl 源文件合集（顺序稳定：按相对路径排序） */
     private val stdlibFiles: List<File>
@@ -183,7 +189,18 @@ class Interpreter(
         val stdlibEntries = loadStdlibEntries()
         // 2b. 全局类型推导（脚本模式专属，默认关闭）：占位类型/可变性/效应在 Checker 前填充；
         //     stdlib 作为锚点只作约束源，不参与推断。
-        val userAst = if (globalInference) GlobalInference.infer(rawAst, stdlibEntries) else rawAst
+        val userAst = if (globalInference) {
+            _inferNotes.clear()
+            val hostRets = hostFunctionInfos.mapValues { entry ->
+                val t = entry.value.retType
+                if (t is ScriptType.Named) NamedType(t.name) else NamedType("Any")
+            }
+            val inferred = GlobalInference.infer(rawAst, stdlibEntries, hostRets, _inferNotes)
+            val errors = _inferNotes.filter { it.severity == "ERROR" }
+            if (errors.isNotEmpty())
+                throw InterpreterError("脚本全局类型推导冲突:" + "\u000A" + errors.joinToString("\u000A") { n -> "[" + n.code + "] " + n.message })
+            inferred
+        } else rawAst
         val checkedAst = FileAst(stdlibEntries + structEntries + hostEntries + userAst.entries)
 
         // 3. Checker：类型推断 / 上下文 / 纯度 / HKT 等全部静态检查

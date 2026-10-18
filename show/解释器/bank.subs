@@ -1,8 +1,6 @@
 // 脚本1：银行账户（顶层语句直接运行，无需 main；与其他脚本互不共享）
 // 【全局类型推导版】所有类型/可变性/效应标注均已省略——run.bat 启动时回答 yes
-// 开启全局类型推导后，由编译器按「显式 > 构造点 > 使用点 > 默认」自动填入：
-//   owner: Str、balance: Nat（构造点 Account("张三", 1000)）、country: Str（默认值"中国"）、
-//   acc 的 @mut（赋值 acc.balance = ... 的目标链）、tryWithdraw/transfer 的参数（调用点）
+// 开启全局类型推导后，由编译器按「显式 > 构造点 > 使用点 > 默认」自动填入
 struct Account(
     owner,
     balance,
