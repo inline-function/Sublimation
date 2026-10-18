@@ -104,6 +104,15 @@ data class PropParam(val name: String) : TheoryParam
 
 /** 形参可带注解（如 @list 变长实参，Kotlin vararg 语义，实参打包成 List）；默认空保证既有构造点零改动。
  *  default（O3，决策 69）：仅 struct 字段允许，函数形参带默认值报错。 */
+
+/** 全局类型推导（idea doc/全局类型推导.md）：脚本模式省略标注时的**占位类型**。
+ *  仅 allowUntyped 的脚本解析器填入（编译模式解析器仍要求 `: Type`）；
+ *  解释器的 GlobalInference 在 Checker 前替换为真实类型（Any 兜底），Checker 永不遇见它。 */
+val InferMarker: Type = NamedType("<infer>")
+
+/** 是否为推导占位类型 */
+fun Type.isInferMarker(): Boolean = this is NamedType && name == "<infer>" && args.isEmpty()
+
 data class Param(
     val name: String,
     val type: Type,

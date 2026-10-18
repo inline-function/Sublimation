@@ -16,6 +16,10 @@ import java.io.File
 class Interpreter(
     /** 标准库目录（Sublimation 自举标准库 .subl 源文件；core 统一标准库为包目录，递归收集） */
     private val stdlibDir: File = File("core"),
+    /** 全局类型推导（idea doc/全局类型推导.md，V1）：脚本模式省略标注时自动填充类型/可变性/效应。
+     *  默认关闭——开启后 run/runScript 以构造点→使用点→默认（Any）填占位、按赋值链标 @mut、
+     *  非纯调用/停机失败标 @impure；显式标注一律保留，产物仍整体过 Checker。 */
+    val globalInference: Boolean = false,
 ) {
 
     // 宿主函数注册（含类型签名）
@@ -91,7 +95,12 @@ class Interpreter(
      * 管线：解析 → 注入 @host 声明 → Checker（类型检查） → Evaluator（求值）。
      */
     fun run(source: String, fileName: String = "<script>") {
-        runEntries(sugared.functor.parser.parseScriptSource(source, fileName), scriptMode = true, mainName = null)
+        // 全局类型推导开启时，解析放行省略标注（InferMarker 占位），由 GlobalInference 在 Checker 前填充
+        val raw = if (globalInference)
+            sugared.functor.parser.parseScriptSource(source, fileName, allowUntyped = true)
+        else
+            sugared.functor.parser.parseScriptSource(source, fileName)
+        runEntries(raw, scriptMode = true, mainName = null)
     }
 
     /** 工程/目录模式：合并目录下顶层 .subl 文件 + stdlib，以 fun main() 为入口解释执行。 */
@@ -172,7 +181,10 @@ class Interpreter(
         // 2. 合成 FileAst：完整标准库（容器 List/Set/Map/Result + 类型类 + 定理库）+ @host 声明 + 结构体声明，再脚本条目
         //    标准库是与语言同源的 .subl 源码（非残缺手写注入），脚本模式与编译模式共享同一抽象能力。
         val stdlibEntries = loadStdlibEntries()
-        val checkedAst = FileAst(stdlibEntries + structEntries + hostEntries + rawAst.entries)
+        // 2b. 全局类型推导（脚本模式专属，默认关闭）：占位类型/可变性/效应在 Checker 前填充；
+        //     stdlib 作为锚点只作约束源，不参与推断。
+        val userAst = if (globalInference) GlobalInference.infer(rawAst, stdlibEntries) else rawAst
+        val checkedAst = FileAst(stdlibEntries + structEntries + hostEntries + userAst.entries)
 
         // 3. Checker：类型推断 / 上下文 / 纯度 / HKT 等全部静态检查
         val checker = Checker(checkedAst, scriptMode = scriptMode)

@@ -25,6 +25,8 @@ const val USAGE = """sublimationc — Sublimation 编译器（M1 词法 + M2 语
   compile <file.subl> [-o out.js] [-p ...]   语义通过后生成 JS（默认打印到标准输出）
   run-script <file.subs> [<file2.subs> ...]  脚本模式解释执行：顶层语句直接运行（无需 main）；多条脚本互不共享
   run-script <dir>            运行目录下所有 .subs 脚本（每个独立运行）；无 .subs 时按 .subl 工程(main)执行
+  --global-inference         run-script 可选旗标：开启全局类型推导（省略类型/可变性/效应标注时自动填充；
+             优先级：显式标注 > 构造点 > 使用点 > 默认 Any；脚本模式专属，编译模式不受影响）
   explain <CODE>           打印诊断码的含义与修复建议（如 E-TYPE-MISMATCH / W-NON-EXHAUSTIVE）
 """
 
@@ -243,7 +245,8 @@ fun main(args: Array<String>) {
             }
             "run-script" -> {
                 // 脚本模式：Checker 类型检查 + 解释器直接求值（§6 执行模型）
-                val interp = Interpreter()
+                val globalInference = args.any { it == "--global-inference" }
+                val interp = Interpreter(globalInference = globalInference)
                 interp.run(src, path.name)
                 println("[完成] 脚本执行结束")
             }
@@ -255,12 +258,15 @@ fun main(args: Array<String>) {
     }
 }
 
-/** 脚本模式入口：每个参数可以是 .subs 文件或目录；目录下每个 .subs 各自独立运行。 */
+/** 脚本模式入口：每个参数可以是 .subs 文件或目录；目录下每个 .subs 各自独立运行。
+ *  `--global-inference`：开启全局类型推导（idea doc/全局类型推导.md）——省略的类型/可变性/效应自动填充。 */
 private fun runScriptCmd(paths: List<String>) {
-    if (paths.isEmpty()) { System.err.println(USAGE); exitProcess(2) }
-    val interp = Interpreter()
+    val globalInference = paths.any { it == "--global-inference" }
+    val targets = paths.filter { it != "--global-inference" }
+    if (targets.isEmpty()) { System.err.println(USAGE); exitProcess(2) }
+    val interp = Interpreter(globalInference = globalInference)
     var ranAny = false
-    for (p in paths) {
+    for (p in targets) {
         val f = File(p)
         if (!f.exists()) {
             System.err.println("[错误] 路径不存在: " + p)

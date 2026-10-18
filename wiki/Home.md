@@ -2,7 +2,7 @@
 
 **Sublimation（凝华）**是一门带自动证明的静态类型语言：类型里的命题可以交给编译器自动证明，证明通过才给编译，失败即编译错误。语法像 Kotlin，编译到 JavaScript，node 直接跑；也自带解释器脚本模式，顶层语句即程序。
 
-> 当前版本 **v4 终版**（编译器/解释器测试 674 项全绿）。本文所有片段均已用 `build/libs/sublimation.jar` 实测通过。
+> 当前版本 **v4 终版**（编译器/解释器测试 703 项全绿）。本文所有片段均已用 `build/libs/sublimation.jar` 实测通过。
 
 ## 安装
 
@@ -41,6 +41,22 @@ fun add(a: Nat, b: Nat): Nat = a + b            // 纯函数（默认，可以�
 fun greet(name: Str): Str {                       // 块体
     return "Hello, " + name
 }
+```
+
+## 脚本省标注：全局类型推导
+
+脚本（`run-script`）加 `--global-inference` 可省掉类型/可变性/效应标注——编译器按
+「显式 > 构造点 > 使用点 > 默认」填充，详见 [全局类型推导](全局类型推导)：
+
+```bat
+java -jar sublimation.jar run-script demo.subs --global-inference
+```
+
+```subl
+struct Account(owner, balance = 0)      // 字段类型自动推断
+fun add(a, b) = a + b                    // 参数类型自动推断
+var acc = Account("张三", 1000)
+acc.balance = acc.balance + 500          // @mut 自动推断
 ```
 
 ## 类型别名

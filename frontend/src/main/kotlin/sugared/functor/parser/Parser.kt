@@ -16,7 +16,14 @@ class ParseFailure(val fileName: String, val tok: Token, message: String) :
  * 声明结构位（形参表后、返回类型后）的 `<...>` 按位置识别为上文/下文。
  * 等式用 `==`；单 `=` 只作赋值。`unchecked.axiom[q]` 为命题逃逸。
  */
-class Parser(private val toks: List<Token>, private val fileName: String, private val scriptMode: Boolean = false) {
+class Parser(
+    private val toks: List<Token>,
+    private val fileName: String,
+    private val scriptMode: Boolean = false,
+    /** 全局类型推导（idea doc/全局类型推导.md）：允许省略形参/字段类型（填 InferMarker，由解释器的
+     *  GlobalInference 在 Checker 前替换）。仅脚本模式解析入口开启；编译模式（parseSource）保持强制标注。 */
+    private val allowUntyped: Boolean = false,
+) {
     private var pos = 0
     // HKT 标准库简写判定用：本文件已解析的类型类名集合（impl Trait[…] 头须是类型类才当简写，见 parseImpl）
     private val classNames = LinkedHashSet<String>()
@@ -370,8 +377,9 @@ private var ifIsCond: Boolean = false
                 // P4（v2.1）：`fun f((a, b): Point)` 元组参数解构——LPAREN 紧跟在注解后即解构分量表
                 val destruct = if (peek(Kind.LPAREN)) parseParamDestruct() else null
                 val n = if (destruct != null) destruct.first() else nameToken()
-                at(Kind.COLON)
-                val ty = parseType()
+                val ty = if (peek(Kind.COLON)) { pos++; parseType() }
+                    else if (allowUntyped) InferMarker
+                    else throw ParseFailure(fileName, toks[pos], "期望COLON")
                 // O3（决策 69）：`= expr` 是字段默认值。解析层一律接受，合法性由 checker 判
                 //（仅 struct 字段允许；函数形参带默认值报 E-DEFAULT-PARAM）
                 val dft = if (peek(Kind.ASSIGN)) { pos++; parseExpr(angle = false) } else null
@@ -1749,13 +1757,19 @@ fun parseSourceWithNotes(src: String, fileName: String = "<anon>"): ParseResult 
 
 fun parseSource(src: String, fileName: String = "<anon>"): FileAst = parseSourceWithNotes(src, fileName).ast
 
-fun parseScriptSourceWithNotes(src: String, fileName: String = "<script>"): ParseResult {
-    val p = Parser(Lexer(src, fileName).tokenize(), fileName, scriptMode = true)
+fun parseScriptSourceWithNotes(
+    src: String,
+    fileName: String = "<script>",
+    /** 全局类型推导：允许省略形参/字段类型（InferMarker 占位，由解释器 GlobalInference 在 Checker 前替换）。 */
+    allowUntyped: Boolean = false,
+): ParseResult {
+    val p = Parser(Lexer(src, fileName).tokenize(), fileName, scriptMode = true, allowUntyped = allowUntyped)
     val ast = p.parseFile()
     return ParseResult(ast, p.takeHints(), p.takeSupplements())
 }
 
-fun parseScriptSource(src: String, fileName: String = "<script>"): FileAst = parseScriptSourceWithNotes(src, fileName).ast
+fun parseScriptSource(src: String, fileName: String = "<script>", allowUntyped: Boolean = false): FileAst =
+    parseScriptSourceWithNotes(src, fileName, allowUntyped).ast
 
 // ============ 片段解析顶层入口（root doc/注解处理器.md：处理器脚本以源码片段形式编辑 AST） ============
 
