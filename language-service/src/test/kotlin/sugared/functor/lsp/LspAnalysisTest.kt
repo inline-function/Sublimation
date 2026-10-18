@@ -19,6 +19,12 @@ class LspAnalysisTest {
         return a
     }
 
+    private fun openedSubs(src: String): LspAnalysis {
+        val a = LspAnalysis()
+        a.openDocument("file:///t.subs", src)
+        return a
+    }
+
     // ───────── JSON 序列化往返 ─────────
 
     @Test fun `Json 序列化基本类型`() {
@@ -781,5 +787,80 @@ class LspAnalysisTest {
         val frames = parseFrames(output.toString(Charsets.UTF_8))
         val fmt = frames.firstOrNull { it.contains("fun main() {") }
         assertNotNull(fmt, "格式化应返回含缩进的文本，实际帧: " + frames)
+    }
+
+    // ───────── 脚本模式（.subs）─────────
+
+    @Test fun `subs 脚本模式解析顶层语句`() {
+        val a = openedSubs("print(\"hi\")\nvar x = 1\nprint(x)")
+        val diags = a.diagnosticsFor("file:///t.subs")
+        assertTrue(diags.none { it.code == "E-PARSE" }, "脚本模式顶层语句应可解析: " + diags.map { it.code })
+    }
+
+    @Test fun `subs 顶层 var 与函数进入符号表`() {
+        val a = openedSubs("fun greet(): Str = \"hi\"\n@mut var acc = 1")
+        val syms = a.collectSymbols("file:///t.subs")
+        assertTrue(syms.any { it.name == "greet" && it.variety == "fun" }, "应收集脚本函数 greet")
+        assertTrue(syms.any { it.name == "acc" && it.variety == "var" }, "应收集顶层 var acc")
+    }
+
+    @Test fun `subs 补全含脚本声明`() {
+        val a = openedSubs("fun greet(): Str = \"hi\"\nvar n = 1")
+        val list = a.completionFor("file:///t.subs", Position(1, 0))
+        val labels = list.items.map { it.label }
+        assertTrue("greet" in labels, "应补全脚本函数 greet，实际: " + labels)
+    }
+
+
+    @Test fun `subs 全局类型推导填充参数类型`() {
+        val a = openedSubs("fun add(a, b) = a + b\nprint(toStr(add(1, 2)))")
+        val hover = a.hoverFor("file:///t.subs", Position(0, 4))
+        assertNotNull(hover, "add 应有 hover")
+        val content = hover!!.contents as? MarkupContent
+        assertTrue(content!!.value.contains("Nat"), "全局推导后参数应显示 Nat，实际: " + content.value)
+    }
+
+    @Test fun `subs 脚本样本分析`() {
+        val src = "struct Account(owner: Str, @mut balance: Nat, country: Str = \"中国\")" + "\n" +
+            "@mut var acc = Account(owner = \"张三\", balance = 1000)" + "\n" +
+            "print(\"开户=\" + toStr(acc.balance))"
+        val a = openedSubs(src)
+        val syms = a.collectSymbols("file:///t.subs")
+        assertTrue(syms.any { it.name == "Account" && it.variety == "struct" }, "应收集 struct Account")
+        assertTrue(syms.any { it.name == "acc" }, "应收集顶层 var acc")
+    }
+
+    @Test fun `subs 成员补全推导 receiver`() {
+        val src = "struct Account(owner: Str, balance: Nat)" + "\n" +
+            "@mut var acc = Account(owner = \"张三\", balance = 1000)" + "\n" +
+            "acc.balance"   // 光标置于 '.' 之后（balance 的 b 之前）
+        val a = openedSubs(src)
+        val list = a.completionFor("file:///t.subs", Position(2, 4))
+        val labels = list.items.map { it.label }
+        assertTrue(labels.any { it == "balance" || it == "owner" }, "acc. 应补全 Account 字段，实际: " + labels)
+    }
+
+    @Test fun `subs inlayHint 参数名提示`() {
+        val a = openedSubs("fun add(a: Nat, b: Nat): Nat = a + b\nprint(toStr(add(1, 2)))")
+        val labels = a.inlayHints("file:///t.subs").map { it.label }
+        assertTrue("a:" in labels && "b:" in labels, "subs 也应有参数名提示，实际: " + labels)
+    }
+
+    @Test fun `端到端 subs 脚本补全含声明`() {
+        // 单行脚本：didOpen text 无需换行/引号转义，JSON 安全
+        val doc = "fun add(a: Nat, b: Nat): Nat = a + b"
+        val input =
+            lspFrame("""{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}""") +
+            lspFrame("""{"jsonrpc":"2.0","method":"initialized"}""") +
+            lspFrame("""{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///t.subs","languageId":"subs","version":1,"text":"$doc"}}}""") +
+            lspFrame("""{"jsonrpc":"2.0","id":2,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///t.subs"},"position":{"line":0,"character":0}}}""") +
+            lspFrame("""{"jsonrpc":"2.0","method":"exit"}""")
+        val output = java.io.ByteArrayOutputStream()
+        LspServer.start(java.io.ByteArrayInputStream(input.toByteArray(Charsets.UTF_8)), output)
+        val frames = parseFrames(output.toString(Charsets.UTF_8))
+        // exit 无响应：completion（id:2）是最后一帧
+        val completion = frames.lastOrNull()
+        assertNotNull(completion, "subs 应有 completion 响应，实际帧: " + frames)
+        assertTrue(completion!!.contains("add"), "subs 补全应含脚本声明 add，实际: " + completion)
     }
 }

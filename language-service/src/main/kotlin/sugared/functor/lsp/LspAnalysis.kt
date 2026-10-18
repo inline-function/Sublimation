@@ -2,6 +2,8 @@ package sugared.functor.lsp
 
 import sugared.functor.ast.*
 import sugared.functor.checker.*
+import sugared.functor.interpreter.GlobalInference
+import sugared.functor.interpreter.InferNote
 import sugared.functor.lexer.*
 import sugared.functor.parser.*
 
@@ -38,6 +40,13 @@ class LspAnalysis {
     private val preludeHoverDocs = mutableMapOf<String, String>()
     private var preludeLoaded = false
 
+    // 脚本模式（.subs）：标准库 entries（core 目录下的 .subl，供 Checker 与全局推导做符号源）
+    // stdlibDir 默认 File("core)，与 Interpreter(stdlibDir) 一致；loadPrelude 时同步覆盖
+    private var stdlibDir: java.io.File? = java.io.File("core")
+    private var scriptStdlibCache: List<Entry>? = null
+    // 脚本模式：全局类型推导（省略标注时填充类型/可变性/效应，见 wiki/全局类型推导.md）
+    private val scriptGlobalInference = true
+
     fun openDocument(uri: String, source: String) {
         val state = analyze(uri, source)
         docs[uri] = state
@@ -59,6 +68,7 @@ class LspAnalysis {
     fun loadPrelude(stdlibDir: java.io.File? = null) {
         if (preludeLoaded) return
         preludeLoaded = true
+        if (stdlibDir != null) this.stdlibDir = stdlibDir   // 同步脚本模式的 stdlib 目录
 
         fun add(name: String, variety: String, detail: String, doc: String?) {
             preludeItems += CompletionItem(
@@ -104,6 +114,33 @@ class LspAnalysis {
         }
     }
 
+    /**
+     * 脚本标准库 entries（core 目录下的 .subl 文件，惰性缓存）：供 Checker 与全局类型推导做符号源。
+     * 与 Interpreter.loadStdlibEntries 同构：过滤 @root 内建声明（脚本模式下内建由 checker 内建表提供，
+     * 留着会与调用撞 E-DUP-DECL）；解析失败记录 stderr 不中断。
+     */
+    private fun scriptStdlib(): List<Entry> {
+        scriptStdlibCache?.let { return it }
+        val dir = stdlibDir
+        val raw: List<Entry> = if (dir != null && dir.isDirectory) {
+            dir.walkTopDown().filter { it.isFile && it.name.endsWith(".subl") }
+                .sortedBy { it.path }.mapNotNull { f ->
+                    try {
+                        parseSource(f.readText(), f.name).entries
+                    } catch (e: Exception) {
+                        System.err.println("[sublimation-ls] 脚本 stdlib 解析失败 " + f.name + ": " + (e.message ?: e.javaClass.simpleName))
+                        null
+                    }
+                }.flatten().toList()
+        } else emptyList()
+        val entries = raw.filter { e ->
+            val fd = (e as? DeclEntry)?.decl as? FunDecl
+            fd == null || "root" !in fd.annotations
+        }
+        scriptStdlibCache = entries
+        return entries
+    }
+
     /** 分析单个文档：tokenize -> parse -> check（容错：任何阶段失败都回退到已有部分结果） */
     private fun analyze(uri: String, source: String): DocState {
         var ast: FileAst? = null
@@ -121,10 +158,14 @@ class LspAnalysis {
             null
         }
 
-        // parse
+        // parse：脚本模式（.subs）用 scriptMode 解析（允许顶层语句；开启全局推导时放行省略标注）
+        val isScript = fileName.endsWith(".subs")
         if (bag == null) {
             try {
-                parseNotes = parseSourceWithNotes(source, fileName)
+                parseNotes = if (isScript)
+                    parseScriptSourceWithNotes(source, fileName, allowUntyped = scriptGlobalInference)
+                else
+                    parseSourceWithNotes(source, fileName)
                 ast = parseNotes!!.ast
             } catch (e: ParseFailure) {
                 bag = DiagBag()
@@ -136,12 +177,26 @@ class LspAnalysis {
             }
         }
 
-        // check
+        // check：脚本模式注入 stdlib + 全局类型推导，Checker 走 scriptMode（允许顶层语句）
         var syms: Symbols? = null
         var inferredVars: Map<String, Type>? = null
         if (bag == null && ast != null) {
             try {
-                val checker = Checker(ast)
+                // 脚本模式：全局类型推导填充省略标注（推导后 AST 也供符号收集，让 hover/补全显示推导类型）
+                val userFinal: FileAst
+                val inferNotes: List<InferNote>
+                if (isScript) {
+                    val (inferred, notes) = composeScriptAst(ast!!)
+                    userFinal = inferred
+                    inferNotes = notes
+                } else {
+                    userFinal = ast!!
+                    inferNotes = emptyList()
+                }
+                ast = userFinal
+                // 脚本 Checker 输入 = stdlib（core 目录 .subl）+ 用户条目；工程模式即用户文件本身
+                val checkedAst = if (isScript) FileAst(scriptStdlib() + userFinal.entries) else userFinal
+                val checker = Checker(checkedAst, scriptMode = isScript)
                 bag = checker.run()
                 syms = checker.syms
                 inferredVars = checker.inferredVars
@@ -149,6 +204,11 @@ class LspAnalysis {
                 if (notes != null) {
                     for ((p0, m0) in notes.hints) bag.hint("H-ARITH-PRECEDENCE", p0, m0)
                     for ((c0, p1, m1) in notes.supplements) bag.supplement(c0, p1, m1)
+                }
+                // 全局类型推导诊断：E-TYPE-CONFLICT（错误）/ D-AUTO-IMPURE（补充）—— IDE 不中止分析，原样展示
+                for (n in inferNotes) {
+                    if (n.severity == "ERROR") bag.error(n.code, n.pos, n.message)
+                    else bag.supplement(n.code, n.pos, n.message)
                 }
             } catch (e: Exception) {
                 bag = DiagBag()
@@ -162,6 +222,20 @@ class LspAnalysis {
         // P6：预建行首 offset 表（offset→Position 二分用）
         val lineStarts = buildLineStarts(source)
         return DocState(uri, source, ast, bag, tokens, syms, inferredVars, decls, refs, lineStarts)
+    }
+
+    /** 脚本模式：全局类型推导填充省略标注。返回推导后的用户 AST + 推导诊断。
+     *  未开启推导或推导抛异常时原样返回 + 空诊断（stdlib 由 analyze 组装）。 */
+    private fun composeScriptAst(userAst: FileAst): Pair<FileAst, List<InferNote>> {
+        if (!scriptGlobalInference) return userAst to emptyList()
+        val notes = mutableListOf<InferNote>()
+        val inferred = try {
+            GlobalInference.infer(userAst, scriptStdlib(), notes = notes)
+        } catch (e: Exception) {
+            System.err.println("[sublimation-ls] 全局类型推导失败: " + (e.message ?: e.javaClass.simpleName))
+            return userAst to emptyList()
+        }
+        return inferred to notes
     }
 
     /** 生成 LSP 诊断 */
