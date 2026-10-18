@@ -1,31 +1,35 @@
 // 脚本1：银行账户（顶层语句直接运行，无需 main；与其他脚本互不共享）
+// 【全局类型推导版】所有类型/可变性/效应标注均已省略——run.bat 启动时回答 yes
+// 开启全局类型推导后，由编译器按「显式 > 构造点 > 使用点 > 默认」自动填入：
+//   owner: Str、balance: Nat（构造点 Account("张三", 1000)）、country: Str（默认值"中国"）、
+//   acc 的 @mut（赋值 acc.balance = ... 的目标链）、tryWithdraw/transfer 的参数（调用点）
 struct Account(
-    owner : Str,
-    @mut balance : Nat,
-    country : Str = "中国",
+    owner,
+    balance,
+    country = "中国",
 )
 
 class AccountOps {
-    fun show() : Str
-    fun level() : Str
+    fun show()
+    fun level()
 }
 
 impl AccountOps for Account {
-    fun show() : Str = "$owner($country) 余额=¥$balance"
-    fun level() : Str = when {
+    fun show() = "$owner($country) 余额=¥$balance"
+    fun level() = when {
         balance >= 1000 => "VIP"
         balance >= 500 => "金卡"
         else => "普通"
     }
 }
 
-fun tryWithdraw(cur: Nat, amount: Nat): Result[Nat, Str] =
+fun tryWithdraw(cur, amount) =
     if (cur >= amount) { Ok(cur - amount) } else { Err("余额不足 $cur < $amount") }
 
-fun transfer(from: Nat, dest: Nat, amount: Nat): Result[Str, Str] =
+fun transfer(from, dest, amount) =
     tryWithdraw(from, amount).flatMapOk { remaining -> Ok("转出后剩" + toStr(remaining) + "，转入后" + toStr(dest + amount)) }
 
-@mut var acc = Account(owner = "张三", balance = 1000)
+var acc = Account(owner = "张三", balance = 1000)
 print("开户=" + acc.show())
 print("等级=" + acc.level())
 acc.balance = acc.balance + 500
