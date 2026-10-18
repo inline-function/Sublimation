@@ -863,4 +863,96 @@ class LspAnalysisTest {
         assertNotNull(completion, "subs 应有 completion 响应，实际帧: " + frames)
         assertTrue(completion!!.contains("add"), "subs 补全应含脚本声明 add，实际: " + completion)
     }
+
+    // ───────── onTypeFormatting：按 Enter 智能缩进 ─────────
+
+    @Test fun `onTypeFormatting if 块后换行缩进一级`() {
+        val src = "if (x > 0) {\n"   // 用户刚在 { 后按了 Enter
+        val a = opened(src)
+        val edits = a.onTypeFormattingEdits("file:///t.subl", Position(1, 0), "\n")
+        assertEquals(1, edits.size, "应返回一个编辑: " + edits)
+        assertEquals("    ", edits[0].newText)
+    }
+
+    @Test fun `onTypeFormatting 嵌套块缩进两级`() {
+        val src = "fun main() {\n    if (x) {\n"
+        val a = opened(src)
+        val edits = a.onTypeFormattingEdits("file:///t.subl", Position(2, 0), "\n")
+        assertEquals("        ", edits[0].newText)   // 8 空格 = 2 级
+    }
+
+    @Test fun `onTypeFormatting 大括号之间换行右括号下移`() {
+        // 用户在 if (x) {|} 的光标处按 Enter：文档已变为 if (x > 0) {\n}
+        val src = "if (x > 0) {\n}"
+        val a = opened(src)
+        val edits = a.onTypeFormattingEdits("file:///t.subl", Position(1, 0), "\n")
+        assertEquals(1, edits.size, "应返回一个编辑: " + edits)
+        assertEquals("    \n}", edits[0].newText)
+        assertEquals(1, edits[0].range.start.line)
+        assertEquals(1, edits[0].range.end.character)
+    }
+
+    @Test fun `onTypeFormatting 无大括号 if 体续行`() {
+        val src = "if (x > 0)\n"
+        val a = opened(src)
+        val edits = a.onTypeFormattingEdits("file:///t.subl", Position(1, 0), "\n")
+        assertEquals("    ", edits[0].newText)
+    }
+
+    @Test fun `onTypeFormatting 等号函数续行`() {
+        val src = "fun f() =\n"
+        val a = opened(src)
+        val edits = a.onTypeFormattingEdits("file:///t.subl", Position(1, 0), "\n")
+        assertEquals("    ", edits[0].newText)
+    }
+
+    @Test fun `onTypeFormatting 链式调用点号后续行`() {
+        val src = "val s = a.\n"
+        val a = opened(src)
+        val edits = a.onTypeFormattingEdits("file:///t.subl", Position(1, 0), "\n")
+        assertEquals("    ", edits[0].newText)
+    }
+
+    @Test fun `onTypeFormatting 未闭合括号续行`() {
+        val src = "print(\n"
+        val a = opened(src)
+        val edits = a.onTypeFormattingEdits("file:///t.subl", Position(1, 0), "\n")
+        assertEquals("    ", edits[0].newText)
+    }
+
+    @Test fun `onTypeFormatting subs 脚本顶层缩进`() {
+        val src = "if (x > 0) {\n"
+        val a = openedSubs(src)
+        val edits = a.onTypeFormattingEdits("file:///t.subs", Position(1, 0), "\n")
+        assertEquals("    ", edits[0].newText)
+    }
+
+    @Test fun `onTypeFormatting 非换行触发字符返回空`() {
+        val a = opened("fun main() {\n}")
+        val edits = a.onTypeFormattingEdits("file:///t.subl", Position(1, 0), "}")
+        assertTrue(edits.isEmpty(), "非换行触发不应产生编辑: " + edits)
+    }
+
+    @Test fun `补全排序 有前缀时已声明符号优先于关键字`() {
+        val src = "fun main() {\n    var idx = 1\n    i\n}"
+        val a = opened(src)
+        val list = a.completionFor("file:///t.subl", Position(2, 5))
+        val idx = list.items.firstOrNull { it.label == "idx" }
+        val ifKw = list.items.firstOrNull { it.label == "if" }
+        assertNotNull(idx, "应补全局部变量 idx")
+        assertNotNull(ifKw, "应补全关键字 if")
+        assertTrue(idx!!.sortText!! < ifKw!!.sortText!!,
+            "有前缀时已声明符号应排在关键字之前: idx=${idx.sortText} if=${ifKw.sortText}")
+    }
+
+    @Test fun `补全排序 空行时声明关键字优先`() {
+        val src = "fun main() {\n    var idx = 1\n\n}"
+        val a = opened(src)
+        val list = a.completionFor("file:///t.subl", Position(2, 0))
+        val idx = list.items.firstOrNull { it.label == "idx" }
+        val funKw = list.items.firstOrNull { it.label == "fun" }
+        assertNotNull(funKw, "空行应补全关键字 fun")
+        assertTrue(idx == null || funKw!!.sortText!! < idx!!.sortText!!,
+            "空行时声明类关键字应排在符号之前: fun=${funKw?.sortText} idx=${idx?.sortText}")
+    }
 }

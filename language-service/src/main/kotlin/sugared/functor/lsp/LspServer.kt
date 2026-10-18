@@ -211,6 +211,11 @@ object LspServer {
                     "codeActionProvider" to true,
                     "implementationProvider" to true,
                     "inlayHintProvider" to true,
+                    // onTypeFormatting：按 Enter 智能缩进（客户端需开启 formatOnType）
+                    "documentOnTypeFormattingProvider" to mapOf(
+                        "firstTriggerCharacter" to "\n",
+                        "moreTriggerCharacter" to listOf("}", ")")
+                    ),
                 ),
                 "serverInfo" to mapOf("name" to "sublimation-ls", "version" to "0.1.0"),
             )
@@ -270,6 +275,13 @@ object LspServer {
                 val td = params["textDocument"] as? Map<*, *> ?: return null
                 val textUri = td["uri"] as? String ?: return null
                 val edits = analysis.formatDocument(textUri) ?: return null
+                edits.map { editToMap(it) }
+            }
+
+            "textDocument/onTypeFormatting" -> {
+                val (uri, position) = textDocumentAndPosition(params) ?: return null
+                val ch = params["ch"] as? String ?: return null
+                val edits = analysis.onTypeFormattingEdits(uri, position, ch)
                 edits.map { editToMap(it) }
             }
 

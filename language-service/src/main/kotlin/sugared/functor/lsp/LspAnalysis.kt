@@ -954,6 +954,121 @@ class LspAnalysis {
         return listOf(TextEdit(Range(Position(0, 0), offsetToPosition(source, source.length)), formatted))
     }
 
+    // ───────── onTypeFormatting：按 Enter 时的智能缩进 ─────────
+
+    /** 按 Enter 换行后的格式化编辑；仅处理触发字符 \n */
+    fun onTypeFormattingEdits(uri: String, position: Position, ch: String): List<TextEdit> {
+        if (ch != "\n") return emptyList()
+        val state = docs[uri] ?: return emptyList()
+        val src = state.source
+        val line = position.line
+        if (line < 0) return emptyList()
+        val lineText = lineTextOf(src, line) ?: return emptyList()
+        val firstNonWs = lineText.indexOfFirst { !it.isWhitespace() }
+        // 情况 1：行首紧邻 }——用户刚在 {} 之间按 Enter（} 被留在本行）：空行缩进本级，} 下移一行并少一级
+        if (firstNonWs >= 0 && lineText[firstNonWs] == '}') {
+            val n = indentLevelForLine(src, line)
+            val closeN = (n - 1).coerceAtLeast(0)
+            val newText = "    ".repeat(n) + "\n" + "    ".repeat(closeN) + "}"
+            return listOf(TextEdit(Range(Position(line, 0), Position(line, firstNonWs + 1)), newText))
+        }
+        // 情况 2：普通换行——行首插入缩进；已有前导空白则替换为正确缩进
+        val n = indentLevelForLine(src, line)
+        if (n <= 0) return emptyList()
+        val indent = "    ".repeat(n)
+        val wsEnd = if (firstNonWs < 0) lineText.length else firstNonWs
+        if (wsEnd == 0) return listOf(TextEdit(Range(Position(line, 0), Position(line, 0)), indent))
+        if (lineText.substring(0, wsEnd) == indent) return emptyList()
+        return listOf(TextEdit(Range(Position(line, 0), Position(line, wsEnd)), indent))
+    }
+
+    /** 取某行（0-based）文本（不含换行符）；越界 null */
+    private fun lineTextOf(src: String, line: Int): String? {
+        val starts = buildLineStarts(src)
+        val s = starts.getOrNull(line) ?: return null
+        val e = starts.getOrNull(line + 1) ?: src.length
+        return src.substring(s, e).replace("\n", "").replace("\r", "")
+    }
+
+    /**
+     * 按 Enter 后目标行（0-based）应有的缩进级别。token 级计算（lexer 无 NEWLINE，按行号切分）：
+     *  大括号配平（{ 后非同行 } → +1，} → -1）；续行：上行尾为 = / -> / . / 未闭合括号 → +1；
+     *  无大括号 if（行尾是配对 if 条件的 )）→ +1；目标行以 . 开头（链式续行）→ +1
+     */
+    private fun indentLevelForLine(src: String, targetLine: Int): Int {
+        val tokens = try {
+            Lexer(src, "indent").tokenize().filter { it.kind != Kind.EOF }
+        } catch (e: Exception) {
+            return 0
+        }
+        if (tokens.isEmpty() || targetLine <= 0) return 0
+        val prevLine = targetLine - 1
+        // 大括号配平：只统计严格在目标行之前的 token；跨行 {} 正常计数，同行空块 {} 不算
+        var brace = 0
+        var i = 0
+        while (i < tokens.size && tokens[i].line - 1 < targetLine) {
+            if (tokens[i].kind == Kind.LBRACE) {
+                val nx = tokens.getOrNull(i + 1)
+                if (nx != null && nx.kind == Kind.RBRACE && nx.line == tokens[i].line) i++
+                else brace++
+            } else if (tokens[i].kind == Kind.RBRACE) {
+                if (brace > 0) brace--
+            }
+            i++
+        }
+        // 上一行末 token + 括号深度
+        var paren = 0
+        var lastTok: Token? = null
+        for (t in tokens) {
+            if (t.line - 1 > prevLine) break
+            when (t.kind) {
+                Kind.LPAREN, Kind.LBRACKET -> paren++
+                Kind.RPAREN, Kind.RBRACKET -> if (paren > 0) paren--
+                else -> {}
+            }
+            if (t.line - 1 == prevLine) lastTok = t
+        }
+        var ind = brace
+        val lt = lastTok
+        if (lt != null) {
+            val k = lt.kind
+            when {
+                k == Kind.LBRACE -> { /* 行尾 { 已由 brace++ 覆盖 */ }
+                paren > 0 -> ind++
+                k == Kind.ASSIGN -> ind++
+                k == Kind.ARROW -> ind++
+                k == Kind.DOT -> ind++
+                k == Kind.RPAREN && ifCondParen(tokens, lt) -> ind++
+            }
+        }
+        val firstTok = tokens.firstOrNull { it.line - 1 == targetLine }
+        if (firstTok?.kind == Kind.DOT) ind++
+        return ind.coerceAtLeast(0)
+    }
+
+    /** 该 ) 是否为无大括号 if 的条件括号（回溯配对 (，其前是 IF 关键字） */
+    private fun ifCondParen(tokens: List<Token>, closeParen: Token): Boolean {
+        val idx = tokens.indexOf(closeParen)
+        if (idx < 0) return false
+        var depth = 0
+        var j = idx
+        while (j >= 0) {
+            when (tokens[j].kind) {
+                Kind.RPAREN -> depth++
+                Kind.LPAREN -> {
+                    depth--
+                    if (depth == 0) {
+                        val before = tokens.getOrNull(j - 1)
+                        return before != null && before.kind == Kind.IF
+                    }
+                }
+                else -> {}
+            }
+            j--
+        }
+        return false
+    }
+
     // ───────── codeAction：快速修复（灯泡） ─────────
 
     /** 扫描全角符号，提供一个「替换全角为半角」的快速修复 */
@@ -1475,9 +1590,11 @@ class LspAnalysis {
 
         val prefix = wordPrefixAtOffset(state.source, offset)
         val items = mutableListOf<CompletionItem>()
+        // 有前缀时：用户在续写已有名字，已声明符号应排在关键字之前；空行则先给声明类关键字
+        val symbolFirst = prefix.isNotEmpty()
 
         // 关键字补全
-        items += buildKeywordCompletions(prefix)
+        items += buildKeywordCompletions(prefix, if (symbolFirst) "1" else "0")
 
         // 已声明符号补全
         val symbols = collectSymbols(uri)
@@ -1487,7 +1604,7 @@ class LspAnalysis {
                     label = s.name,
                     kind = kindOf(s.variety),
                     detail = s.detail,
-                    sortText = "1_" + s.name,
+                    sortText = (if (symbolFirst) "0" else "1") + "_" + s.name,
                 )
             }
         }
@@ -1641,7 +1758,7 @@ class LspAnalysis {
         else -> SymbolKind.Variable
     }
 
-    private fun buildKeywordCompletions(prefix: String): List<CompletionItem> {
+    private fun buildKeywordCompletions(prefix: String, prio: String = "0"): List<CompletionItem> {
         return KEYWORDS
             .filter { prefix.isEmpty() || it.first.startsWith(prefix, ignoreCase = true) }
             .map { (kw, snippet) ->
@@ -1650,7 +1767,7 @@ class LspAnalysis {
                     kind = CompletionItemKind.Keyword,
                     detail = "keyword",
                     insertText = snippet,
-                    sortText = "0_" + kw,
+                    sortText = prio + "_" + kw,
                 )
             }
     }
