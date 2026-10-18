@@ -36,6 +36,15 @@ import sugared.functor.interpreter.ScriptType
  *
  * 查询函数的返回值是脚本的值（Kotlin List 对应脚本 List）；不存在的名字返回空列表，
  * 不抛异常（脚本模式容错优先，处理器作者用 processorWarn 报告异常情况）。
+ *
+ * 结构性编辑（root doc/注解处理器.md：处理器是 AST→AST 变换；源码片段由宿主在收尾时解析嫁接，
+ * 见 [AstEdit]——覆盖完整 AST 修改能力，区别于注解增删）：
+ *   setFunBody(name: Str, src: Str)               替换函数体（块体「{ … }」或表达式体）
+ *   prependStmts(name: Str, stmts: List[Str])     语句片段插到函数块体最前（表达式体脱糖成 return 块）
+ *   addDecl(src: Str)                            追加一条新声明（fun/struct/enum/class/impl/type）
+ *   replaceDecl(name: Str, src: Str)             整体替换命名声明
+ * 幂等约定：结构性编辑需脚本自守（同一轮重复发同体替换天然幂等——AST 深度相等即停机；
+ * prependStmts 请配注解标记，见 wiki 注解处理器页「编辑的幂等与收敛」）。
  */
 
 /** 一条注解编辑指令：对「某声明的注解」或「某结构体字段的注解」做增/删。 */
@@ -51,11 +60,12 @@ internal enum class EditTarget { STRUCT, FUN }
 
 object ProcessorApi {
 
-    /** 把脚本 API 注入解释器。edits / diags 由调用方提供（一次处理器运行的累积区）。 */
+    /** 把脚本 API 注入解释器。edits（注解）/ astEdits（结构）/ diags 由调用方提供（一次处理器运行的累积区）。 */
     internal fun register(
         interp: Interpreter,
         input: ProcessorInput,
         edits: MutableList<AnnotationEdit>,
+        astEdits: MutableList<AstEdit>,
         diags: MutableList<Diag>,
     ) {
         val structs = declsOf<StructDecl>(input.ast)
@@ -136,6 +146,22 @@ object ProcessorApi {
         interp.register("removeFunAnnotation", "name" to ScriptType.Str, "annotation" to ScriptType.Str) { args ->
             edits += AnnotationEdit(EditTarget.FUN, args[0] as String, null, args[1] as String, add = false)
             null
+        }
+
+        // ---------- 结构性编辑（源码片段由宿主收尾解析嫁接，见 applyAstEdits） ----------
+        interp.register("setFunBody", "name" to ScriptType.Str, "src" to ScriptType.Str) { args ->
+            astEdits += AstEdit.SetFunBody(args[0] as String, args[1] as String); null
+        }
+        interp.register("prependStmts", "name" to ScriptType.Str,
+            "stmts" to ScriptType.ListT(ScriptType.Str)) { args ->
+            @Suppress("UNCHECKED_CAST")
+            astEdits += AstEdit.PrependStmts(args[0] as String, args[1] as List<String>); null
+        }
+        interp.register("addDecl", "src" to ScriptType.Str) { args ->
+            astEdits += AstEdit.AddDecl(args[0] as String); null
+        }
+        interp.register("replaceDecl", "name" to ScriptType.Str, "src" to ScriptType.Str) { args ->
+            astEdits += AstEdit.ReplaceDecl(args[0] as String, args[1] as String); null
         }
 
         // ---------- 诊断 ----------

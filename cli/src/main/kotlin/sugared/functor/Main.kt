@@ -117,6 +117,7 @@ val EXPLAIN: Map<String, String> = mapOf(
     "E-PROCESSOR-ERROR" to "注解处理器执行出错：自定义注解处理器在运行时抛出了异常。检查处理器实现的健壮性。",
     "E-PROCESSOR-LOOP" to "注解处理器循环不收敛：处理器反复改写代码超过最大轮数仍未稳定。检查处理器是否在条件不满足时无限自我触发。",
     "E-PROCESSOR-SCRIPT" to "注解处理器脚本主动报错：处理器脚本里调了 processorError(msg)。检查脚本里报错的分支条件——通常是被处理的注解用法不符合处理器预期。",
+    "E-PROCESSOR-EDIT" to "注解处理器的结构性编辑源码片段解析失败：脚本调了 setFunBody/prependStmts/addDecl/replaceDecl，但给的源码片段不是合法的函数体/语句/声明。该条编辑被丢弃（其余编辑照常生效），请按报错里的语法信息修正片段。",
     "W-PROCESSOR-SCRIPT" to "注解处理器脚本警告：脚本调了 processorWarn(msg)。这是处理器给作者的提示，不影响编译通过。",
     "W-PROCESSOR-EDIT" to "处理器的注解编辑没命中目标：脚本想给某个结构体/函数/字段加减注解，但按名字找不到目标。检查脚本里的名字是否拼错了（编辑不存在的名字只报警告，其余编辑照常生效）。",
 )

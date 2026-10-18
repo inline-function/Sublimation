@@ -11,6 +11,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
@@ -96,8 +97,9 @@ class ScriptProcessorTest {
 
         val interp = Interpreter()
         val edits = mutableListOf<AnnotationEdit>()
+        val astEdits = mutableListOf<AstEdit>()
         val diags = mutableListOf<sugared.functor.checker.Diag>()
-        ProcessorApi.register(interp, input, edits, diags)
+        ProcessorApi.register(interp, input, edits, astEdits, diags)
         interp.run(
             "var hits = structsWithAnnotation(\"allMut\")\n" +
             "fun countAll(xs: List[Str]): Nat = when(xs) {\n" +
@@ -191,4 +193,175 @@ class ScriptProcessorTest {
 
     private fun hasErrorDiag(diags: List<sugared.functor.checker.Diag>): Boolean =
         diags.any { it.severity == sugared.functor.checker.Severity.ERROR }
+
+    // ==================== 结构性编辑（root doc/注解处理器.md：处理器是 AST→AST 变换） ====================
+
+    /** 读出 FileAst 里第一个名为 name 的函数声明。 */
+    private fun funOf(ast: sugared.functor.ast.FileAst, name: String): sugared.functor.ast.FunDecl {
+        val d = ast.entries.mapNotNull { (it as? DeclEntry)?.decl as? sugared.functor.ast.FunDecl }
+            .firstOrNull { it.name == name }
+        assertNotNull(d, "没找到函数 $name")
+        return d
+    }
+
+    /** setFunBody：被标函数的体整体替换为片段解析出的表达式；幂等（深度相等）→ 引擎收敛。 */
+    @Test
+    fun structuralEdit_setFunBody() {
+        val ast = parseSource("@swap\nfun n(): Nat = 0\n", "t.subl")
+        val proc = ScriptProcessor(
+            name = "swap",
+            interestedAnnotations = setOf("swap"),
+            scriptSource =
+                "fun loop(xs: List[Str]): Null = when(xs) {\n" +
+                    "    Nil => null\n" +
+                    "    is Cons(f, rest) => { setFunBody(f, \"7\"); loop(rest) }\n" +
+                    "}\n" +
+                    "loop(funsWithAnnotation(\"swap\"))\n",
+            stdlibDir = File("core"),
+        )
+        val engine = ProcessorEngine()
+        engine.addProcessor(proc)
+        val result = engine.run(inputAst = ast, symbols = null, typeOf = { null }, emit = {},
+            recheck = { newAst -> val chk = Checker(newAst); ProcessorEngine.RecheckResult(chk.run()) })
+        val body = funOf(result.ast, "n").body
+        assertTrue(body is sugared.functor.ast.IntLit && body.value == "7",
+            "setFunBody 后 n 的体应为字面量 7，实际: $body")
+        assertFalse(result.loopDetected, "同体替换应幂等收敛")
+        assertTrue(result.rounds <= 2, "轮数 ${result.rounds} 超出预期")
+    }
+
+    /** prependStmts：块体前置插入；表达式体脱糖成 return 块；注解标记守 → 幂等收敛。 */
+    @Test
+    fun structuralEdit_prependStmts_bothBodyFormsConverge() {
+        val ast = parseSource(
+            "@trace\nfun blk(n: Nat): Nat { return n * 2 }\n" +
+                "@trace\nfun expr(n: Nat): Nat = n + 1\n", "t.subl")
+        val proc = ScriptProcessor(
+            name = "trace",
+            interestedAnnotations = setOf("trace"),
+            scriptSource =
+                "fun containsFun(f: Str): Bool = contains(funAnnotations(f), \"traced\")\n" +
+                    "fun loop(xs: List[Str]): Null = when(xs) {\n" +
+                    "    Nil => null\n" +
+                    "    is Cons(f, rest) => { if (containsFun(f)) { null } else { prependStmts(f, listOf(\"var t = 1\")); addFunAnnotation(f, \"traced\") }; loop(rest) }\n" +
+                    "}\n" +
+                    "loop(funsWithAnnotation(\"trace\"))\n",
+            stdlibDir = File("core"),
+        )
+        val engine = ProcessorEngine()
+        engine.addProcessor(proc)
+        val result = engine.run(inputAst = ast, symbols = null, typeOf = { null }, emit = {},
+            recheck = { newAst -> val chk = Checker(newAst); ProcessorEngine.RecheckResult(chk.run()) })
+        // 块体：第一句是新插入的 var t = 1
+        val blkBody = funOf(result.ast, "blk").body as? sugared.functor.ast.BlockExpr
+        assertNotNull(blkBody, "blk 体应为块")
+        assertTrue(blkBody.stmts.first() is sugared.functor.ast.VarStmt, "blk 块首应插入 var t = 1")
+        // 表达式体：脱糖成块（var t = 1 + return 原表达式）
+        val exBody = funOf(result.ast, "expr").body as? sugared.functor.ast.BlockExpr
+        assertNotNull(exBody, "expr 体应脱糖成块")
+        assertTrue(exBody.stmts.first() is sugared.functor.ast.VarStmt, "expr 块首应插入 var t = 1")
+        assertTrue(exBody.stmts.last() is sugared.functor.ast.ReturnStmt, "expr 块尾应为 return 脱糖")
+        assertFalse(result.loopDetected, "注解守的 prepend 应幂等收敛")
+    }
+
+    /** addDecl / replaceDecl：生成新声明、整体替换；同名 addDecl 多轮幂等（不报 LOOP）。 */
+    @Test
+    fun structuralEdit_addDeclAndReplaceDecl() {
+        val ast = parseSource("@gen\nfun magic(): Nat = 0\n", "t.subl")
+        val proc = ScriptProcessor(
+            name = "gen",
+            interestedAnnotations = setOf("gen"),
+            scriptSource =
+                "addDecl(\"fun triple(x: Nat): Nat = x * 3\")\n" +
+                    "fun loop(xs: List[Str]): Null = when(xs) {\n" +
+                    "    Nil => null\n" +
+                    "    is Cons(f, rest) => { replaceDecl(f, \"fun \" + f + \"(): Nat = triple(2)\"); loop(rest) }\n" +
+                    "}\n" +
+                    "loop(funsWithAnnotation(\"gen\"))\n",
+            stdlibDir = File("core"),
+        )
+        val engine = ProcessorEngine()
+        engine.addProcessor(proc)
+        val result = engine.run(inputAst = ast, symbols = null, typeOf = { null }, emit = {},
+            recheck = { newAst -> val chk = Checker(newAst); ProcessorEngine.RecheckResult(chk.run()) })
+        // 新声明已加入
+        val triple = result.ast.entries.mapNotNull { (it as? DeclEntry)?.decl as? sugared.functor.ast.FunDecl }
+            .firstOrNull { it.name == "triple" }
+        assertNotNull(triple, "addDecl 应追加 triple")
+        // 被标声明被整体替换：体成为 triple(2) 调用
+        val body = funOf(result.ast, "magic").body as? sugared.functor.ast.CallExpr
+        assertNotNull(body, "replaceDecl 后 magic 的体应为 triple(2) 调用")
+        assertEquals("triple", (body.callee as sugared.functor.ast.NameRef).name)
+        // 仅一个 triple（两轮各 addDecl 一次，幂等去重）
+        val tripleCount = result.ast.entries.mapNotNull { (it as? DeclEntry)?.decl as? sugared.functor.ast.FunDecl }
+            .count { it.name == "triple" }
+        assertEquals(1, tripleCount, "同名 addDecl 应幂等去重")
+        assertFalse(result.loopDetected, "addDecl+replaceDecl 应幂等收敛")
+    }
+
+    /** 片段解析失败 → E-PROCESSOR-EDIT（该条丢弃，同批其他编辑照常生效）。 */
+    @Test
+    fun structuralEdit_badSnippetReportsAndOthersApply() {
+        val ast = parseSource("@gen\nfun n(): Nat = 0\n", "t.subl")
+        val proc = ScriptProcessor(
+            name = "gen",
+            interestedAnnotations = setOf("gen"),
+            scriptSource =
+                "setFunBody(\"n\", \"1 +\")\n" +
+                    "setFunBody(\"ghost\", \"1\")\n" +
+                    "setFunBody(\"n\", \"5\")\n",
+        )
+        val input = ProcessorContext(ast, symbols = null, annotated = emptyList())
+        val out = proc.process(input)
+        // 解析失败的编辑被丢弃；后续对 n 的合法编辑照常生效
+        val body = funOf(out.ast, "n").body
+        assertTrue(body is sugared.functor.ast.IntLit && body.value == "5", "应保留最后一条合法编辑: $body")
+        val codes = out.diagnostics.map { it.code }
+        assertTrue("E-PROCESSOR-EDIT" in codes, "应报 E-PROCESSOR-EDIT，实际: $codes")
+        // 目标缺失：警告
+        assertTrue(out.diagnostics.any { it.code == "W-PROCESSOR-EDIT" }, "应报 W-PROCESSOR-EDIT")
+    }
+
+    /** 全部编辑都未命中目标 → 仅警告、AST 引用不变（引擎据此跳过重查/停机）。 */
+    @Test
+    fun structuralEdit_allMissKeepAstReference() {
+        val ast = parseSource("fun n(): Nat = 0\n", "t.subl")
+        val out = applyAstEdits(ast, listOf(
+            AstEdit.SetFunBody("nope", "1"),
+            AstEdit.PrependStmts("nope2", listOf("var t = 1")),
+            AstEdit.ReplaceDecl("nope3", "fun k(): Nat = 1"),
+        ))
+        assertSame(ast, out, "全部未命中应原样返回")
+    }
+
+    /** 处理器产物的类型错误被重查拦截（root doc 核心契约：处理器不能绕过 checker）。 */
+    @Test
+    fun structuralEdit_typeUnsafeOutputFailsRecheck() {
+        val ast = parseSource("@gen\nfun n(): Nat = 0\n", "t.subl")
+        // 脚本里 setFunBody 实参是带转义引号的源码片段（"oops" 的转义形），用字符码组装避开转义噪声
+        val q = 34.toChar().toString()      // 双引号
+        val esc = 92.toChar().toString()    // 反斜杠
+        // oopsSrc 即脚本里的字面量（" 反斜杠 " oops 反斜杠 " "），无需再包引号
+        val oopsSrc = q + esc + q + "oops" + esc + q + q
+        val proc = ScriptProcessor(
+            name = "gen",
+            interestedAnnotations = setOf("gen"),
+            scriptSource =
+                "fun loop(xs: List[Str]): Null = when(xs) {\n" +
+                    "    Nil => null\n" +
+                    "    is Cons(f, rest) => { setFunBody(f, " + oopsSrc + "); loop(rest) }\n" +
+                    "}\n" +
+                    "loop(funsWithAnnotation(\"gen\"))\n",
+            stdlibDir = File("core"),
+        )
+        val engine = ProcessorEngine()
+        engine.addProcessor(proc)
+        val result = engine.run(inputAst = ast, symbols = null, typeOf = { null }, emit = {},
+            recheck = { newAst -> val chk = Checker(newAst); ProcessorEngine.RecheckResult(chk.run()) })
+        // 体被换成了 Str 字面量 -> 重查 E-TYPE-MISMATCH，AST 变换本身成功
+        val body = funOf(result.ast, "n").body
+        assertTrue(body is sugared.functor.ast.StrLit, "体应被替换为字符串字面量")
+        assertTrue(result.diagnostics.any { it.code == "E-TYPE-MISMATCH" },
+            "重查应拦截类型不匹配的产物，实际: ${result.diagnostics.map { it.code }}")
+    }
 }

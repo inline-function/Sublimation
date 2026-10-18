@@ -84,6 +84,48 @@ private var ifIsCond: Boolean = false
         }
     }
 
+    // ============ 片段解析（注解处理器等宿主用：单条声明 / 函数体 / 语句序列） ============
+
+    /** 片段解析：单条声明（fun / struct / enum / class / impl / type 声明）。
+     *  解析后要求整段耗尽（多余内容报语法错），供 parseDeclSnippet 复用。 */
+    fun snippetDecl(): Decl {
+        val d = parseDecl()
+        requireSnippetEof("声明")
+        return d
+    }
+
+    /** 片段解析：函数体——块体「{ 语句… }」、裸表达式（表达式体右值，等号可写可不写）。
+     *  体分支与 parseFun 保持一致（「= {…}」混写禁止）。 */
+    fun snippetFunBody(): Expr {
+        val body = when {
+            peek(Kind.ASSIGN) && toks.getOrNull(pos + 1)?.kind == Kind.LBRACE ->
+                throw ParseFailure(fileName, toks[pos + 1],
+                    "函数体不能 = 后接花括号混写：单表达式请去掉花括号，块体请去掉等号")
+            peek(Kind.ASSIGN) -> { pos++; parseExpr(angle = false) }
+            peek(Kind.LBRACE) -> parseBlock()
+            else -> parseExpr(angle = false)
+        }
+        requireSnippetEof("函数体")
+        return body
+    }
+
+    /** 片段解析：语句序列（零条或多条，分号/换行分隔）至 EOF。 */
+    fun snippetStmts(): List<Stmt> {
+        skipSemis()
+        val out = ArrayList<Stmt>()
+        while (!peek(Kind.EOF)) {
+            out += parseStmt()
+            skipSemis()
+        }
+        return out
+    }
+
+    /** 片段耗尽检查：跳过分号后必须 EOF，否则报「片段后面有多余内容」。 */
+    private fun requireSnippetEof(what: String) {
+        skipSemis()
+        if (!peek(Kind.EOF)) throw ParseFailure(fileName, cur(), "$what 片段后面有多余内容")
+    }
+
     fun parseFile(): FileAst {
         val entries = ArrayList<Entry>()
         while (true) {
@@ -1714,3 +1756,25 @@ fun parseScriptSourceWithNotes(src: String, fileName: String = "<script>"): Pars
 }
 
 fun parseScriptSource(src: String, fileName: String = "<script>"): FileAst = parseScriptSourceWithNotes(src, fileName).ast
+
+// ============ 片段解析顶层入口（root doc/注解处理器.md：处理器脚本以源码片段形式编辑 AST） ============
+
+/** 解析单条声明片段（如 "fun f(): Nat = 1" / "struct P(x: Nat)"）。
+ *  解析失败抛 ParseFailure；成功要求整段耗尽。 */
+fun parseDeclSnippet(src: String, fileName: String = "<snippet>"): Decl {
+    val p = Parser(Lexer(src, fileName).tokenize(), fileName, scriptMode = true)
+    return p.snippetDecl()
+}
+
+/** 解析函数体片段：块体「{ 语句… }」（解析为 BlockExpr）或单个表达式（表达式体右值）。
+ *  由注解处理器的 setFunBody 编辑调用。 */
+fun parseFunBodySnippet(src: String, fileName: String = "<snippet>"): Expr {
+    val p = Parser(Lexer(src, fileName).tokenize(), fileName, scriptMode = true)
+    return p.snippetFunBody()
+}
+
+/** 解析语句片段（一条或多条，分号/换行分隔）。由注解处理器的 prependStmts 编辑调用。 */
+fun parseStmtsSnippet(src: String, fileName: String = "<snippet>"): List<Stmt> {
+    val p = Parser(Lexer(src, fileName).tokenize(), fileName, scriptMode = true)
+    return p.snippetStmts()
+}
