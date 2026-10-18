@@ -2,7 +2,7 @@
 
 **Sublimation（凝华）**是一门带自动证明的静态类型语言：类型里的命题可以交给编译器自动证明，证明通过才给编译，失败即编译错误。语法像 Kotlin，编译到 JavaScript，node 直接跑；也自带解释器脚本模式，顶层语句即程序。
 
-> 当前版本 **v4 终版**（编译器/解释器测试 717 项全绿）。本文所有片段均已用 `build/libs/sublimation.jar` 实测通过。
+> 当前版本 **v4 终版**（编译器/解释器测试 733 项全绿）。本文所有片段均已用 `build/libs/sublimation.jar` 实测通过。
 
 ## 安装
 
@@ -57,6 +57,14 @@ struct Account(owner, balance = 0)      // 字段类型自动推断
 fun add(a, b) = a + b                    // 参数类型自动推断
 var acc = Account("张三", 1000)
 acc.balance = acc.balance + 500          // @mut 自动推断
+```
+
+## 激进证明模式：--prover=aggressive
+
+默认的自动证明有预算上限（轮数/深度封顶）——快，但长链和经典逻辑推演证不动。`compile`/`check` 加 `--prover=aggressive` 拆掉上限：饱和到不动点、排中律/反证/∨ 消去（需 `@classic`）、∀ 三维实例化；健全性底线不变（不猜、不降公理），Ctrl-C 中断并生成诊断报告。详见 [激进模式](激进模式)：
+
+```bat
+java -jar sublimation.jar compile MY_PROJECT --prover=aggressive
 ```
 
 ## 类型别名

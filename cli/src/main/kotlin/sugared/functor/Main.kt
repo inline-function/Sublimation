@@ -28,7 +28,38 @@ const val USAGE = """sublimationc — Sublimation 编译器（M1 词法 + M2 语
   --global-inference         run-script 可选旗标：开启全局类型推导（省略类型/可变性/效应标注时自动填充；
              优先级：显式标注 > 构造点 > 使用点 > 默认 Any；脚本模式专属，编译模式不受影响）
   explain <CODE>           打印诊断码的含义与修复建议（如 E-TYPE-MISMATCH / W-NON-EXHAUSTIVE）
+  compile <project-dir> --prover=aggressive   激进模式：更彻底的搜索（可能很慢甚至不停机），
+             出错前先尽力证出（健全性底线不变——绝不猜测；Ctrl-C 中断并生成诊断报告）
+  --prover=aggressive       激进证明开关（只作用于 compile/check；§3 不做中间档）
+  --prove-verbose          提高进度输出频率
+  --prove-dump=<路径>      诊断报告路径（默认 sublimation-prover-dump.md，仅中断时写）
+  --prove-interval=<2s/500ms> 进度节流间隔（默认 5 秒）
 """
+
+/** 激进模式旗标解析（idea doc/激进模式.md §6） */
+private data class ProveFlags(
+    val aggressive: Boolean, val verbose: Boolean, val intervalMs: Long, val dumpPath: String?
+)
+
+private fun parseProveFlags(args: Array<String>): ProveFlags {
+    val aggressive = args.any { it == "--prover=aggressive" }
+    val verbose = args.contains("--prove-verbose")
+    val dump = args.firstOrNull { it.startsWith("--prove-dump=") }?.substringAfter("=")
+    val interval = args.firstOrNull { it.startsWith("--prove-interval=") }?.let { parseIntervalMs(it.substringAfter("=")) }
+        ?: 5_000L
+    return ProveFlags(aggressive, verbose, interval, dump)
+}
+
+private fun parseIntervalMs(s: String): Long {
+    val t = s.trim()
+    val n: () -> Long? = { t.dropLast(1).toLongOrNull() }
+    return when {
+        t.endsWith("ms") -> (t.dropLast(2).toLongOrNull() ?: 5_000L)
+        t.endsWith("s") -> (n() ?: 5L) * 1_000
+        t.endsWith("m") -> (n() ?: 5L) * 60_000
+        else -> t.toLongOrNull() ?: 5_000L
+    }
+}
 
 /** 报错增强（2026-10-11）：诊断码解释表——`explain <CODE>` 子命令读取 */
 /** 报错增强（新手友好）：诊断码解释表——`explain <CODE>` 子命令读取 */
@@ -143,6 +174,12 @@ fun main(args: Array<String>) {
     }
     if (args.size < 2) { System.err.println(USAGE); exitProcess(2) }
     val verbose = args.contains("-v")
+    // 激进模式（idea doc/激进模式.md §6）：--prover=aggressive 只作用于 compile/check
+    val pf = parseProveFlags(args)
+    // §8.1：Ctrl-C → 置中断位，搜索循环在下一个 checkAbort 抛 ProverInterrupted，由 main 的 catch 写报告 + halt(130)
+    if (pf.aggressive) {
+        Runtime.getRuntime().addShutdownHook(Thread { sugared.functor.checker.AggressiveRuntime.interrupt() })
+    }
     // -p <路径>（可多次）：附加注解处理器脚本（.subs 文件或目录）
     val processorPaths = ArrayList<java.io.File>()
     run {
@@ -165,7 +202,8 @@ fun main(args: Array<String>) {
             runScriptCmd(args.drop(1).filter { it != "-v" })
             return
         }
-        val path = File(args[1])
+        val pathStr = args.drop(1).firstOrNull { !it.startsWith("-") } ?: args[1]
+        val path = File(pathStr)
         if (!path.exists()) { System.err.println("[错误] 文件不存在: ${args[1]}"); exitProcess(2) }
         // P0（M7）：目录即模块——check/compile 接受目录（编译入口 = 根 /，扫全树）
         if (path.isDirectory) {
@@ -173,7 +211,8 @@ fun main(args: Array<String>) {
                 System.err.println("[错误] 目录模式仅支持 check / compile（脚本目录请用 run-script）：$cmd")
                 exitProcess(2)
             }
-            val mm = MultiModule(path)
+            val mm = MultiModule(path, aggressive = pf.aggressive, proveVerbose = pf.verbose,
+                proveIntervalMs = pf.intervalMs, proveDumpPath = pf.dumpPath)
             // 注解处理器先于 B/C 检查跑（脚本模式解释执行）：变换后的模块才是检查对象
             //（如 @allMut 引入的 @mut）；-p 追加的处理器也一并装载。processModules 内部统一重跑阶段 A/B/C
             val loadErrs = ProcessorPipeline.loadErrorsToBag(extraProcessors)
@@ -211,7 +250,8 @@ fun main(args: Array<String>) {
                 // 注解处理器（脚本模式解释执行）先跑：变换后的 AST 才是检查对象（与 compile 同序）
                 val (ast2, pbag) = ProcessorPipeline.runBuiltin(ast, extraProcessors)
                 if (ast2 !== ast) ast = ast2
-                val bag = checkFile(ast)
+                val bag = if (pf.aggressive) checkFile(ast, aggressive = true, proveVerbose = pf.verbose,
+                    proveIntervalMs = pf.intervalMs, proveDumpPath = pf.dumpPath) else checkFile(ast)
                 for ((p0, m0) in pr.hints) bag.hint("H-ARITH-PRECEDENCE", p0, m0)
                 for ((c0, p1, m1) in pr.supplements) bag.supplement(c0, p1, m1)
                 bag.absorb(pbag)
@@ -226,7 +266,9 @@ fun main(args: Array<String>) {
                 // 注解处理器（脚本模式解释执行）先跑：变换后的 AST 才是检查对象（@allMut → @mut 等）
                 val (ast2, pbag) = ProcessorPipeline.runBuiltin(ast, extraProcessors)
                 if (ast2 !== ast) ast = ast2
-                val chk = sugared.functor.checker.Checker(ast)
+                val chk = sugared.functor.checker.Checker(ast,
+                    aggressive = pf.aggressive, proveVerbose = pf.verbose,
+                    proveIntervalMs = pf.intervalMs, proveDumpPath = pf.dumpPath)
                 val bag = chk.run()
                 for ((p0, m0) in pr.hints) bag.hint("H-ARITH-PRECEDENCE", p0, m0)
                 for ((c0, p1, m1) in pr.supplements) bag.supplement(c0, p1, m1)
@@ -235,7 +277,9 @@ fun main(args: Array<String>) {
                 if (out.isNotEmpty()) System.err.println(out)
                 if (bag.hasError) { System.err.println("[错误] 语义检查未通过，拒绝生成 JS"); exitProcess(1) }
                 // 处理器改了 AST → 重建带留痕的 Checker；否则沿用原 Checker
-                val finalChk = if (ast !== pr.ast) sugared.functor.checker.Checker(ast).also { it.run() } else chk
+                val finalChk = if (ast !== pr.ast) sugared.functor.checker.Checker(ast,
+                    aggressive = pf.aggressive, proveVerbose = pf.verbose,
+                    proveIntervalMs = pf.intervalMs, proveDumpPath = pf.dumpPath).also { it.run() } else chk
                 val js = generateSingle(finalChk, ast)   // 单文件：留痕字段经 compiler 模块公开入口传递（跨模块 internal 边界）
                 val oi = args.indexOf("-o")
                 if (oi >= 0 && oi + 1 < args.size) {
@@ -254,6 +298,13 @@ fun main(args: Array<String>) {
             }
             else -> { System.err.println(USAGE); exitProcess(2) }
         }
+    } catch (e: sugared.functor.checker.ProverInterrupted) {
+        // §8.1：Ctrl-C → 诊断报告 + 退出码 130（halt 绕过其余 shutdown 处理，立即退出）
+        val s = sugared.functor.checker.AggressiveRuntime.active
+        val report = s?.dumpPath ?: "sublimation-prover-dump.md"
+        s?.writeReport(report)
+        System.err.println("[激进证明] 已中断——诊断报告写入 $report")
+        Runtime.getRuntime().halt(130)
     } catch (e: RuntimeException) {
         System.err.println("[错误] ${e.message}")
         exitProcess(1)

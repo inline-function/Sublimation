@@ -178,6 +178,9 @@ class ProverSession(
 object AggressiveRuntime {
     @Volatile
     var active: ProverSession? = null
+
+    /** Ctrl-C 钩子入口：置中断位，搜索循环在下一个 checkAbort 抛 [ProverInterrupted] */
+    fun interrupt() { active?.abort() }
 }
 
 // ==================== 三维关键池（§4） ====================

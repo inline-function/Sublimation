@@ -1414,6 +1414,13 @@ class Checker(
 
 fun checkFile(file: FileAst): DiagBag = Checker(file).run()
 
+/** 激进模式重载（--prover=aggressive；普通模式重载行为完全一致） */
+fun checkFile(
+    file: FileAst, aggressive: Boolean, proveVerbose: Boolean = false,
+    proveIntervalMs: Long = 5_000L, proveDumpPath: String? = null,
+): DiagBag = Checker(file, aggressive = aggressive, proveVerbose = proveVerbose,
+    proveIntervalMs = proveIntervalMs, proveDumpPath = proveDumpPath).run()
+
     // ---------- 根文档《手动证明》：@simp 化简器 ----------
 
     /** @simp 化简器：委托给 ArithProve 的线性算术证明器（区间+常量折叠+不等式）。 */

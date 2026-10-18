@@ -576,7 +576,7 @@ class Prover(
         if (goal != PBot && facts.any { it == goal }) return true
         // P4：同目标在证明路径上重现 = 环（X→…→X 只能继续循环），剪枝防震荡
         if (!visited.add(goal)) return false
-        return when (goal) {
+        val direct = when (goal) {
             PTop -> true
             PBot -> facts.contains(PBot)
             is PAnd -> prove(facts, goal.a, d, visited, eqs) && prove(facts, goal.b, d, visited, eqs)
@@ -610,6 +610,7 @@ class Prover(
                 // P4：类型事实在等式下的传播 `e:T, e=e' ⊢ e':T`
                 (goal.head == ":" && goal.terms.size == 2 && typeFactEq(facts, goal, eqs))
         }
+        if (direct) return true
         // 激进模式专属：Γ 含 A∨B 时分情况证目标（∨ 消去，§5.3）——两个分支都证出才算成。
         // usedOr 记录本路径已拆过的析取式，防同一析取被反复拆（visited 剪枝之外的终止保证）。
         if (session != null) {
@@ -618,11 +619,15 @@ class Prover(
                 if (k in curUsedOr) continue
                 val fa = facts + PropLogic.normalizeFacts(listOf(or.a))
                 val fb = facts + PropLogic.normalizeFacts(listOf(or.b))
+                // 分支内 p 与 ¬p 并存 ⇒ 该分支已矛盾，任意目标成立（析取三段论 ¬a, a∨b ⊢ b 的落点）。
+                // ⊥-消去在直觉主义亦成立，只是 ∨ 拆分本身只在激进/经典语境提供。
+                val botA = fa.any { it is PNot && fa.contains((it as PNot).p) }
+                val botB = fb.any { it is PNot && fb.contains((it as PNot).p) }
                 val savedUsed = curUsedOr
                 val u2 = HashSet(curUsedOr); u2.add(k); curUsedOr = u2
                 try {
-                    if (prove(fa, goal, d + 1, visited, eqs) &&
-                        prove(fb, goal, d + 1, visited, eqs)) return true
+                    if ((prove(fa, goal, d + 1, visited, eqs) || botA) &&
+                        (prove(fb, goal, d + 1, visited, eqs) || botB)) return true
                 } finally { curUsedOr = savedUsed }
             }
         }

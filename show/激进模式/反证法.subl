@@ -1,0 +1,5 @@
+// 反证法：假设 ¬p 导出 q 与 ¬q 矛盾 ⇒ p（需 @classic）
+@classic
+fun raaCase[p, q]<¬p -> q, ¬p -> ¬q>: Null {
+  ∴ p
+}

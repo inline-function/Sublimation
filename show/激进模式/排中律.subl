@@ -1,0 +1,8 @@
+// 排中律前向实例化 + ∨ 消去（需 @classic）
+@theorem
+fun LEM[p]: Null <p ∨ ¬p>
+
+@classic
+fun lemCase[p, q]<p -> q, ¬p -> q>: Null {
+  ∴ q
+}
