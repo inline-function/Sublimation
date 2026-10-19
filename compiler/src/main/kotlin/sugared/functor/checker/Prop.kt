@@ -623,10 +623,31 @@ class Prover(
                 else {
                     val fresh = HashMap<String, Expr>()
                     goal.names.forEachIndexed { i, n -> fresh[n] = NameRef("#vg${d}_${i}") }
-                    prove(facts, PropLogic.substProp(goal.body, fresh), d + 1, visited, eqs)
+                    val g2 = PropLogic.substProp(goal.body, fresh)
+                    // 多名字量词修复：新鲜常量在原闭包的实例化候选之外（原闭包按 Γ 项收集，看不到 #vg）。
+                    // 以替换后的目标为 extraGoals 重算闭包，使 Γ 里的 ∀ 事实能以这些常量为候选实例化
+                    // （如 ∀n,m. n=m ⊢ ∀a,b. a=b：实例化出 #vg0_0 = #vg0_1 后目标命中事实）。
+                    val cl2 = closure(facts, listOf(g2), termSource = facts)
+                    val eqs2 = cl2.filterIsInstance<PAtom>()
+                        .filter { (it.head == "=" || it.head == "==") && it.terms.size == 2 }
+                    prove(cl2, g2, d + 1, visited, eqs2)
                 }
             }
-            is PExists1 -> false  // v1 待证侧不支持 ∃! 引入
+            is PExists1 -> {
+                // 唯一存在分解（文档 §5.3）：∃!x.P(x) ⟺ ∃x.P(x) ∧ ∀y.(P(y) → y = x)
+                // 见证候选取 Γ 的 ground 项；对每个候选 c 证 P(c) 与 ∀y.(P(y) → y = c)。
+                if (goal.names.size != 1) false
+                else {
+                    val x = goal.names[0]
+                    PropLogic.groundTerms(facts).any { c ->
+                        val pC = PropLogic.substProp(goal.body, mapOf(x to c))
+                        val y = "#eu${d}"
+                        val pY = PropLogic.substProp(goal.body, mapOf(x to NameRef(y)))
+                        val uniq = PForall(listOf(y), PImp(pY, PAtom("=", listOf(NameRef(y), c))))
+                        prove(facts, PAnd(pC, uniq), d + 1, visited, eqs)
+                    }
+                }
+            }
             is PNot -> facts.any { it == goal } || facts.contains(PBot) ||
                 // 加强：双重否定引入 p ⊢ ¬¬p（直觉逻辑健全）；¬→ 载体已由 MP/closure 处理
                 (goal.p is PNot && prove(facts, (goal.p as PNot).p, d + 1, visited, eqs))

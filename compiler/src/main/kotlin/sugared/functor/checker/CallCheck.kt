@@ -914,6 +914,18 @@ internal fun Checker.checkFnCall(
             d.error("E-PRE-UNPROVEN", c.pos, "调用 `$name` 前必须先证明它的上文 `${PropLogic.render(goal)}`，但编译器没证出。可换参数让编译器自动证出，或用 `witness<命题>()` 显式供给前置事实")
     }
 
+    // 约束表（v3.0 登记未校验，现落地）：`fun f()<score <= 100>` 的形参比较条件由调用点实参承担。
+    // 确凿违反（¬goal 可证）报 ERROR；静态证不出（值运行时才确定）降级 WARNING，不误杀未知实参。
+    for (cons in fn.constraints) {
+        val goal = substAll(PropLogic.fromExpr(substThisExpr(substDollarNExpr(PropLogic.substExpr(cons, envSub), fn.params), fn.name)), binding, tsub, envSub)
+        if (!proveOrDeep(f.allFacts(), goal)) {
+            if (proveOrDeep(f.allFacts(), PNot(goal)))
+                d.error("E-CONSTRAINT-VIOLATED", c.pos, "调用 `$name` 违反约束 `${PropLogic.render(goal)}`：编译器已反证该条件不成立。")
+            else
+                d.warn("W-CONSTRAINT-UNPROVEN", c.pos, "调用 `$name` 的约束 `${PropLogic.render(goal)}` 编译器没证出（值可能运行时才确定）。")
+        }
+    }
+
     f.inject(PAtom(name, c.args))   // 伴生记录
     for (post in fn.posts) {
         val goal = PropLogic.substDollar(substAll(PropLogic.fromExpr(substThisExpr(substDollarNExpr(post, fn.params), fn.name)), binding, tsub, envSub), c)

@@ -11,7 +11,7 @@ import sugared.functor.ast.*
  * 决策 34：每个未标 `@impure` 的具名函数，编译器自动给出 `pure<name>` 证明。
  * 在符号收集完成后统一注册，使互相调用的函数无论声明顺序都能查到对方的纯度。
  * 内建非纯函数（print）不在 syms.funs 中，天然不注册。
- * P0：pure 事实仍是每模块本名注册（跨模块 @impure 调用需 unchecked 逃逸，见《模块系统.md》限制）。
+ * P0 补全：可见模块的非纯函数 pure<f> 亦注册（按裸名）；同名任一处 @impure 则整名不注册（见函数内注释）。
  */
 internal fun Checker.registerPureFacts() {
     globalFacts.clear()
@@ -23,6 +23,24 @@ internal fun Checker.registerPureFacts() {
         if ("impure" !in anns) globalFacts += PAtom("pure", listOf(NameRef(name)))
         // v2.0 异步（决策 93）：@async 函数注册自然命题 async<name>——同步上下文调用须显式供给/放行
         if ("async" in anns) globalFacts += PAtom("async", listOf(NameRef(name)))
+    }
+    // P0 跨模块补全：可见模块的 pure<f> 一并注册（按裸名——E-IMPURE-CALL 检查用的就是裸名）。
+    // 健全性：某名字在任一可见模块（含本模块）有 @impure 定义则**不注册**——
+    // 调用解析无法区分同名异模块，否则对 impure 版本的裸名调用会被同名 pure 事实错误放行。
+    if (moduleTree != null) {
+        val impureNames = HashSet<String>()
+        val foreignPure = LinkedHashSet<String>()
+        for (p in visiblePaths) {
+            val s = allSymbols[p] ?: continue
+            for ((name, fn) in s.funs) {
+                val builtin = builtinimpure(name) ?: builtinPure(name)
+                val anns = if (builtin != null) builtin.annotations else fn.annotations
+                if ("impure" in anns) impureNames += name
+                else if (name !in syms.funs) foreignPure += name   // 本模块已注册过的不重复
+            }
+        }
+        for (name in foreignPure) if (name !in impureNames)
+            globalFacts += PAtom("pure", listOf(NameRef(name)))
     }
     // impl 方法同样注册（按方法名）
     for ((name, entries) in syms.methods) {
