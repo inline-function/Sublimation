@@ -205,7 +205,11 @@ private fun exprArgsToTypes(ie: InstExpr): List<Type> = ie.terms.map { t1 ->
  * 证明义务入口（激进模式套壳）：计数义务（§7.3）、预建三维池、结节流进度；
  * 内部递归（expandDefined 展开）不重复计数。Ctrl-C 时抛 [ProverInterrupted] 一路退到 CLI。
  */
-internal fun Checker.proveOrDeep(gamma: List<Prop>, goal: Prop): Boolean {
+internal fun Checker.proveOrDeep(gamma0: List<Prop>, goal0: Prop): Boolean {
+    // 证明层位置盲（P4 等式图）：LSP 在 NameRef 上携带源位置（高亮/rename 定位），
+    // 但命题项的同一性只认名字——等式图/算术通道/事实成员判定都在此统一盲化。
+    val gamma = gamma0.map { PropLogic.blindProp(it) }
+    val goal = PropLogic.blindProp(goal0)
     val s = prover.session
     if (s != null) {
         s.enter(goal, gamma)

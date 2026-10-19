@@ -59,7 +59,34 @@ object PropLogic {
     }
 
     /** 合取分解 + 双否消去 + 等价拆双蕴含：事实库归一化（定理表的可判定子集） */
-    fun normalizeFacts(ps: List<Prop>): List<Prop> = ps.flatMap { expandIff(it) }.flatMap { flattenAnd(it) }.map { stripNN(it) }
+    fun normalizeFacts(ps: List<Prop>): List<Prop> = ps.flatMap { expandIff(it) }.flatMap { flattenAnd(it) }.map { stripNN(it) }.map { blindPos(it) }
+
+    /** 证明层位置盲（P4 等式图）：NameRef.pos 是 LSP 高亮/rename 的定位元数据，
+     *  但 PAtom 项的 == 是事实成员判定与等式图可达性的基础——同一变量在两处出现必须仍是同一项。 */
+    private fun blindPos(p: Prop): Prop = when (p) {
+        is PAtom -> PAtom(p.head, p.terms.map { blindTerm(it) })
+        is PNot -> PNot(blindPos(p.p))
+        is PAnd -> PAnd(blindPos(p.a), blindPos(p.b))
+        is POr -> POr(blindPos(p.a), blindPos(p.b))
+        is PImp -> PImp(blindPos(p.a), blindPos(p.b))
+        is PIff -> PIff(blindPos(p.a), blindPos(p.b))
+        is PForall -> PForall(p.names, blindPos(p.body))
+        is PExists -> PExists(p.names, blindPos(p.body))
+        is PExists1 -> PExists1(p.names, blindPos(p.body))
+        else -> p
+    }
+
+    private fun blindTerm(e: Expr): Expr = when (e) {
+        is NameRef -> if (e.pos.isEmpty()) e else NameRef(e.name)
+        is CallExpr -> CallExpr(blindTerm(e.callee), e.args.map { blindTerm(it) },
+            e.namedArgs.mapValues { blindTerm(it.value) })
+        is InstExpr -> InstExpr(blindTerm(e.target), e.terms.map { blindTerm(it) })
+        is FieldExpr -> FieldExpr(blindTerm(e.target), e.name)
+        is BinExpr -> BinExpr(e.op, blindTerm(e.left), blindTerm(e.right))
+        is UniExpr -> UniExpr(e.op, blindTerm(e.operand))
+        else -> e
+    }
+    fun blindProp(p: Prop): Prop = blindPos(p)
 
     /** a ↔ b 拆成 (a→b) ∧ (b→a)——使 MP 能由 ¬irrational<power> 推出 rational<power> 等 */
     private fun expandIff(p: Prop): List<Prop> = when (p) {
@@ -543,7 +570,7 @@ class Prover(
         // P4：预提取等式事实（prove 递归共享，避免每个目标重扫全部 facts）
         val eqs = cl.filterIsInstance<PAtom>()
             .filter { (it.head == "=" || it.head == "==") && it.terms.size == 2 }
-        return prove(cl, goal, 0, HashSet(), eqs)
+        return prove(cl, PropLogic.blindProp(goal), 0, HashSet(), eqs)
     }
 
     /** 激进 prove：闭包只算一次（与深度无关）；迭代加深 4→8→16…（§5.1，无上限靠 visited 剪枝 + 中断） */
@@ -553,12 +580,13 @@ class Prover(
         val cl = closure(gamma + global, listOf(goal), termSource = gamma)
         val eqs = cl.filterIsInstance<PAtom>()
             .filter { (it.head == "=" || it.head == "==") && it.terms.size == 2 }
+        val blindGoal = PropLogic.blindProp(goal)
         var budget = 4
         while (true) {
             session.checkAbort()
             deepAborted = false
             curBudget = budget
-            if (prove(cl, goal, 0, HashSet(), eqs)) {
+            if (prove(cl, blindGoal, 0, HashSet(), eqs)) {
                 session.memo.add(key)
                 return true
             }
