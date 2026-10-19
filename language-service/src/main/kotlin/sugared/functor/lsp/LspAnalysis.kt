@@ -887,8 +887,11 @@ class LspAnalysis {
         val data = ArrayList<Int>()
         var prevLine = 0
         var prevStart = 0
+        var prevKind: Kind? = null
         for (t in tokens) {
-            val typeIdx = semanticTypeOf(t, varietyByName) ?: continue
+            val typeIdx = semanticTypeOf(t, prevKind, varietyByName)
+            prevKind = t.kind
+            if (typeIdx == null) continue
             val line = t.line - 1
             val startCol = t.col - 1
             val endCol = startCol + t.text.length
@@ -911,20 +914,28 @@ class LspAnalysis {
         return data
     }
 
-    /** token -> 语义类型索引；null 表示不产出 token（标点/EOST） */
-    private fun semanticTypeOf(t: Token, variety: Map<String, String>): Int? = when (t.kind) {
+    /** token -> 语义类型索引；null 表示不产出 token（标点/EOST）。prevKind 用于辨认注解名 */
+    private fun semanticTypeOf(t: Token, prevKind: Kind?, variety: Map<String, String>): Int? = when (t.kind) {
         Kind.INT, Kind.FLOAT -> 7
         Kind.STR -> 8
+        Kind.AT -> 13   // 注解符号 @
         Kind.FUN, Kind.CLASS, Kind.STRUCT, Kind.ENUM, Kind.VAR, Kind.IMPL,
         Kind.FOR, Kind.IF, Kind.ELSE, Kind.UNCHECKED, Kind.WHEN, Kind.IS,
         Kind.BY, Kind.TYPE, Kind.RET, Kind.IN, Kind.DEF -> 0
-        Kind.IDENT -> when (variety[t.text]) {
-            "fun" -> 2
-            "struct", "enum", "class", "type" -> 1
-            "param" -> 3
-            "field" -> 5
-            "ctor" -> 6
-            else -> 4
+        Kind.IDENT -> when {
+            prevKind == Kind.AT -> 13                      // 注解名（@mut / @impure）
+            else -> when (variety[t.text]) {
+                "fun" -> 2
+                "struct" -> 12
+                "enum" -> 11
+                "class" -> 10
+                "type" -> 1                                // 类型别名
+                "param" -> 3
+                "field" -> 5
+                "ctor" -> 6
+                "var" -> 4
+                else -> 4
+            }
         }
         Kind.SYMBOL -> 9
         Kind.PLUS, Kind.MINUS, Kind.STAR, Kind.SLASH, Kind.PERCENT,
@@ -1857,6 +1868,10 @@ class LspAnalysis {
             "number",      // 7
             "string",      // 8
             "operator",    // 9
+            "class",       // 10 ← 类型类（class）
+            "enum",        // 11 ← 枚举（enum）
+            "struct",      // 12 ← 结构体（struct）
+            "decorator",   // 13 ← 注解（@mut / @impure）
         )
 
         /** 语义 token 修饰符 legend（当前为空） */

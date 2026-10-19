@@ -25,10 +25,10 @@ class ParserTest {
         )
         val d1 = (f.entries[0] as DeclEntry).decl as FunDecl
         assertEquals("test1", d1.name)
-        assertEquals(listOf(NameRef("p")), d1.posts)
+        assertEquals(listOf("p"), d1.posts.map { (it as NameRef).name })
         assertTrue((d1.body as BlockExpr).stmts[0] is AxiomStmt)
         val d2 = (f.entries[1] as DeclEntry).decl as FunDecl
-        assertEquals(listOf(NameRef("p")), d2.preps)
+        assertEquals(listOf("p"), d2.preps.map { (it as NameRef).name })
         assertEquals("None", d2.retType?.name)
     }
 
@@ -49,11 +49,11 @@ class ParserTest {
             "t",
         )
         val d1 = (f.entries[0] as DeclEntry).decl as FunDecl
-        assertEquals(listOf(NameRef("p")), d1.posts)
+        assertEquals(listOf("p"), d1.posts.map { (it as NameRef).name })
         assertNull(d1.retType, "后置上下文可省略返回类型")
         assertEquals(0, d1.preps.size)
         val d2 = (f.entries[1] as DeclEntry).decl as FunDecl
-        assertEquals(listOf(NameRef("p")), d2.preps)
+        assertEquals(listOf("p"), d2.preps.map { (it as NameRef).name })
         assertNull(d2.retType, "前置上下文可省略 () 与返回类型")
     }
 

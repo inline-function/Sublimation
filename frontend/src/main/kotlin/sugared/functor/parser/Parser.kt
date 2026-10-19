@@ -307,13 +307,15 @@ private var ifIsCond: Boolean = false
         at(Kind.LT)
         val out = ArrayList<Expr>()
         while (true) {
+            val cnameTok = cur()
             val cname = nameToken()   // 约束携带的（隐式）参数名
             val opTok = cur()
             pos++
             val rhs = parseExpr(angle = true)
+            val cpos = "${cnameTok.line}:${cnameTok.col}"
             // P51：in 为普通函数——约束项也按调用形态登记（命题层 PAtom("in") 与旧 BinExpr 同构）
-            out += if (opTok.text == "in") CallExpr(NameRef("in"), listOf(NameRef(cname), rhs))
-            else BinExpr(opTok.text, NameRef(cname), rhs, "$cname$opTok")
+            out += if (opTok.text == "in") CallExpr(NameRef("in"), listOf(NameRef(cname, cpos), rhs))
+            else BinExpr(opTok.text, NameRef(cname, cpos), rhs, "$cname$opTok")
             if (peek(Kind.COMMA)) { pos++; if (peek(Kind.GT)) break; continue }
             break
         }
@@ -1071,7 +1073,7 @@ private var ifIsCond: Boolean = false
             if (t.kind == Kind.IDENT && t.precededBySpace && infixOperandAhead()) {
                 val name = next().text
                 supplements += Triple("D-INFIX", "${t.line}:${t.col}", "中缀 `a ${name} b` 展开为自由函数 `${name}(a, b)`（中缀糖）")
-                left = CallExpr(NameRef(name), listOf(left, parseUnary(stopArrow, angle)))
+                left = CallExpr(NameRef(name, "${t.line}:${t.col}"), listOf(left, parseUnary(stopArrow, angle)))
                 continue
             }
             break
@@ -1326,7 +1328,7 @@ private var ifIsCond: Boolean = false
             t.kind == Kind.IDENT && t.text in asciiQuant &&
                 toks.getOrNull(pos + 1)?.kind == Kind.IDENT ->
                 parseQuant(asciiQuant.getValue(next().text), angle)
-            t.kind == Kind.IDENT || t.kind == Kind.SYMBOL -> { pos++; NameRef(t.text) }
+            t.kind == Kind.IDENT || t.kind == Kind.SYMBOL -> { pos++; NameRef(t.text, "${t.line}:${t.col}") }
             t.kind in symbolCallStart && toks.getOrNull(pos + 1)?.kind == Kind.LPAREN -> {
                 val op = next().text
                 SymbolCallExpr(op, parseArgs().first)   // P8：符号调用只取位置实参（命名通道不适用）
@@ -1334,9 +1336,9 @@ private var ifIsCond: Boolean = false
             // P0 补全（决策 88）：运算符前缀调用 `+(1,2)` / `○(a,b,c)`——当作普通函数名调用，
             // 交给 checkCall 按名解析（用户 `fun +` 命中；内置四则请继续用中缀）。
             t.kind in opPrefixKinds && toks.getOrNull(pos + 1)?.kind == Kind.LPAREN -> {
-                val op = next().text
+                val opTok = next()
                 val (pa, na) = parseArgs()
-                CallExpr(NameRef(op), pa, namedArgs = na)
+                CallExpr(NameRef(opTok.text, "${opTok.line}:${opTok.col}"), pa, namedArgs = na)
             }
             else -> throw ParseFailure(fileName, t, "表达式")
         }

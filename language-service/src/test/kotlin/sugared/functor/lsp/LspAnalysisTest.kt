@@ -217,6 +217,28 @@ class LspAnalysisTest {
         assertEquals("file:///t.subl", refs.first().uri)
     }
 
+    @Test fun `rename 函数名替换声明与所有调用`() {
+        val src = "fun add(a: Nat, b: Nat): Nat = a + b\nfun main() { add(1, 2); add(3, 4) }"
+        val a = opened(src)
+        val edits = a.renameFor("file:///t.subl", Position(0, 4), "plus") ?: error("rename 返回 null")
+        val list = edits["file:///t.subl"] ?: error("缺 uri")
+        assertEquals(3, list.size, "声明 + 2 处调用应 3 个编辑，实际: " + list.map { it.range })
+        assertTrue(list.all { it.newText == "plus" }, "newText 应都为 plus")
+        assertTrue(list.map { it.range }.toSet().size == 3, "3 处编辑的 range 应互不相同")
+    }
+
+    @Test fun `rename 跨作用域多处引用一击替换`() {
+        // x 声明在 main 内，引用散落在 if 条件、if 块体与同层调用中（跨作用域）
+        val src = "fun main() { var x = 1; if (x > 0) { print(x) }; print(x) }"
+        val a = opened(src)
+        val edits = a.renameFor("file:///t.subl", Position(0, 17), "y") ?: error("rename 返回 null")
+        val list = edits["file:///t.subl"] ?: error("缺 uri")
+        assertEquals(4, list.size, "声明 + 3 处引用应 4 个编辑，实际: " + list.map { it.range })
+        assertTrue(list.all { it.newText == "y" }, "newText 应都为 y")
+        assertTrue(list.map { it.range }.toSet().size == 4, "4 处编辑的 range 应互不相同")
+        assertTrue(list.none { it.range.start == it.range.end && it.range.start == Position(0, 0) }, "不应有空范围 (0,0)")
+    }
+
     // ───────── highlight ─────────
 
     @Test fun `highlight 高亮同名出现`() {
@@ -411,7 +433,21 @@ class LspAnalysisTest {
         val a = opened("struct User(n: Nat)\nfun main(u: User): User = 1")
         val data = a.semanticTokens("file:///t.subl") ?: error("semanticTokens 返回 null")
         val types = data.chunked(5).map { it[3] }
-        for (expected in listOf(0, 1, 2, 3, 5, 7)) {
+        // struct 声明与类型引用现在独立为 struct(12)，不再压进 type(1)
+        for (expected in listOf(0, 2, 3, 5, 7, 12)) {
+            assertTrue(expected in types, "缺失类型索引 $expected；实际: $types")
+        }
+    }
+
+    @Test fun `semanticTokens 结构体枚举类型别名类型类注解变量齐全`() {
+        val src = "struct Point(x: Nat, y: Nat)\nenum Color { Red, Green }\ntype Size = Nat\nclass Ord { }\n@mut fun msg(): Str = \"hi\"\nfun bump(): Nat { var n: Nat = 1; n + 1 }\nfun use(p: Point): Color = Red"
+        val a = opened(src)
+        val data = a.semanticTokens("file:///t.subl") ?: error("semanticTokens 返回 null")
+        val types = data.chunked(5).map { it[3] }
+        // 0 keyword; 1 type(Size 别名); 2 function; 3 parameter(p); 4 variable(n);
+        // 5 field(x,y); 6 enumMember(Red/Green ctor); 7 number(1); 8 string("hi");
+        // 9 operator(+); 10 class(Ord 类型类); 11 enum(Color); 12 struct(Point/Nat); 13 decorator(@mut)
+        for (expected in 0..13) {
             assertTrue(expected in types, "缺失类型索引 $expected；实际: $types")
         }
     }
