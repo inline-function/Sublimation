@@ -1108,6 +1108,57 @@ class LspAnalysis {
         )
     }
 
+    /** codeAction：诊断驱动的快速修正（合并原有全角符号修正）；diags 为 null 时取当前诊断 */
+    fun codeActionsFor(uri: String, range: Range?, diags: List<Diagnostic>? = null): List<CodeAction> {
+        val acts = codeActions(uri).toMutableList()
+
+        val state = docs[uri] ?: return acts
+        val tokens = state.tokens ?: return acts
+        val ds = diags ?: diagnosticsFor(uri)
+        // 光标区间过滤：只处理与请求 range 相交的诊断
+        val inRange = if (range == null) ds else ds.filter { d ->
+            val before = d.range.end.line < range.start.line ||
+                (d.range.end.line == range.start.line && d.range.end.character <= range.start.character)
+            val after = d.range.start.line > range.end.line ||
+                (d.range.start.line == range.end.line && d.range.start.character >= range.end.character)
+            !(before || after)
+        }
+        val edits = mutableListOf<TextEdit>()
+        for (d in inRange) {
+            when (d.code) {
+                "E-NEED-ASYNC" -> fixNeedAsync(state, tokens, d)?.let { edits += it }
+                else -> {}
+            }
+        }
+        if (edits.isNotEmpty()) {
+            acts += CodeAction(
+                title = "给所在函数加 @async",
+                kind = "quickfix",
+                edit = WorkspaceEdit(changes = mapOf(uri to edits)),
+            )
+        }
+        return acts
+    }
+
+    /** E-NEED-ASYNC：挂起调用需 @async 上下文——在最近的 fun 关键字（含局部/匿名函数）前插入注解 */
+    private fun fixNeedAsync(state: DocState, tokens: List<Token>, diag: Diagnostic): TextEdit? {
+        val source = state.source
+        val lineStarts = state.lineStarts ?: return null
+        val diagOff = positionToOffset(source, diag.range.start, lineStarts) ?: return null
+        var best: Token? = null
+        var bestOff = -1
+        for (tok in tokens) {
+            if (tok.kind != Kind.FUN) continue
+            val ls = lineStarts.getOrNull(tok.line - 1) ?: continue
+            val off = ls + tok.col - 1
+            if (off <= diagOff && off > bestOff) { bestOff = off; best = tok }
+        }
+        val funTok = best ?: return null
+        val insertOff = lineStarts.getOrNull(funTok.line - 1)?.let { it + funTok.col - 1 } ?: return null
+        val pos = offsetToPosition(source, insertOff, lineStarts)
+        return TextEdit(Range(pos, pos), "@async ")
+    }
+
     // ───────── 成员上下文补全 + implementation 跳转 ─────────
 
     /** 提取类型 base 名（去掉泛型参数与 @mut/@atomic 等前缀） */

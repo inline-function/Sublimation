@@ -1028,4 +1028,25 @@ class LspAnalysisTest {
         assertNotNull(ifItem.insertText, "insertText 不应为 null")
         assertTrue(ifItem.insertText!!.startsWith("if ("), "if 骨架应以 if ( 开头，实际: " + ifItem.insertText)
     }
+
+    @Test fun `快速修正 E-NEED-ASYNC 给所在函数加 async 注解`() {
+        val src = "fun work(): Unit { t.join() }"
+        val a = opened(src)
+        val diag = Diagnostic(
+            range = diagPosToRange("1:24", src),
+            severity = DiagnosticSeverity.Error,
+            code = "E-NEED-ASYNC",
+            message = "t.join() 是挂起操作，需 @async 上下文",
+        )
+        val acts = a.codeActionsFor("file:///t.subl", null, listOf(diag))
+        val fix = acts.firstOrNull { it.title.contains("async") }
+        assertNotNull(fix, "应有 @async 快速修正")
+        val edits = fix!!.edit?.changes?.get("file:///t.subl")
+        assertNotNull(edits, "应携带编辑")
+        assertEquals(1, edits!!.size, "应只产生一处编辑")
+        assertEquals("@async ", edits[0].newText, "应在 fun 前插入 @async ")
+        val p = edits[0].range.start
+        assertEquals(0, p.line, "插入点应在第 1 行")
+        assertEquals(0, p.character, "插入点应在 fun 关键字处（行首）")
+    }
 }

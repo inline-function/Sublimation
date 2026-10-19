@@ -288,7 +288,15 @@ object LspServer {
             "textDocument/codeAction" -> {
                 val td = params["textDocument"] as? Map<*, *> ?: return emptyList<Map<String, Any?>>()
                 val textUri = td["uri"] as? String ?: return emptyList<Map<String, Any?>>()
-                analysis.codeActions(textUri).map { codeActionToMap(it) }
+                val range = (params["range"] as? Map<*, *>)?.let { r ->
+                    val s = r["start"] as? Map<*, *>
+                    val e = r["end"] as? Map<*, *>
+                    if (s != null && e != null) Range(
+                        Position((s["line"] as? Number)?.toInt() ?: 0, (s["character"] as? Number)?.toInt() ?: 0),
+                        Position((e["line"] as? Number)?.toInt() ?: 0, (e["character"] as? Number)?.toInt() ?: 0),
+                    ) else null
+                }
+                analysis.codeActionsFor(textUri, range).map { codeActionToMap(it) }
             }
 
             "textDocument/inlayHint" -> {
