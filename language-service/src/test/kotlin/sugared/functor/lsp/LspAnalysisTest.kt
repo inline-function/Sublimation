@@ -13,8 +13,13 @@ import kotlin.test.assertNull
  */
 class LspAnalysisTest {
 
+    // 工程模式与脚本模式共用：core 目录（内建容器/构造子等）。Gradle 测试 cwd 为模块目录，需回退到仓库根。
+    private val coreDir: java.io.File? = listOf(java.io.File("core"), java.io.File("../core"))
+        .firstOrNull { it.isDirectory }
+
     private fun opened(src: String): LspAnalysis {
         val a = LspAnalysis()
+        if (coreDir != null) a.loadPrelude(coreDir)
         a.openDocument("file:///t.subl", src)
         return a
     }
@@ -1048,5 +1053,25 @@ class LspAnalysisTest {
         val p = edits[0].range.start
         assertEquals(0, p.line, "插入点应在第 1 行")
         assertEquals(0, p.character, "插入点应在 fun 关键字处（行首）")
+    }
+
+    @Test fun `rename 声明编辑应指向函数名而非 fun 关键字`() {
+        val src = "fun double(x: Nat): Nat = x + 1"
+        val a = opened(src)
+        val edits = a.renameFor("file:///t.subl", Position(0, 6), "twice") ?: error("rename 返回 null")
+        val list = edits["file:///t.subl"] ?: error("缺 uri")
+        // 函数名 double 起于 (0,4)；fun 关键字起于 (0,0)——声明编辑必须覆盖函数名
+        val declEdit = list.firstOrNull { it.range.start == Position(0, 4) }
+        assertNotNull(declEdit, "声明编辑应起于函数名 (0,4)，实际: ${list.map { it.range.start }}")
+        assertEquals("twice", declEdit!!.newText)
+    }
+
+    @Test fun `工程模式也应识别 core 内建构造子 Ok`() {
+        // core/collection/result.subl 定义 Result 及构造子 Ok/Err；工程模式未挂 core 时此处报未知构造子
+        val src = "fun f(): Result<Nat, Str> = Ok(1)"
+        val a = opened(src)
+        val ds = a.diagnosticsFor("file:///t.subl")
+        val unbound = ds.firstOrNull { it.code == "E-UNBOUND-NAME" }
+        assertNull(unbound, "工程模式不该把 Ok/Result 报成未知符号: ${ds.map { it.code + ":" + it.message }}")
     }
 }

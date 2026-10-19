@@ -194,8 +194,9 @@ class LspAnalysis {
                     inferNotes = emptyList()
                 }
                 ast = userFinal
-                // 脚本 Checker 输入 = stdlib（core 目录 .subl）+ 用户条目；工程模式即用户文件本身
-                val checkedAst = if (isScript) FileAst(scriptStdlib() + userFinal.entries) else userFinal
+                // Checker 输入 = stdlib（core 目录 .subl）+ 用户条目：脚本与工程模式都要挂 core，
+                // 否则工程模式编辑期会把 Ok/List 等内建构造子报成「未知构造子」，补全/诊断/高亮皆受影响
+                val checkedAst = FileAst(scriptStdlib() + userFinal.entries)
                 val checker = Checker(checkedAst, scriptMode = isScript)
                 bag = checker.run()
                 syms = checker.syms

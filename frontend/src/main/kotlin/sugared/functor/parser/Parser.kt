@@ -255,9 +255,12 @@ private var ifIsCond: Boolean = false
     }
 
     private fun parseFun(anns: List<String>): FunDecl {
-        val sl = cur().line; val sc = cur().col   // 报错增强：函数声明位置（W-UNUSED/位置诊断用）
         at(Kind.FUN)
+        // 报错增强：函数声明位置（W-UNUSED/位置诊断用）——取函数名 token 而非 fun 关键字：
+        // rename/definition 靠 pos 定位声明，指向 fun 会误改 fun 关键字本身。
+        val nameTok = cur()
         val name = nameToken()
+        val sl = nameTok.line; val sc = nameTok.col
         val theory = if (peek(Kind.LBRACKET)) parseTheory() else emptyList()
         val params = if (peek(Kind.LPAREN)) parseParams() else emptyList()
         // v3.0：`fun f<score <= 100>`——约束形参表（IDENT 比较运算）与命题上下文 `<p>` 分派；
