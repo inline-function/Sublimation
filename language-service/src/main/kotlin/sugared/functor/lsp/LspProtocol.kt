@@ -57,6 +57,7 @@ data class CompletionItem(
     val sortText: String? = null,
     val filterText: String? = null,
     val textEdit: TextEdit? = null,      // 显式替换范围（如 \forall -> ∀ 整段替换）
+    val insertTextFormat: Int? = null,   // 1=PlainText（默认）2=Snippet：insertText 按 LSP snippet 解析（$0 最终光标、${n:占位}）
 )
 
 data class CompletionList(

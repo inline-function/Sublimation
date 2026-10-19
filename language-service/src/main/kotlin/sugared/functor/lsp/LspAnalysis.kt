@@ -1615,7 +1615,7 @@ class LspAnalysis {
                     label = s.name,
                     kind = kindOf(s.variety),
                     detail = s.detail,
-                    sortText = (if (symbolFirst) "0" else "1") + "_" + s.name,
+                    sortText = (if (s.name == prefix) "0" else "1") + (if (symbolFirst) "0" else "1") + "_" + s.name,
                 )
             }
         }
@@ -1623,7 +1623,8 @@ class LspAnalysis {
         // prelude 补全（内建类型/函数/stdlib 符号）
         for (item in preludeItems) {
             if (prefix.isEmpty() || item.label.startsWith(prefix, ignoreCase = true)) {
-                items += item
+                val mrank = if (item.label == prefix) "0" else "1"
+                items += item.copy(sortText = mrank + "2_" + item.label)
             }
         }
 
@@ -1773,12 +1774,14 @@ class LspAnalysis {
         return KEYWORDS
             .filter { prefix.isEmpty() || it.first.startsWith(prefix, ignoreCase = true) }
             .map { (kw, snippet) ->
+                val mrank = if (kw == prefix) "0" else "1"   // 精确匹配排在所有前缀匹配之前
                 CompletionItem(
                     label = kw,
                     kind = CompletionItemKind.Keyword,
                     detail = "keyword",
                     insertText = snippet,
-                    sortText = prio + "_" + kw,
+                    insertTextFormat = 2,   // Snippet：${n} 占位、$0 最终光标——长按可展开为完整语句骨架
+                    sortText = mrank + prio + "_" + kw,
                 )
             }
     }

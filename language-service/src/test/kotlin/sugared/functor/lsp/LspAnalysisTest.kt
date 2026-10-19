@@ -1007,4 +1007,25 @@ class LspAnalysisTest {
         assertTrue(idx == null || funKw!!.sortText!! < idx!!.sortText!!,
             "空行时声明类关键字应排在符号之前: fun=${funKw?.sortText} idx=${idx?.sortText}")
     }
+
+    @Test fun `补全排序 精确匹配排在所有前缀匹配之前`() {
+        val src = "fun main() {\n    var idx = 1\n    var idxValue = 2\n    idx\n}"
+        val a = opened(src)
+        val list = a.completionFor("file:///t.subl", Position(3, 7))
+        val idx = list.items.firstOrNull { it.label == "idx" }
+        val idxValue = list.items.firstOrNull { it.label == "idxValue" }
+        assertNotNull(idx, "应有精确匹配 idx")
+        assertNotNull(idxValue, "应有前缀匹配 idxValue")
+        assertTrue(idx!!.sortText!! < idxValue!!.sortText!!, "精确匹配 idx 应排在前缀匹配 idxValue 之前: ${idx.sortText} vs ${idxValue.sortText}")
+    }
+
+    @Test fun `关键字补全走 Snippet 格式可展开语句骨架`() {
+        val a = opened("fun main() { i")
+        val list = a.completionFor("file:///t.subl", Position(0, 14))
+        val ifItem = list.items.firstOrNull { it.label == "if" }
+        assertNotNull(ifItem, "应有 if 关键字补全")
+        assertEquals(2, ifItem!!.insertTextFormat, "insertTextFormat 应为 2(Snippet)，实际: " + ifItem.insertTextFormat)
+        assertNotNull(ifItem.insertText, "insertText 不应为 null")
+        assertTrue(ifItem.insertText!!.startsWith("if ("), "if 骨架应以 if ( 开头，实际: " + ifItem.insertText)
+    }
 }

@@ -488,6 +488,7 @@ object LspServer {
         if (item.sortText != null) m["sortText"] = item.sortText
         if (item.filterText != null) m["filterText"] = item.filterText
         if (item.textEdit != null) m["textEdit"] = editToMap(item.textEdit)
+        if (item.insertTextFormat != null) m["insertTextFormat"] = item.insertTextFormat
         return m
     }
 
