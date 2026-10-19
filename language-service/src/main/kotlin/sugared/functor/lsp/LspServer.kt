@@ -484,6 +484,7 @@ object LspServer {
         )
         if (d.code != null) m["code"] = d.code
         if (d.source != null) m["source"] = d.source
+        if (d.documentation != null) m["documentation"] = d.documentation
         return m
     }
 

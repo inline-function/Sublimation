@@ -1066,6 +1066,50 @@ class LspAnalysisTest {
         assertEquals("twice", declEdit!!.newText)
     }
 
+    @Test fun `诊断携带 code 对应的中文说明`() {
+        val src = "fun f(a: Nat, b: Nat): Nat = a + b\nfun main() { f(1) }"
+        val a = opened(src)
+        val ds = a.diagnosticsFor("file:///t.subl")
+        // E-ARITY 的诊断应携带表内中文说明
+        val arity = ds.firstOrNull { it.code == "E-ARITY" } ?: error("缺 E-ARITY 诊断")
+        assertNotNull(arity.documentation, "documentation 不应为 null")
+        assertTrue(arity.documentation!!.contains("实参"), "说明应包含实参字样: ${arity.documentation}")
+    }
+
+    @Test fun `快速修正 E-NAMED-ARG 方法糖改自由函数调用`() {
+        // 方法调用用了命名实参（E-NAMED-ARG）：应给出「改成自由函数调用」编辑，把 接收者.f(x: v) 改写为 f(接收者, x: v)
+        val src = "fun add(x: Nat, y: Nat): Nat = x\nfun main() { add(1).add(x: 2) }"
+        val a = opened(src)
+        val ds = a.diagnosticsFor("file:///t.subl")
+        val named = ds.firstOrNull { it.code == "E-NAMED-ARG" }
+        if (named != null) {
+            val acts = a.codeActionsFor("file:///t.subl", null, listOf(named))
+            val fix = acts.firstOrNull { it.title.contains("自由函数") }
+            assertNotNull(fix, "应有改写方法糖的快速修正: ${acts.map { it.title }}")
+            val edits = fix!!.edit?.changes?.get("file:///t.subl")
+            assertNotNull(edits)
+            val text = edits!![0].newText
+            assertTrue(text.contains("add("), "编辑应把方法调用改写为自由函数: $text")
+            assertTrue(text.contains("add(1)"), "编辑应保留接收者: $text")
+        } else {
+            // 兜底：直接注入诊断验证改写逻辑（pos 指向第二个 add 方法名）
+            val src2 = "fun add(x: Nat, y: Nat): Nat = x\nfun main() { add(1).add(2) }"
+            val a2 = opened(src2)
+            val diag = Diagnostic(
+                range = diagPosToRange("2:22", src2),   // pos 列为 1-based；add 方法名在列 23(1-based)/22(0-based)
+                severity = DiagnosticSeverity.Error,
+                code = "E-NAMED-ARG",
+                message = "方法 `.add(x: 1)` 不支持命名参数",
+            )
+            val acts = a2.codeActionsFor("file:///t.subl", null, listOf(diag))
+            val fix = acts.firstOrNull { it.title.contains("自由函数") }
+            assertNotNull(fix, "注入诊断也应给出改写修正: ${acts.map { it.title }}")
+            val edits = fix!!.edit?.changes?.get("file:///t.subl")
+            val text = edits!![0].newText
+            assertTrue(text.startsWith("add(add(1), "), "应把 接收者.f( 改写为 f(接收者, : $text")
+        }
+    }
+
     @Test fun `工程模式也应识别 core 内建构造子 Ok`() {
         // core/collection/result.subl 定义 Result 及构造子 Ok/Err；工程模式未挂 core 时此处报未知构造子
         val src = "fun f(): Result<Nat, Str> = Ok(1)"

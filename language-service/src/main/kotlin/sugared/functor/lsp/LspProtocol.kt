@@ -36,6 +36,7 @@ data class Diagnostic(
     val code: String? = null,
     val source: String? = "sublimation",
     val message: String,
+    val documentation: String? = null,   // 中文说明：code 对应的原因与修法，IDE 用于悬停提示
 )
 
 // ─────────── 补全 ───────────

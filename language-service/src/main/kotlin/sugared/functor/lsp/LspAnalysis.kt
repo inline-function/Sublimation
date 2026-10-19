@@ -250,6 +250,7 @@ class LspAnalysis {
                 code = d.code,
                 source = "sublimation",
                 message = d.message,
+                documentation = DIAG_DOCS[d.code],
             )
         }
     }
@@ -1124,21 +1125,73 @@ class LspAnalysis {
                 (d.range.start.line == range.end.line && d.range.start.character >= range.end.character)
             !(before || after)
         }
-        val edits = mutableListOf<TextEdit>()
+        // 诊断驱动：每个 code 收集自己的编辑，按 code 分组出独立的 codeAction（一键一操作，互不混杂）
+        val byCode = mutableMapOf<Pair<String, String>, MutableList<TextEdit>>()
         for (d in inRange) {
             when (d.code) {
-                "E-NEED-ASYNC" -> fixNeedAsync(state, tokens, d)?.let { edits += it }
+                "E-NEED-ASYNC" -> fixNeedAsync(state, tokens, d)?.let {
+                    byCode.getOrPut("E-NEED-ASYNC" to "给所在函数加 @async") { mutableListOf() } += it
+                }
+                "E-NAMED-ARG" -> fixMethodSugarNamedArg(state, tokens, d)?.let {
+                    byCode.getOrPut("E-NAMED-ARG" to "改成自由函数调用 f(接收者, …)") { mutableListOf() } += it
+                }
                 else -> {}
             }
         }
-        if (edits.isNotEmpty()) {
+        for (entry in byCode) {
+            val title = entry.key.second
+            val list = entry.value
             acts += CodeAction(
-                title = "给所在函数加 @async",
+                title = title,
                 kind = "quickfix",
-                edit = WorkspaceEdit(changes = mapOf(uri to edits)),
+                edit = WorkspaceEdit(changes = mapOf(uri to list)),
             )
         }
         return acts
+    }
+
+    /** E-NAMED-ARG：方法调用不支持命名实参——`.f(x: 1)` 改写成自由函数 `f(接收者, x: 1)`
+     *  token 级定位：诊断位置回退到同 LPAREN 序号相同的调用起点，向前找接收者表达式与 `.`，
+     *  再把 方法名( 移到接收者前并补逗号。诊断位置通常落在方法名上。*/
+    private fun fixMethodSugarNamedArg(state: DocState, tokens: List<Token>, diag: Diagnostic): TextEdit? {
+        val source = state.source
+        val lineStarts = state.lineStarts ?: return null
+        val diagOff = positionToOffset(source, diag.range.start, lineStarts) ?: return null
+        // 诊断位置所在的方法名 token（IDENT，前面是 DOT）：偏移落在 token 跨度内即命中
+        var nameIdx = -1
+        for (i in tokens.indices) {
+            val ls = lineStarts.getOrNull(tokens[i].line - 1) ?: continue
+            val start = ls + tokens[i].col - 1
+            val end = start + tokens[i].text.length
+            if (diagOff in start until end && tokens[i].kind == Kind.IDENT &&
+                i + 1 < tokens.size && tokens[i + 1].kind == Kind.LPAREN) { nameIdx = i; break }
+        }
+        if (nameIdx < 1 || tokens[nameIdx - 1].kind != Kind.DOT) return null
+        // 接收者起点：从 DOT 向前跳过简单主表达式（标识符链 / 括号组 / 字面量）
+        var i = nameIdx - 2
+        var depth = 0
+        while (i >= 0) {
+            val k = tokens[i].kind
+            when {
+                k == Kind.RPAREN || k == Kind.RBRACKET -> depth++
+                k == Kind.LPAREN || k == Kind.LBRACKET -> if (depth > 0) depth-- else break
+                depth == 0 && (k == Kind.DOT || k == Kind.LPAREN || k == Kind.COMMA ||
+                    k == Kind.SEMI || k == Kind.LBRACE || k == Kind.RBRACE) -> break
+                depth == 0 && k != Kind.IDENT && k != Kind.INT && k != Kind.STR &&
+                    k != Kind.FLOAT -> break
+            }
+            i--
+        }
+        val recvStart = i + 1
+        if (recvStart >= nameIdx - 1) return null
+        val recvOff = lineStarts.getOrNull(tokens[recvStart].line - 1)!!.let { it + tokens[recvStart].col - 1 }
+        val nameOff = lineStarts.getOrNull(tokens[nameIdx].line - 1)!!.let { it + tokens[nameIdx].col - 1 }
+        val recvEnd = lineStarts.getOrNull(tokens[nameIdx - 1].line - 1)!!.let { it + tokens[nameIdx - 1].col - 1 }
+        val nameEnd = lineStarts.getOrNull(tokens[nameIdx].line - 1)!!.let { it + tokens[nameIdx].col - 1 + tokens[nameIdx].text.length }
+        val recvText = source.substring(recvOff, recvEnd).trimEnd()
+        val p0 = offsetToPosition(source, recvOff, lineStarts)
+        val p1 = offsetToPosition(source, nameEnd, lineStarts)
+        return TextEdit(Range(p0, p1), tokens[nameIdx].text + "(" + recvText + ", ")
     }
 
     /** E-NEED-ASYNC：挂起调用需 @async 上下文——在最近的 fun 关键字（含局部/匿名函数）前插入注解 */
@@ -1859,6 +1912,96 @@ class LspAnalysis {
         )
         // ───────── prelude 静态数据 ─────────
 
+        /** 诊断 code → 中文说明（供 IDE 悬停提示展示原因与修法） */
+        val DIAG_DOCS: Map<String, String> = mapOf(
+            "E-ARITY" to "实参个数不对：按函数声明的形参个数增删实参，命名实参可指定位次",
+            "E-TYPE-MISMATCH" to "类型不一致：检查实参、字段、返回值与声明的类型是否匹配",
+            "E-UNBOUND-NAME" to "名字未定义：检查拼写与大小写，或补上对应的函数/结构体/类型声明",
+            "E-RETURN-TYPE" to "return 的值与函数声明的返回类型不一致：修改 return 表达式或返回类型",
+            "E-MISSING-RETURN" to "函数声明了返回类型但缺少 return：补上 return，或改返回类型为 Null",
+            "E-RETURN-OUTSIDE" to "return 出现在值位（实参、尾表达式、var 初值等）：把 return 移到语句位",
+            "E-DUP-DECL" to "重复声明：同名类型/函数/构造子已存在，改名或删除其一",
+            "E-DUP-FIELD" to "结构体字段重复：同名字段只能出现一次，改名其一",
+            "E-FIELD-MISSING" to "构造缺无默认值的字段：补上缺失字段，或给字段加默认值",
+            "E-NO-METHOD" to "类型上没有该方法：检查方法名拼写，或改用自由函数形式",
+            "E-NO-INSTANCE" to "只有 class 声明而没有 impl 实例：补 impl 块提供该方法的实现",
+            "E-IMPL-INCOMPLETE" to "impl 缺类声明的方法：按类声明补齐方法实现",
+            "E-IMPL-EXTRA" to "impl 的方法不属于该类：删除多余方法，或给方法加 @new 表示新增",
+            "E-IMPL-MISMATCH" to "impl 中方法签名与类声明不一致：对齐方法名、形参与返回类型",
+            "E-NAMED-ARG" to "方法调用不支持命名实参：命名实参只用于自由函数，方法调用请按位置传参",
+            "E-NEED-ASYNC" to "调用的是挂起操作，所在函数需标注 @async：加注解或移出该调用",
+            "E-NO-SELF" to "方法调用缺接收者：写成 接收者.方法(…)",
+            "E-NOT-MUT" to "要在 @mut 视图上修改：给变量/字段加 @mut，或改用可变视图",
+            "E-IMMUT-ASSIGN" to "给不可变值赋值：源变量需声明为 @mut 才能修改",
+            "E-ASSIGN-TARGET" to "赋值目标不是结构体：检查左侧是否为结构体类型的可变表达式",
+            "E-TUPLE-ARITY" to "解构分量数与元组元素数不一致：对齐两边个数",
+            "E-TUPLE-DESTRUCT" to "解构目标不是元组：初值须为元组才能用 (a, b) 解构",
+            "E-DESTRUCT" to "参数类型不可解构：仅元组或结构体支持解构",
+            "E-KIND-MISMATCH" to "高阶类型形参应用不合法：kind 形参的实参必须是独立类型",
+            "E-NON-PATTERN-HKT" to "is 智能解构的条件形式不合法：只能用 构造模式 形式",
+            "E-TYPE-MISSING" to "类型参数缺失：显式写出类型参数，如 Channel[Nat]() ",
+            "E-ANY-CALL" to "调用推导不出具体类型：手写类型标注或传入具体类型实参",
+            "E-ANY-STRUCT" to "结构体含 Any 成员须用 unchecked 创建：更好的做法是给成员确定类型",
+            "E-DEFAULT-PARAM" to "普通函数形参不允许默认值：默认值仅用于结构体字段",
+            "E-FUN-NO-BODY" to "函数缺少函数体：补实现；内建函数请标注 @root",
+            "E-MAIN-PARAMS" to "入口函数 main 不能有形参或类型参数：写成 fun main() { … }",
+            "E-PARAM-REF" to "Sugar 参数序号越界：检查 \$序号 是否超出函数形参个数",
+            "E-PARAM-REF-IN-BODY" to "函数体内不能用 \$序号 引用参数：请直接使用参数名",
+            "E-CHANNEL-CLOSED" to "通道已 close 不能再 send：把 send 移到 close 之前",
+            "E-NOT-STARTED" to "t.join() 前需要 t.start()：先启动任务再 join",
+            "E-FUTURE-FUN" to "方法过于复杂没有可值的完美函数类型：简化方法签名或改用自由函数",
+            "E-IMPURE-CALL" to "在纯上下文调用了非纯调用：给函数标 @impure，或改用 pure<过程> 声明纯度",
+            "E-IMPURE-REQUIRED" to "参数是 @mut 可变类型，函数必须标注 @impure",
+            "E-PRE-UNPROVEN" to "调用前必须先证明函数的上文（前置命题）：补上证明或用 by 策略",
+            "E-POST-UNPROVEN" to "函数声明了返回后的保证（下文）但函数体没证出：检查 return 是否满足",
+            "E-CTX-UNPROVEN" to "调用函数值前须证明上下文命题：补上上下文证明",
+            "E-CONSTRAINT-VIOLATED" to "调用违反约束命题：检查实参是否满足调用约束",
+            "E-PREMISE-UNPROVEN" to "前提命题未被证明：先证出前提再使用",
+            "E-QUANT-UNPROVEN" to "∃ 引入失败：给出的实例不满足想证的存在性质",
+            "E-CANNOT-PROVE" to "结论证不出：检查命题是否成立，或用 by 策略辅助",
+            "E-STRATEGY-FAILED" to "指定的策略无法证明目标：换策略或补充前提",
+            "E-DEEP-SATURATION" to "证明义务太复杂，自动证明器走满深度：把大结论拆成几步引理",
+            "E-THEOREM-SEARCH-DEPTH" to "定理搜索超过深度限制：把目标分解为更小的子命题",
+            "E-BY-UNBOUND" to "by 策略引用的域或字段不存在：检查 self 与字段名",
+            "E-PROP-AMBIGUOUS" to "命题参数有多个 0 元候选：用 <...> 显式传入命题消除歧义",
+            "E-PROP-UNBOUND" to "命题参数作用域无 0 元命题供给：用 <...> 显式传入",
+            "E-IF-CONCLUSION-MISMATCH" to "if 两个分支的结论不一致：让两分支推出同一结论",
+            "E-NON-SEALED-MATCH" to "when 匹配的类型不是密封的：检查枚举/类型是否覆盖全部分支",
+            "E-NON-STRUCTURAL-REC" to "结构归纳使用不合法：按结构归纳的形态重写",
+            "E-STRUCT-MUT-PROP" to "结构体的普惠性质引用了 @mut 字段：性质中不能依赖可变字段",
+            "E-STRUCT-PROP-UNPROVEN" to "构造前须证明结构体伴生命题：补上伴命命题的证明",
+            "E-CIRCULAR-MOUNT" to "挂载链成环：检查 @mount 的模块依赖，去掉环",
+            "E-PARSE" to "语法不合法：按提示的代码形态重写",
+            "E-PARSE-SETTINGS" to "模块 settings 文件语法错：按设置语法修正",
+            "E-ROOT-NOT-ALLOWED" to "@root 只允许白名单内的名字：去掉注解或改名",
+            "E-AMBIGUOUS-INSTANCE" to "类型类实例有歧义：存在多个候选实例，显式指定一个",
+            "E-NEED-CLASSIC" to "if[p] 需要挂载 core.classic：给文件内任一声明加 @classic 注解",
+            "D-AUTO-AWAIT" to "该调用是异步的，已自动 await：无需也不能手写 await 关键字",
+            "D-AXIOM-POST" to "函数标了 @axiom：下文签名即公理，编译器信任而不做自动证明",
+            "D-BTS" to "因为-所以规则证出该结论:命题已成立",
+            "D-BY" to "by 策略注入了辅助命题:这些命题可用作证明依据",
+            "D-DEEP-COPY" to "绑定涉及 @mut 类型,发生深拷贝:该变量是独立副本,改它不影响源",
+            "D-EXIST-INTRO" to "存在量词引入成立:给出的实例满足该存在性质",
+            "D-LOCAL-FUN" to "局部函数已登记为局部定理(全称引入)",
+            "D-METHOD-SUGAR" to "方法调用展开为等价的自由函数调用(方法糖)",
+            "D-NAT-PROP" to "Nat 变量自动注入自然命题:该变量恒大于等于 0",
+            "D-STRATEGY" to "指定策略证出了目标命题",
+            "D-TYPE-INFERRED" to "var 的类型由编译器推导得出:可显式标注以固定类型",
+            "D-WHEN-PROP" to "分类讨论从各分支得出共同结论",
+            "H-AMBIGUOUS-CTOR" to "构造子在多个枚举中声明,裸名引用有歧义:用 枚举名.构造子 限定",
+            "H-ARITH-PRECEDENCE" to "算术优先级可能不符合直觉:建议加括号表明意图",
+            "H-EMPTY-DECL" to "结构体无字段:可省略参数括号写成 struct 名",
+            "H-FIELD-SHADOW" to "参数名与字段同名,参数遮蔽字段:改名避免误用",
+            "H-PARAM-REF" to "\$序号 可直接用参数名替代:提升可读性",
+            "H-ROOT-BUILTIN" to "@root 函数由编译器内建实现:调用点直接翻译为原生调用",
+            "W-CONSTRAINT-UNPROVEN" to "调用的约束命题编译器没能证出:补证明或检查实参",
+            "W-DIV-ZERO" to "除数可能是 0:检查除数来源,避免运行时错误",
+            "W-NON-EXHAUSTIVE" to "when 分支未覆盖所有可能:补全分支或处理默认情况",
+            "W-PROP-UNBOUND" to "分类讨论的析取前提不在上下文中:检查前提是否已证",
+            "W-UNREACHABLE" to "return/Nothing 之后的尾表达式永远不会执行:删除死代码",
+            "W-UNUSED" to "声明后从未使用:删除或在名字前加 _ 前缀抑制",
+            "W-WHEN-NO-COMMON" to "分类讨论各分支没有共同结论:让分支推出同一结论",
+        )
         /** typeDefinition 目标成员类型（类型声明 varieties） */
         val TYPE_VARIETIES: Set<String> = setOf("struct", "enum", "class", "type")
 
