@@ -190,6 +190,8 @@ class Evaluator(
             is CallExpr -> evalCall(expr, frame)
             is SymbolCallExpr -> evalSymCall(expr, frame)
             is BlockExpr -> evalBlock(expr, frame)
+            // 线性作用域（第十二卷 §10.1）：版本化是编译期机制，运行时与普通块完全相同
+            is LinearBlockExpr -> evalBlock(expr.block, frame)
             is IfExpr -> evalIf(expr, frame)
             is WhenExpr -> evalWhen(expr, frame)
             is LambdaExpr -> evalLambda(expr, frame)

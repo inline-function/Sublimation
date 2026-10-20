@@ -6,6 +6,7 @@ enum class Kind {
     FUN, CLASS, STRUCT, ENUM, VAR, IMPL, FOR, IF, ELSE, UNCHECKED, WHEN, IS, BY, TYPE, RET, IN, DEF,   // v3.0：in 区间成员判断；根文档：def 自定义命题
     // 标点
     LPAREN, RPAREN, LBRACKET, RBRACKET, LBRACE, RBRACE,
+    LIN_LBRACE,   // 线性作用域 `%{`（第十二卷 §3.2 L-LINBLOCK：紧贴无空白）
     COMMA, SEMI, COLON, COLON2, DOT, AT, BACKSLASH, DOLLAR, HASH,   // COLON2 = `::`（v2.1 枚举成员访问 E::A）；根文档：`#` 类型量化
     // 运算/比较/赋值
     PLUS, MINUS, STAR, SLASH, PERCENT, POW, ASSIGN, EQ, NEQ, LE, GE, RANGE,   // v3.0：`..` 区间；根文档：`^` 幂
@@ -103,6 +104,9 @@ class Lexer(private val src: String, private val fileName: String) {
         if (!isBecauseSym && isSymbolStart(c)) return readSymbol()
 
         // 多字符优先
+        // 线性作用域（第十二卷 §3.2 规则 L-LINBLOCK）：`%` 紧贴 `{`（二者之间无空白）→ 线性块起始；
+        // 带空白的 `% {` 保持取余运算符（L-MOD）。peekAt 相邻即隐含无空白。
+        if (c == '%' && peekAt(i + 1) == '{') { adv(2); return Kind.LIN_LBRACE to "%{" }
         if (c == '<' && peekAt(i + 1) == '-' && peekAt(i + 2) == '>') { adv(3); return Kind.IFF to "<->" }
         if (c == '=' && peekAt(i + 1) == '>') { adv(2); return Kind.DARROW to "=>" }
         if (c == '=' && peekAt(i + 1) == '=') { adv(2); return Kind.EQ to "==" }

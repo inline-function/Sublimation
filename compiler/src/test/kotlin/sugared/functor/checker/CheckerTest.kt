@@ -24,6 +24,7 @@ class CheckerTest {
         assertTrue(ok("fun test1(): Null <p> { unchecked.axiom[p] }\nfun test2()<p>: Null {}\nfun main() { test1()\ntest2() }"))
     }
 
+
     @Test
     fun `未证明下文报 E-POST-UNPROVEN`() {
         assertTrue(errs("fun bad(): Null <p> {}").contains("E-POST-UNPROVEN"))

@@ -761,7 +761,11 @@ class JsCodeGen {
         }
         is TupleExpr -> "[" + e.items.joinToString(", ") { expr(it) } + "]"   // 元组→JS 数组（决策 61）
         is StructCtorExpr -> structCtorJs(e)   // O3（决策 69）：命名字段构造→位置实参工厂调用
+        is LinearBlockExpr -> blockIIFE(e.block)
         is BlockExpr -> blockIIFE(e)
+
+        // 线性作用域（第十二卷 §10.1 LV-ERASE-BLOCK）：`%` 是纯编译期分析标记，生成代码与普通块逐字节相同
+        is LinearBlockExpr -> expr(e.block)
         is IfExpr -> ifExpr(e)
         is WhenExpr -> whenExpr(e)
         is QuantExpr -> expr(e.body)    // 量词命题擦除

@@ -618,7 +618,24 @@ private var ifIsCond: Boolean = false
         return BlockExpr(stmts)
     }
 
+    /** 线性作用域（第十二卷 §3.1 产生式 LinearBlock → '%' BlockExpr）。
+     *  词法已把 `%{` 归并为 LIN_LBRACE（§3.2 规则 L-LINBLOCK：紧贴无空白）；
+     *  域体与普通块同文法，`%` 标记是纯编译期分析标记（§10.1 LV-ERASE-BLOCK：擦除后产物与普通块逐字节相同）。 */
+    private fun parseLinearBlock(): LinearBlockExpr {
+        val t = at(Kind.LIN_LBRACE)
+        val stmts = ArrayList<Stmt>()
+        while (!peek(Kind.RBRACE)) {
+            skipSemis()
+            if (peek(Kind.RBRACE)) break
+            stmts += parseStmt()
+        }
+        at(Kind.RBRACE)
+        return LinearBlockExpr(BlockExpr(stmts), "${t.line}:${t.col}")
+    }
+
     private fun parseStmt(): Stmt {
+        // 线性作用域（第十二卷 §3.1）：语句位的 `%{ … }` 是 ExprStmt(LinearBlock)
+        if (peek(Kind.LIN_LBRACE)) return ExprStmt(parseLinearBlock())
         // v3.0 特性 7：`∃ x = t . P`（引入）与 `∃ x . P { }`（消去）——EXISTS 后跟名字再消歧
         if (peek(Kind.EXISTS)) return parseExistsStmt()
         // v3.0 特性 7：块内局部函数定义（∀ 引入）
@@ -936,6 +953,7 @@ private var ifIsCond: Boolean = false
 
     private fun parseImpl(): ImplDecl {
         at(Kind.IMPL)
+        val implTok = tokens[pos - 1]   // impl 关键字 token（诊断/跳转定位锚点）
         val t0 = parseType()
         // impl 无 for（`impl T { … }`）= 单纯方法添加（用户拍板：承担重载职责）：trait 置 null，成员在 parseFile 展开为自由函数
         val trait: Type?
@@ -978,7 +996,7 @@ private var ifIsCond: Boolean = false
         // 供成员签名引用（E 在 Result[B, E] 等处解析）
         val finalMembers = if (shorthandVars.isEmpty()) members
             else members.map { it.copy(theory = it.theory + shorthandVars.map { TypeParam(it, null) }) }
-        return ImplDecl(trait, self, finalMembers, delegate)
+        return ImplDecl(trait, self, finalMembers, delegate, "${implTok.line}:${implTok.col}")
     }
 
     /** impl 简写 self[…] 里用户显式命名的类型变量：零实参大写名（`Result[_, E]` 的 E、`Map[K, _]` 的 K）。
@@ -1325,6 +1343,7 @@ private var ifIsCond: Boolean = false
                     TupleExpr(items, "${t.line}:${t.col}")
                 } else { at(Kind.RPAREN); first }
             }
+            t.kind == Kind.LIN_LBRACE -> parseLinearBlock()
             t.kind == Kind.LBRACE && (braceIsLambda(pos) || braceHasImplicitBody(pos)) -> parseBraceLambda()
             t.kind == Kind.VAR -> parseVarExpr(emptyList())
             t.kind == Kind.AT -> { val a = parseAnnotations(); if (peek(Kind.VAR)) parseVarExpr(a) else throw ParseFailure(fileName, cur(), "var") }

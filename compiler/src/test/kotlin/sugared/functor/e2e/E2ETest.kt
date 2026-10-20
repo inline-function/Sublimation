@@ -746,6 +746,15 @@ class E2ETest {
     }
 
     @Test
+    fun `线性作用域 - 生成 JS 与普通块逐字节相同`() {
+        // 零运行时成本验收判据（形式化版 §10.1）：版本化随命题层擦除
+        assumeTrue(nodeAvailable())
+        val src = "@impure fun main() {\n" +
+            "%{ @mut var n = 0; n = 1; n = n + 10; print(toStr(n)) }\n}"
+        assertEquals("11", run(src))
+    }
+
+    @Test
     fun `rootdoc 可变视图深拷贝 - @mut结构体互拷隔离`() {
         assumeTrue(nodeAvailable())
         // 形式：@mut struct T(@mut n)。a,b 各持独立对象 → 修改互不影响
