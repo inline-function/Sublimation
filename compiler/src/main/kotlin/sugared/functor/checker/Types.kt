@@ -361,8 +361,8 @@ class Symbols {
     val ctors = LinkedHashMap<String, CtorInfo>()
     val classes = LinkedHashMap<String, ClassDecl>()
     val funs = LinkedHashMap<String, FunDecl>()
-    /** 定理函数：无副作用（无 @impure/@mut 参数）且返回 Null 的函数（名 → 声明），参与 `∴` 的定理搜索。
-     *  无 @theorem 注解——判据即登记；有体定理照常生成运行时代码（无法用 unchecked 逃过纯度） */
+    /** 定理函数：`@theorem` 显式标注的函数（名 → 声明），参与 `∴` 的定理搜索。
+     *  判据见 `Diffusion.isTheoremFun`：必须显式标注 @theorem（规范第四卷 §7.2）；有体定理照常生成运行时代码 */
     val theorems = LinkedHashMap<String, FunDecl>()
     /** 根文档：自定义命题 `def p<a,b> [↔ <等价式>]`（名 → 声明），求解时按名展开 */
     val propDefs = LinkedHashMap<String, PropDefDecl>()

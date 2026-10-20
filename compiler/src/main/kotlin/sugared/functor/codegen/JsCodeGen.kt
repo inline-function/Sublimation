@@ -1577,8 +1577,15 @@ class JsCodeGen {
     /** 名字 → 合法 JS 标识符（保留字加 $ 前缀；符号名转 op_xxxx）。与 checker 共用同一实现。 */
     private fun mangle(n: String): String = jsMangle(n)
 
-    private fun q(s: String): String = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"")
-        .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t") + "\""
+    /** 字符串字面量转 JS：U+0000–U+001F 控制字符与 U+2028/2029（JS 行终止符）一律 \uXXXX 转义（审查报告 §2.10）。 */
+    private fun q(s: String): String {
+        val esc = s.replace("\\", "\\\\").replace("\"", "\\\"")
+            .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+            .replace(Regex("[\\u0000-\\u001f\\u2028\\u2029]")) { m ->
+                "\\u" + m.value[0].code.toString(16).padStart(4, '0')
+            }
+        return "\"" + esc + "\""
+    }
 
     private fun line(s: String) { sb.append("  ".repeat(indent)).append(s).append("\n") }
     private fun blank() { sb.append("\n") }

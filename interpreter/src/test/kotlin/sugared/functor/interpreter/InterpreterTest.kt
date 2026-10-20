@@ -29,6 +29,38 @@ class InterpreterTest {
         """.trimIndent()) }
         assertEquals(listOf<Any?>(7L, 9L, 2.5), out)
     }
+    // 审查报告 §2.4：类型级 @mut 视图（var c: @mut Cell）任一侧 → 绑定即深拷贝：c 改 d 不见。
+    // 旧 M5 偏差：脚本侧只看 @ref，本例在脚本模式曾是别名共享（与编译模式行为分裂）
+    @Test
+    fun testMutDeepCopyOnBind() {
+        val interp = Interpreter()
+        interp.injectStruct("Cell", "n" to ScriptType.Nat, mutableFields = listOf("n"))
+        val out = mutableListOf<Any?>()
+        interp.register("capture", retType = ScriptType.Null) { args -> out.add(args.getOrNull(0)); null }
+        interp.run("""
+            var c: @mut Cell = Cell(n = 0)
+            var d: @mut Cell = c
+            c.n = 2
+            capture(d.n)
+        """.trimIndent())
+        assertEquals(listOf<Any?>(0L), out)
+    }
+
+    // 双 @ref → 别名共享（§6.6：拷贝规则的唯一例外）：字段级变异透过别名可见
+    @Test
+    fun testRefAliasOnBind() {
+        val interp = Interpreter()
+        interp.injectStruct("Cell", "n" to ScriptType.Nat, mutableFields = listOf("n"))
+        val out = mutableListOf<Any?>()
+        interp.register("capture", retType = ScriptType.Null) { args -> out.add(args.getOrNull(0)); null }
+        interp.run("""
+            @ref var a: @mut Cell = Cell(n = 0)
+            @ref var b: @mut Cell = a
+            b.n = 1
+            capture(a.n)
+        """.trimIndent())
+        assertEquals(listOf<Any?>(1L), out)
+    }
 
     @Test
     fun testFunctionCallAndRecursion() {

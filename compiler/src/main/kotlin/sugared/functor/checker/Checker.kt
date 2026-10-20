@@ -583,7 +583,7 @@ class Checker(
                 // root doc《副作用与可变性控制》@ref：登记引用别名变量
                 if ("ref" in s.annotations) f.declareRef(s.name)
                 // 可变视图绑定深拷贝留痕（root doc 85-144）：@mut T 任一侧或 @ref 可变变量绑定 → 拷贝；双侧 @ref 别名
-                if (s.value is NameRef && binderNeedsCopy(t, t0, "ref" in s.annotations, f.isRef((s.value as NameRef).name))) {
+                if (s.value is NameRef && binderNeedsCopy(t, t0, "ref" in s.annotations, f.isRef((s.value as NameRef).name), mut, f.isMut((s.value as NameRef).name))) {
                     deepCopyHits[s] = true
                     d.supplement("D-DEEP-COPY", s.pos, "绑定涉及 @mut 类型，发生深拷贝：`${s.name}` 是独立副本，改它不影响源") }
                 // 指导§42：var n = 0 注入 n = 0 与 n : T；
@@ -622,7 +622,7 @@ class Checker(
                 if (lhs != null && s.value is NameRef) {
                     val lt = f.lookupVar(lhs) ?: return syntheticT("赋值")
                     // 可变视图赋值深拷贝（root doc 85-144）：b = a 涉及 @mut T/@ref 任一侧 → 拷贝；双侧 @ref 别名
-                    if (binderNeedsCopy(lt, vt, f.isRef(lhs), f.isRef((s.value as NameRef).name))) {
+                    if (binderNeedsCopy(lt, vt, f.isRef(lhs), f.isRef((s.value as NameRef).name), f.isMut(lhs), f.isMut((s.value as NameRef).name))) {
                         deepCopyHits[s] = true
                         d.supplement("D-DEEP-COPY", s.pos, "赋值涉及 @mut/@ref 类型，发生深拷贝：`$lhs` 是独立副本") }
                 }
@@ -828,9 +828,11 @@ class Checker(
      *  不可变变量以 @mut 变量为初值时，绑定等式不可靠（初值会变）——不注入相等命题。 */
     /** M-2（root doc 可变视图）：@mut T 与 T 兼容——@mut 视图可隐式转不可变视图（转换点=拷贝点，codegen 落地）。 */
     /** root doc《副作用与可变性控制》85-144：可变视图绑定触发深拷贝。
-     *  目标或源任一为 @mut T（视图）或 @ref（引用变量）→ 拷贝；仅当目标与源均 @ref 时为别名（共享同一对象）。 */
-    private fun binderNeedsCopy(tgt: Type, src: Type, tgtRef: Boolean, srcRef: Boolean): Boolean {
-        if (!(tgt is MutType || src is MutType || tgtRef || srcRef)) return false
+     *  目标或源任一为可变视图（@mut 声明）或 @ref 引用变量 → 拷贝；仅当目标与源均 @ref 时为别名（共享同一对象）。
+     *  与脚本模式 Evaluator.bindCopy 同一判据（审查报告 §2.4 曾两处偏差：编译侧漏 @mut 注解维度、
+     *  脚本侧只看 @ref）——两侧以注解维度统一，类型参数 tgt/src 保留供未来 MutType 类型化使用。 */
+    private fun binderNeedsCopy(tgt: Type, src: Type, tgtRef: Boolean, srcRef: Boolean, tgtMut: Boolean = false, srcMut: Boolean = false): Boolean {
+        if (!(tgt is MutType || src is MutType || tgtMut || srcMut || tgtRef || srcRef)) return false
         return !(tgtRef && srcRef)
     }
 
@@ -1278,7 +1280,7 @@ class Checker(
             val mut = "mut" in e.annotations
             if (mut) f.declareMut(e.name)
             if ("ref" in e.annotations) f.declareRef(e.name)
-            if (e.value is NameRef && binderNeedsCopy(t, t0, "ref" in e.annotations, f.isRef((e.value as NameRef).name)))
+            if (e.value is NameRef && binderNeedsCopy(t, t0, "ref" in e.annotations, f.isRef((e.value as NameRef).name), "mut" in e.annotations, f.isMut((e.value as NameRef).name)))
                 deepCopyHits[e] = true
             // root doc @ref：上下文对引用变量态度与可变变量一致——不注入绑定等式
             if (isPureValue(e.value) && !mut && "ref" !in e.annotations && !refsMut(e.value, f) && !isMutStructType(t)) f.inject(PAtom("=", listOf(NameRef(e.name), e.value)))

@@ -97,17 +97,22 @@ class Evaluator(
     }
 
     /**
-     * 变量绑定拷贝规则（root doc 副作用与可变性控制）：
-     *   双侧 @ref → 别名（共享，不拷贝）；否则若值为引用类型 → 深拷贝。
-     *   M5（已知偏差）：编译模式判据 bindNeedsCopy 是「目标/源标 @mut 类型或 @ref 才拷贝」，
-     *   此处只看变量声明 @ref。普通结构体变量（无 @mut/@ref）在两模式对别名依赖时语义不同——
-     *   对齐需运行时类型元数据（Struct.isMut 或 Checker 导出类型 mut），待拍板。
+     * 变量绑定拷贝规则（root doc 副作用与可变性控制 §6.6——与编译模式 Checker.binderNeedsCopy 统一判据）：
+     *   目标或源任一为可变视图（@mut 声明的变量）或 @ref 引用变量 → 拷贝；仅当目标与源均 @ref 时为别名（共享）。
+     *   旧实现只看 @ref（M5 已知偏差）：普通 @mut 变量在脚本模式被别名共享而编译模式深拷贝，两模式行为分裂——
+     *   此处把 mut 维度补齐，与 Checker 对齐（审查报告 §2.4）。
      */
-    private fun bindCopy(src: ScriptValue, targetRef: Boolean, sourceRef: Boolean): ScriptValue =
-        if (!targetRef || !sourceRef) deepCopy(src) else src
+    private fun bindCopy(src: ScriptValue, targetRef: Boolean, sourceRef: Boolean, targetMut: Boolean = false, sourceMut: Boolean = false): ScriptValue =
+        if (!(targetMut || sourceMut || targetRef || sourceRef)) src   // 双侧皆不可变视图 → 值语义天然共享即可
+        else if (targetRef && sourceRef) src                           // 双 @ref → 别名
+        else deepCopy(src)
 
     private fun sourceIsRef(e: Expr, frame: ScriptFrame): Boolean =
         e is NameRef && frame.isRef(e.name)
+
+    /** 源表达式是否为可变视图（@mut 声明的变量）——bindCopy 的 mut 维度（审查报告 §2.4） */
+    private fun sourceIsMut(e: Expr, frame: ScriptFrame): Boolean =
+        e is NameRef && frame.isMutable(e.name)
 
     private fun deepCopy(v: ScriptValue): ScriptValue = when (v) {
         is ScriptValue.Struct -> {
@@ -127,9 +132,9 @@ class Evaluator(
         return when (stmt) {
             is VarStmt -> {
                 val v = evalExpr(stmt.value, frame)
-                val mutable = "mut" in stmt.annotations
+                val mutable = "mut" in stmt.annotations || stmt.type is MutType
                 val ref = "ref" in stmt.annotations
-                val bound = bindCopy(v, ref, sourceIsRef(stmt.value, frame))
+                val bound = bindCopy(v, ref, sourceIsRef(stmt.value, frame), mutable, sourceIsMut(stmt.value, frame))
                 frame.declareVar(stmt.name, bound, mutable, ref)
                 ScriptValue.Null
             }
@@ -137,7 +142,7 @@ class Evaluator(
                 val v = evalExpr(stmt.value, frame)
                 when (val target = stmt.target) {
                     is NameRef -> {
-                        val bound = bindCopy(v, frame.isRef(target.name), sourceIsRef(stmt.value, frame))
+                        val bound = bindCopy(v, frame.isRef(target.name), sourceIsRef(stmt.value, frame), frame.isMutable(target.name), sourceIsMut(stmt.value, frame))
                         frame.assignVar(target.name, bound)
                     }
                     is FieldExpr -> {
@@ -209,7 +214,7 @@ class Evaluator(
                 val v = evalExpr(expr.value, frame)
                 val mutable = "mut" in expr.annotations
                 val ref = "ref" in expr.annotations
-                val bound = bindCopy(v, ref, sourceIsRef(expr.value, frame))
+                val bound = bindCopy(v, ref, sourceIsRef(expr.value, frame), ref, sourceIsMut(expr.value, frame))
                 frame.declareVar(expr.name, bound, mutable, ref)
                 bound
             }
@@ -473,7 +478,7 @@ class Evaluator(
     private fun callFunction(name: String, args: List<ScriptValue>, frame: ScriptFrame, pos: String, namedArgs: Map<String, ScriptValue> = emptyMap()): ScriptValue {
         // P51：in 为普通函数——中缀 a in b 解析为 in(a, b)；内建实现=区间/列表成员（evalIn）
         if (name == "in" && args.size == 2) return evalIn(args[0], args[1], pos)
-        // @vararg 可变元组名字特判：core 标准库 listOf/setOf 的 body 是占位，编译模式 codegen 同名特判打包（§决策 61/E-TUPLE-VARARG）
+        // listOf/setOf 内建特判：core 标准库二者的 body 是占位，编译模式 codegen 同名特判打包（§决策 61）
         if (name == "listOf") return ScriptValue.ListV(args.toMutableList())
         if (name == "setOf") return buildSet(args)
         val hostFn = hostFunctions[name]
