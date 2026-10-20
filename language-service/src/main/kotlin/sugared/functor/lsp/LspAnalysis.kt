@@ -1145,6 +1145,9 @@ class LspAnalysis {
                 "E-ARITY" -> fixArity(state, tokens, d)?.let {
                     byCode.getOrPut("E-ARITY" to "删掉多余的实参") { mutableListOf() } += it
                 }
+                "E-IMPL-INCOMPLETE" -> fixImplIncomplete(state, d)?.let {
+                    byCode.getOrPut("E-IMPL-INCOMPLETE" to "为缺失方法补存根") { mutableListOf() } += it
+                }
                 else -> {}
             }
         }
@@ -1261,6 +1264,54 @@ class LspAnalysis {
             k++
         }
         return null
+    }
+
+    /** E-IMPL-INCOMPLETE：impl 少了类型类方法——在 impl 块末尾插入存根 fun m(...): R = ??? */
+    private fun fixImplIncomplete(state: DocState, diag: Diagnostic): TextEdit? {
+        // message 形如：impl T for X 少了方法 `m`（类型类声明了它）. …
+        val m = Regex("`([^`]+)`").find(diag.message)?.groupValues?.get(1) ?: return null
+        // 定位 impl 声明：诊断 pos 与 ImplDecl.pos 同源（impl.pos）
+        val ast = state.ast ?: return null
+        val off = positionToOffset(state.source, diag.range.start, state.lineStarts) ?: return null
+        val impl = ast.entries.mapNotNull { (it as? DeclEntry)?.decl as? ImplDecl }
+            .firstOrNull { d2 ->
+                // ImplDecl.pos 是 "line:col"（1-based），转偏移后与诊断偏移比较
+                val m2 = Regex("(\\d+):(\\d+)").find(d2.pos) ?: return@firstOrNull false
+                val ls = state.lineStarts?.getOrNull(m2.groupValues[1].toInt() - 1) ?: return@firstOrNull false
+                ls + m2.groupValues[2].toInt() - 1 == off
+            } ?: return null
+        // 类型类签名：impl.trait 解析不出泛型时退回按名字在 AST 找 ClassDecl
+        val cls = ast.entries.mapNotNull { (it as? DeclEntry)?.decl as? ClassDecl }
+            .firstOrNull { it.name == (impl.trait as? sugared.functor.ast.NamedType)?.name } ?: return null
+        val member = cls.members.firstOrNull { it.name == m } ?: return null
+        // 存根文本：fun m(p: T, ...): R = ???
+        val sig = member.params.joinToString(", ") { p -> p.name + ": " + p.type.render() }
+        val ret = member.retType?.let { ": " + it.render() } ?: ""
+        val stubText = "    fun " + m + "(" + sig + ")" + ret + " = ???\n
+        // 插入点：impl 块的最后一个 } 前 —— 用源码文本定位 impl.pos 行后第一个 }（块体末尾）
+        val source = state.source
+        val implPos = off
+        // impl 声明体内找最后的 }：从 implPos 起深度匹配 { }，取闭合处
+        var depth = 0
+        var closeAt = -1
+        var k = implPos
+        while (k < source.length) {
+            when (source[k]) {
+                '{' -> depth++
+                '}' -> {
+                    depth--
+                    if (depth == 0) { closeAt = k; break }
+                }
+            }
+            k++
+        }
+        if (closeAt < 0) return null
+        // 插入位置：最后一个成员与 } 之间；回退到行首
+        var insertAt = closeAt
+        while (insertAt > 0 && source[insertAt - 1] != '\n') insertAt--
+        val ls2 = state.lineStarts ?: return null
+        val pos = offsetToPosition(source, insertAt, ls2)
+        return TextEdit(Range(pos, pos), stubText)
     }
 
     /** E-NEED-ASYNC：挂起调用需 @async 上下文——在最近的 fun 关键字（含局部/匿名函数）前插入注解 */
