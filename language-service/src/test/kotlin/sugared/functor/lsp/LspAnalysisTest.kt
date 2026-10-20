@@ -1130,6 +1130,14 @@ class LspAnalysisTest {
         }
     }
 
+    @Test fun `补全注解条目带副标题与详细说明`() {
+        val src = "@"
+        val a = opened(src)
+        val list = a.completionFor("file:///t.subl", Position(0, 1))
+        val mut = list.items.firstOrNull { it.label == "mut" } ?: error("无 mut 项")
+        assertEquals("使得变量可变", mut.detail, "@mut 副标题应是功能短语")
+        assertNotNull(mut.documentation, "@mut 应带详细说明")
+    }
     @Test fun `补全 @ 前缀给出内建注解列表`() {
         val src = "@"
         val a = opened(src)

@@ -1843,11 +1843,11 @@ class LspAnalysis {
         if (annoCtx != null) {
             val (aprefix, _) = annoCtx
             val items = ANNOTATIONS.filter { aprefix.isEmpty() || it.first.startsWith(aprefix) }
-                .map { (name, doc) ->
+                .map { (name, subtitle, doc) ->
                     CompletionItem(
                         label = name,
                         kind = CompletionItemKind.Keyword,
-                        detail = "注解",
+                        detail = subtitle,                   // 副标题：一句话功能（@mut → 使得变量可变）
                         documentation = doc,
                         sortText = (if (name == aprefix) "0" else "1") + "_" + name,
                     )
@@ -2082,11 +2082,11 @@ class LspAnalysis {
 
         /** 诊断 code → 中文说明（供 IDE 悬停提示展示原因与修法） */
         val DIAG_DOCS: Map<String, String> = mapOf(
-            "E-ARITY" to "实参个数不对：按函数声明的形参个数增删实参，命名实参可指定位次",
-            "E-TYPE-MISMATCH" to "类型不一致：检查实参、字段、返回值与声明的类型是否匹配",
-            "E-UNBOUND-NAME" to "名字未定义：检查拼写与大小写，或补上对应的函数/结构体/类型声明",
+            "E-ARITY" to "实参个数与函数声明的形参个数不一致。实参多了可以删（IDE 灯泡有删多余实参的快速修正）；少了就补上，或用命名实参按名字传入。",
+            "E-TYPE-MISMATCH" to "表达式的类型与预期不符。消息会指明哪一处：函数声明返回 A 但体是 B、实参 A 与形参 B 不符、或结构体字段类型对不上。若是字面量/构造子给错类型就改表达式；若是声明写错就改返回类型或形参类型。",
+            "E-UNBOUND-NAME" to "没有在当前作用域找到此名字，可能是拼写错误、大小写不对，或它在别的作用域/模块里。若是拼写错误，请修改名称；为了保证语言安全，不支持直接在作用域外部使用作用域内部的变量，如果您有类似的想法可以使用闭包（lambda 捕获），或把声明提到外层；若名字来自别的模块，需要 mount 那个模块。",
             "E-RETURN-TYPE" to "return 的值与函数声明的返回类型不一致：修改 return 表达式或返回类型",
-            "E-MISSING-RETURN" to "函数声明了返回类型但缺少 return：补上 return，或改返回类型为 Null",
+            "E-MISSING-RETURN" to "块体函数声明了返回类型，但执行完也没有 return 出值。补上 return；或改用单表达式体 fun f(): T = 值；若确实不返回值，把返回类型改成 Null。",
             "E-RETURN-OUTSIDE" to "return 出现在值位（实参、尾表达式、var 初值等）：把 return 移到语句位",
             "E-DUP-DECL" to "重复声明：同名类型/函数/构造子已存在，改名或删除其一",
             "E-DUP-FIELD" to "结构体字段重复：同名字段只能出现一次，改名其一",
@@ -2177,14 +2177,14 @@ class LspAnalysis {
         /** typeDefinition 目标成员类型（类型声明 varieties） */
         val TYPE_VARIETIES: Set<String> = setOf("struct", "enum", "class", "type")
 
-        /** 内建注解（编译器实际识别的集合）：名字 → 中文说明（补全 documentation 直接给 IDE） */
-        val ANNOTATIONS: List<Pair<String, String>> = listOf(
-            "async" to "标记函数为异步上下文：内部可调用 t.join()/ch.send() 等挂起操作（不可在纯函数里用）",
-            "impure" to "标记函数有副作用：解除纯函数限制（I/O、可变状态、随机等）；调用方需相应处理",
-            "mut" to "标记类型可变或函数以可变视图访问接收者：@mut 函数要求接收者持有 @mut 视图",
-            "list" to "标记参数为可变 List 视图（调用时按引用传递，修改对调用方可见）",
-            "ref" to "标记字段/参数为引用绑定：深拷贝时按引用而非值复制",
-            "root" to "标记标准库内建声明（core 专属，用户代码通常不用）",
+        /** 内建注解（编译器实际识别的集合）：名字 → 副标题（补全 detail 一句话功能）→ 详细说明（documentation） */
+        val ANNOTATIONS: List<Triple<String, String, String>> = listOf(
+            Triple("async", "允许函数执行挂起操作", "标记函数为异步上下文：内部可调用 t.join()/ch.send() 等挂起操作。主函数 main 自带异步上下文，其余函数需要此注解才能用挂起调用。"),
+            Triple("impure", "允许函数产生副作用", "标记函数有副作用：解除纯函数限制（I/O、可变状态、随机数等）。编译器据此放宽纯度检查；调用处会保留执行顺序。"),
+            Triple("mut", "使得变量可变", "var 声明加它即可赋值修改；函数加它表示以可变视图访问接收者（接收者本身需是 @mut 类型）。默认所有绑定不可变，这是安全的兜底。"),
+            Triple("list", "以可变视图传递 List", "标记参数为可变 List 视图：调用时按引用传递而非拷贝，函数内对它的修改对调用方可见。"),
+            Triple("ref", "以引用而非拷贝绑定", "标记字段/参数为引用绑定：赋值与深拷贝时按引用传递，修改会互相可见（与默认的按值拷贝相反）。"),
+            Triple("root", "标记 core 内建声明", "标记标准库内建声明（core 专属）：函数体由编译器内建实现，调用点直接翻译为原生调用。用户代码通常不用。"),
         )
 
         // ───────── Unicode 符号补全（\xxx 触发）─────────
