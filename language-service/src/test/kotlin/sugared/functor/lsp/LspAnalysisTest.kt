@@ -1110,6 +1110,32 @@ class LspAnalysisTest {
         }
     }
 
+    @Test fun `格式化标准 链式调用换行缩进对齐成员`() {
+        val src = "fun main() { xs.map(f).filter(g) }"
+        val a = opened(src)
+        val text = (a.formatDocument("file:///t.subl") ?: error("null")).first().newText
+        // 无换行源码：格式化后应仍在一行（不应主动拆链）——验证不破坏单行链式
+        val body = text.lines().first { it.contains("map") }
+        assertTrue(body.contains(".map(f).filter(g)"), "单行链式应保持单行: $body")
+    }
+
+    @Test fun `格式化标准 源码换行的链式调用保持深一级缩进`() {
+        val src = "fun main() { xs.map(f)\n.filter(g)\n.reduce(h) }"
+        val a = opened(src)
+        val text = (a.formatDocument("file:///t.subl") ?: error("null")).first().newText
+        val dotLines = text.lines().filter { it.contains(".filter") || it.contains(".reduce") }
+        assertTrue(dotLines.size == 2, "filter/reduce 各占一行: ${dotLines.size}")
+        assertTrue(dotLines.all { it.startsWith("        ") }, "链式换行应缩进 8 空格(块体一级+链式一级): $dotLines")
+    }
+
+    @Test fun `格式化标准 单表达式函数体换行缩进`() {
+        val src = "fun f(x: Nat): Nat =\nx + 1"
+        val a = opened(src)
+        val text = (a.formatDocument("file:///t.subl") ?: error("null")).first().newText
+        val bodyLine = text.lines().firstOrNull { it.contains("x + 1") } ?: error("找不到体: $text")
+        assertTrue(bodyLine.startsWith("    "), "单表达式体换行应缩进 4 空格: [$bodyLine]")
+    }
+
     @Test fun `格式化保留块体多语句换行不压一行`() {
         val src = "fun main() { var a = 1\nvar b = 2\nprint(a)\nprint(b) }"
         val a = opened(src)

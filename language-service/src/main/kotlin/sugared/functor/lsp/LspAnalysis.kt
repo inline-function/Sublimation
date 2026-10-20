@@ -1563,6 +1563,8 @@ class LspAnalysis {
         var indent = 0
         var prev: Token? = null
         var needIndent = false
+        // 挂起的额外缩进（单表达式函数体 / 链式换行）：newline 时叠在 indent 之上，遇到 ; } 或新声明清零
+        var extraIndent = 0
 
         fun newline() {
             while (out.isNotEmpty() && out.last() == ' ') out.setLength(out.length - 1)
@@ -1572,8 +1574,9 @@ class LspAnalysis {
 
         fun emit(text: String, spaceBefore: Boolean) {
             if (needIndent) {
-                repeat(indent) { out.append("    ") }
+                repeat(indent + extraIndent) { out.append("    ") }
                 needIndent = false
+                if (extraIndent > 0) extraIndent = 0
             } else if (spaceBefore && out.isNotEmpty() && out.last() != ' ' && out.last() != '\n') {
                 out.append(' ')
             }
@@ -1628,6 +1631,13 @@ class LspAnalysis {
                     newline()
                     prev = tk
                 }
+                Kind.ASSIGN -> {
+                    // 单表达式函数体换行（= 与体不同行）：断行后缩进一级，对齐表达式体
+                    val nx = tokens.getOrNull(ti + 1)
+                    emit("=", prev != null && spaceBetween(prev, tk))
+                    if (nx != null && nx.line != tk.line) { newline(); extraIndent = 1 }
+                    prev = tk
+                }
                 Kind.SEMI -> {
                     emit(";", false)
                     newline()
@@ -1652,6 +1662,9 @@ class LspAnalysis {
                     if (prev != null && prev.line != tk.line &&
                         prev.kind != Kind.LBRACE && prev.kind != Kind.SEMI && prev.kind != Kind.AT) {
                         if (out.isNotEmpty() && out.last() != '\n') newline()
+                        // 链式调用换行（DOT 开启新行）：缩进比语句基准多一级，对齐 .成员
+                        if (tk.kind == Kind.DOT && out.isNotEmpty() && out.last() == '\n') extraIndent = 1   // 比语句基准深一级
+
                     }
                     emit(tk.text, prev != null && spaceBetween(prev, tk))
                     prev = tk
