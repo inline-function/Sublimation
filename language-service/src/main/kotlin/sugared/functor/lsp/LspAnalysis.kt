@@ -2169,6 +2169,10 @@ class LspAnalysis {
             "W-UNREACHABLE" to "return/Nothing 之后的尾表达式永远不会执行:删除死代码",
             "W-UNUSED" to "声明后从未使用:删除或在名字前加 _ 前缀抑制",
             "W-WHEN-NO-COMMON" to "分类讨论各分支没有共同结论:让分支推出同一结论",
+            "E-LINEAR-ESCAPE" to "线性作用域(% 块)里 lambda 捕获并修改了 @mut 变量:唯一所有权被破坏。把 lambda 提到域外,或改成顺序代码",
+            "E-LINEAR-ALIAS" to "线性作用域里不能声明 @ref 变量:@ref 是别名语义,与唯一所有权冲突。去掉 @ref 或移出 % 块",
+            "E-LINEAR-RETURN" to "线性作用域里不能带值提前返回:版本化收尾在域出口统一做。把返回值改成尾表达式,或改用普通作用域",
+            "D-LINEAR-VERSION" to "线性作用域:@mut 变量赋值后前进到新版本,等式事实进入 Γ(推导过程提示,加 -v 可见)",
         )
         /** typeDefinition 目标成员类型（类型声明 varieties） */
         val TYPE_VARIETIES: Set<String> = setOf("struct", "enum", "class", "type")

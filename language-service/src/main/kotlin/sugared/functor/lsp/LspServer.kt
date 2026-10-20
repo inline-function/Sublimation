@@ -186,7 +186,7 @@ object LspServer {
                     "hoverProvider" to true,
                     "definitionProvider" to true,
                     "completionProvider" to mapOf(
-                        "triggerCharacters" to listOf(".", ":", "\\"),
+                        "triggerCharacters" to listOf(".", ":", "@", "\\"),   // @ 触发注解补全
                         "resolveProvider" to false,
                     ),
                     "documentSymbolProvider" to true,
