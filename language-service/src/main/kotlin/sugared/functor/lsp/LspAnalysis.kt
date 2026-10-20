@@ -69,6 +69,7 @@ class LspAnalysis {
         if (preludeLoaded) return
         preludeLoaded = true
         if (stdlibDir != null) this.stdlibDir = stdlibDir   // 同步脚本模式的 stdlib 目录
+        else stdlibIndexCache = null   // 目录可能被替换，索引重建
 
         fun add(name: String, variety: String, detail: String, doc: String?) {
             preludeItems += CompletionItem(
@@ -119,6 +120,38 @@ class LspAnalysis {
      * 与 Interpreter.loadStdlibEntries 同构：过滤 @root 内建声明（脚本模式下内建由 checker 内建表提供，
      * 留着会与调用撞 E-DUP-DECL）；解析失败记录 stderr 不中断。
      */
+    /** 标准库符号索引（名字 → 文件 URI + pos + 源码）：转到定义的兜底，让 stdlib/core 函数也能跳 */
+    private var stdlibIndexCache: Map<String, Triple<String, String, String>>? = null
+    private fun stdlibSymbolIndex(): Map<String, Triple<String, String, String>> {
+        stdlibIndexCache?.let { return it }
+        val dir = stdlibDir
+        val out = HashMap<String, Triple<String, String, String>>()
+        if (dir != null && dir.isDirectory) {
+            for (f in dir.walkTopDown().filter { it.isFile && it.name.endsWith(".subl") }.sortedBy { it.path }) {
+                val text = try { f.readText() } catch (e: Exception) { continue }
+                val ast = try { parseSource(text, f.name) } catch (e: Exception) { continue }
+                for (entry in ast.entries) {
+                    val d = (entry as? DeclEntry)?.decl ?: continue
+                    when (d) {
+                        is FunDecl -> out.putIfAbsent(d.name, Triple(f.toURI().toString(), d.pos, text))
+                        is ClassDecl -> {
+                            out.putIfAbsent(d.name, Triple(f.toURI().toString(), d.pos, text))
+                            for (m in d.members) out.putIfAbsent(m.name, Triple(f.toURI().toString(), m.pos, text))
+                        }
+                        is StructDecl -> out.putIfAbsent(d.name, Triple(f.toURI().toString(), d.pos, text))
+                        is EnumDecl -> out.putIfAbsent(d.name, Triple(f.toURI().toString(), d.pos, text))
+                        is ImplDecl -> {
+                            val n = (d.trait as? sugared.functor.ast.NamedType)?.name ?: continue
+                            out.putIfAbsent(n, Triple(f.toURI().toString(), d.pos, text))
+                        }
+                        else -> {}
+                    }
+                }
+            }
+        }
+        stdlibIndexCache = out
+        return out
+    }
     private fun scriptStdlib(): List<Entry> {
         scriptStdlibCache?.let { return it }
         val dir = stdlibDir
@@ -632,9 +665,11 @@ class LspAnalysis {
         val offset = positionToOffset(source, position, state.lineStarts) ?: return null
         val word = wordAtOffset(source, offset) ?: return null
 
-        val symbol = collectSymbols(uri).find { it.name == word } ?: return null
-        val range = diagPosToRange(symbol.pos, source)
-        return Location(uri, range)
+        val symbol = collectSymbols(uri).find { it.name == word }
+        if (symbol != null) return Location(uri, diagPosToRange(symbol.pos, source))
+        // 兜底：用户文件没有的名字去 core 标准库找（stdlib 函数/类型也能转到定义）
+        val std = stdlibSymbolIndex()[word] ?: return null
+        return Location(std.first, diagPosToRange(std.second, std.third))
     }
 
     // ───────── typeDefinition：跳到类型声明 ─────────
@@ -1127,10 +1162,11 @@ class LspAnalysis {
         val ds = diags ?: diagnosticsFor(uri)
         // 光标区间过滤：只处理与请求 range 相交的诊断
         val inRange = if (range == null) ds else ds.filter { d ->
+            // 端点重合算相交（光标压在诊断起点上，IDE 灯泡须触发）：用严格不等，避免空 range 被误过滤
             val before = d.range.end.line < range.start.line ||
-                (d.range.end.line == range.start.line && d.range.end.character <= range.start.character)
+                (d.range.end.line == range.start.line && d.range.end.character < range.start.character)
             val after = d.range.start.line > range.end.line ||
-                (d.range.start.line == range.end.line && d.range.start.character >= range.end.character)
+                (d.range.start.line == range.end.line && d.range.start.character > range.end.character)
             !(before || after)
         }
         // 诊断驱动：每个 code 收集自己的编辑，按 code 分组出独立的 codeAction（一键一操作，互不混杂）
@@ -1149,6 +1185,17 @@ class LspAnalysis {
                 "E-IMPL-INCOMPLETE" -> fixImplIncomplete(state, d)?.let {
                     byCode.getOrPut("E-IMPL-INCOMPLETE" to "为缺失方法补存根") { mutableListOf() } += it
                 }
+                "E-IMPURE-CALL" -> {
+                    fixImpureMark(state, tokens, d)?.let {
+                        byCode.getOrPut("E-IMPURE-CALL" to "标记当前函数为不纯（@impure）") { mutableListOf() } += it
+                    }
+                    fixImpureUnchecked(state, tokens, d)?.let {
+                        byCode.getOrPut("E-IMPURE-CALL" to "使调用不受检（unchecked 包裹）") { mutableListOf() } += it
+                    }
+                }
+                "E-IMMUT-ASSIGN" -> fixImmutAssign(state, tokens, d)?.let {
+                    byCode.getOrPut("E-IMMUT-ASSIGN" to "使变量可变（声明加 @mut）") { mutableListOf() } += it
+                }
                 else -> {}
             }
         }
@@ -1160,6 +1207,20 @@ class LspAnalysis {
                 kind = "quickfix",
                 edit = WorkspaceEdit(changes = mapOf(uri to list)),
             )
+        }
+
+        // ───────── 导航/重构动作（命令型，触发 IDE 内置能力）─────────
+        if (range != null) {
+            namedCallAction(state, range)?.let { acts += it }
+            val rangePos = Position(range.start.line, range.start.character)
+            val rangeOff = positionToOffset(state.source, rangePos, state.lineStarts)
+            if (rangeOff != null) {
+                if (isDeclAt(state, rangeOff)) {
+                    acts += CodeAction(title = "重命名", kind = "refactor", command = Command("重命名", "editor.action.rename"))
+                } else if (isUseAt(state, rangeOff)) {
+                    acts += CodeAction(title = "转到定义", kind = "refactor", command = Command("转到定义", "editor.action.revealDefinition"))
+                }
+            }
         }
         return acts
     }
@@ -1315,6 +1376,145 @@ class LspAnalysis {
         return TextEdit(Range(pos, pos), stubText)
     }
 
+    /** E-IMPURE-CALL 修正一：给所在函数加 @impure（纯函数 → 不纯，副作用合法化） */
+    private fun fixImpureMark(state: DocState, tokens: List<Token>, diag: Diagnostic): TextEdit? {
+        val source = state.source
+        val lineStarts = state.lineStarts ?: return null
+        val diagOff = positionToOffset(source, diag.range.start, lineStarts) ?: return null
+        var best: Token? = null
+        var bestOff = -1
+        for (tok in tokens) {
+            if (tok.kind != Kind.FUN) continue
+            val ls = lineStarts.getOrNull(tok.line - 1) ?: continue
+            val off = ls + tok.col - 1
+            if (off <= diagOff && off > bestOff) { bestOff = off; best = tok }
+        }
+        val funTok = best ?: return null
+        val insertOff = lineStarts.getOrNull(funTok.line - 1)?.let { it + funTok.col - 1 } ?: return null
+        val pos = offsetToPosition(source, insertOff, lineStarts)
+        return TextEdit(Range(pos, pos), "@impure ")
+    }
+
+    /** E-IMPURE-CALL 修正二：把该调用语句包进 unchecked（文法：unchecked <语句>） */
+    private fun fixImpureUnchecked(state: DocState, tokens: List<Token>, diag: Diagnostic): TextEdit? {
+        val source = state.source
+        val lineStarts = state.lineStarts ?: return null
+        val diagOff = positionToOffset(source, diag.range.start, lineStarts) ?: return null
+        // 调用语句起点：回退到所在行首再跳过空白（调用语句总是从行首开始）
+        var stmtStart = diagOff
+        while (stmtStart > 0 && source[stmtStart - 1] != '\n') stmtStart--
+        while (stmtStart < source.length && (source[stmtStart] == ' ' || source[stmtStart] == '\t')) stmtStart++
+        val pos = offsetToPosition(source, stmtStart, lineStarts)
+        return TextEdit(Range(pos, pos), "unchecked ")
+    }
+
+    /** E-IMMUT-ASSIGN 修正：找到被赋值变量的 var 声明，加 @mut（@mut var x = … 即可变） */
+    private fun fixImmutAssign(state: DocState, tokens: List<Token>, diag: Diagnostic): TextEdit? {
+        val source = state.source
+        val lineStarts = state.lineStarts ?: return null
+        val diagOff = positionToOffset(source, diag.range.start, lineStarts) ?: return null
+        // 赋值左侧名字：诊断偏移处的标识符（AssignStmt.pos = 左值位置）
+        var lhs = StringBuilder()
+        var p = diagOff
+        while (p < source.length && (source[p].isLetterOrDigit() || source[p] == '_')) { lhs.append(source[p]); p++ }
+        if (lhs.isEmpty()) return null
+        val ast = state.ast ?: return null
+        var varPos: String? = null
+        fun scan(e: Any?) {
+            when (e) {
+                is sugared.functor.ast.VarStmt -> { if (e.name == lhs.toString()) varPos = e.pos }
+                is sugared.functor.ast.BlockExpr -> e.stmts.forEach { scan(it) }
+                is sugared.functor.ast.LinearBlockExpr -> e.block.stmts.forEach { scan(it) }
+                is sugared.functor.ast.FunDecl -> e.body?.let { scan(it) }
+                is sugared.functor.ast.ExprStmt -> scan(e.expr)
+                is sugared.functor.ast.IfExpr -> { scan(e.cond); scan(e.thenBlock); e.elseBlock?.let { scan(it) } }
+                is sugared.functor.ast.LambdaExpr -> scan(e.body)
+            }
+        }
+        for (entry in ast.entries) scan((entry as? DeclEntry)?.decl)
+        val vp = varPos ?: return null
+        val m = Regex("([0-9]+):([0-9]+)").find(vp) ?: return null
+        val ls = lineStarts.getOrNull(m.groupValues[1].toInt() - 1) ?: return null
+        // VarStmt.pos 指向 var 关键字：前面插 @mut
+        val off = ls + m.groupValues[2].toInt() - 1
+        val pos = offsetToPosition(source, off, lineStarts)
+        return TextEdit(Range(pos, pos), "@mut ")
+    }
+
+    /** 指名调用：range 选中的是函数调用名（IDENT 后随 ( ）→ 每个位置实参加 参数名 = */
+    private fun namedCallAction(state: DocState, range: Range): CodeAction? {
+        val source = state.source
+        val lineStarts = state.lineStarts ?: return null
+        // 起点：选区首字符处；向左取词（start 通常落在名字开头或内部）
+        var off = positionToOffset(source, Position(range.start.line, range.start.character), lineStarts) ?: return null
+        // 若 start 落在词中间（IDE 双击选中场景），先回退到词首
+        var back = off
+        while (back > 0 && (source[back - 1].isLetterOrDigit() || source[back - 1] == '_')) back--
+        off = back
+        val word = StringBuilder()
+        var p = off
+        while (p < source.length && (source[p].isLetterOrDigit() || source[p] == '_')) { word.append(source[p]); p++ }
+        if (word.isEmpty()) return null
+        var q = off + word.length
+        while (q < source.length && source[q].isWhitespace()) q++
+        if (q >= source.length || source[q] != '(') return null
+        val name = word.toString()
+        val fn = findFunction(state.ast, name) ?: return null
+        val params = fn.params
+        if (params.isEmpty()) return null
+        val close = matchingClose(source, q) ?: return null
+        val argSpans = splitTopLevelArgs(source, q, close)
+        if (argSpans.size > params.size) return null
+        if (argSpans.any { source.substring(it.first, it.second).contains("=") }) return null
+        val edits = argSpans.mapIndexed { i, sp ->
+            val pos = offsetToPosition(source, sp.first, lineStarts)
+            TextEdit(Range(pos, pos), params[i].name + " = ")
+        }
+        return CodeAction(title = "指名调用 $name(参数名 = 实参…)", kind = "refactor",
+            edit = WorkspaceEdit(changes = mapOf(state.uri to edits)))
+    }
+
+    /** 拆括号内顶层实参的 (start, end) 区间（逗号分隔，跳过嵌套括号/字符串） */
+    private fun splitTopLevelArgs(source: String, open: Int, close: Int): List<Pair<Int, Int>> {
+        val out = ArrayList<Pair<Int, Int>>()
+        var depth = 0
+        var start = open + 1
+        var i = open + 1
+        var inStr = false
+        while (i < close) {
+            val c = source[i]
+            when {
+                inStr -> { if (c == '"') inStr = false }
+                c == '"' -> inStr = true
+                c == '(' || c == '[' || c == '{' -> depth++
+                c == ')' || c == ']' || c == '}' -> depth--
+                c == ',' && depth == 0 -> { out.add(start to i); start = i + 1 }
+            }
+            i++
+        }
+        if (start < close) out.add(start to close)
+        return out
+    }
+
+    /** offset 处是标识符声明（decls 的 pos 命中）？ */
+    private fun isDeclAt(state: DocState, off: Int): Boolean {
+        return state.decls.any { d ->
+            val m = Regex("([0-9]+):([0-9]+)").find(d.pos) ?: return@any false
+            val ls = state.lineStarts?.getOrNull(m.groupValues[1].toInt() - 1) ?: return@any false
+            val s = ls + m.groupValues[2].toInt() - 1
+            off in s until (s + d.name.length)
+        }
+    }
+
+    /** offset 处是标识符使用（refs 命中）？ */
+    private fun isUseAt(state: DocState, off: Int): Boolean {
+        return state.refs.any { r ->
+            val m = Regex("([0-9]+):([0-9]+)").find(r.second) ?: return@any false
+            val ls = state.lineStarts?.getOrNull(m.groupValues[1].toInt() - 1) ?: return@any false
+            val s = ls + m.groupValues[2].toInt() - 1
+            off in s until (s + r.first.length)
+        }
+    }
     /** E-NEED-ASYNC：挂起调用需 @async 上下文——在最近的 fun 关键字（含局部/匿名函数）前插入注解 */
     private fun fixNeedAsync(state: DocState, tokens: List<Token>, diag: Diagnostic): TextEdit? {
         val source = state.source

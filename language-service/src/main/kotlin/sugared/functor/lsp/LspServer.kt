@@ -534,6 +534,14 @@ object LspServer {
                 "changes" to edit.changes.mapValues { (_, edits) -> edits.map { editToMap(it) } },
             )
         }
+        val cmd = ca.command
+        if (cmd != null) {
+            m["command"] = mapOf(
+                "title" to cmd.title,
+                "command" to cmd.command,
+                "arguments" to cmd.arguments,
+            )
+        }
         return m
     }
 

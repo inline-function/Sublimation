@@ -677,7 +677,7 @@ private var ifIsCond: Boolean = false
             val lhs = parsePostfix()
             if (peek(Kind.ASSIGN) && (lhs is NameRef || lhs is FieldExpr)) {
                 pos++
-                return AssignStmt(lhs, parseExpr(angle = false))
+                return AssignStmt(lhs, parseExpr(angle = false), lhs.pos)   // pos = 左值位置（诊断/快速修正定位用）
             }
             pos = save
         } catch (_: ParseFailure) { pos = save }

@@ -1034,6 +1034,14 @@ class LspAnalysisTest {
         assertTrue(ifItem.insertText!!.startsWith("if ("), "if 骨架应以 if ( 开头，实际: " + ifItem.insertText)
     }
 
+    @Test fun probeActsList() {
+        val src = "fun main(): Null { var x = 1\n    x = 2\n    0 }"
+        val a = opened(src)
+        val d = a.diagnosticsFor("file:///t.subl").firstOrNull { it.code == "E-IMMUT-ASSIGN" }
+        println("DBG d=" + (d != null) + " range=" + d?.range + " code=" + d?.code)
+        val acts = a.codeActionsFor("file:///t.subl", d?.range, listOf(d!!))
+        println("DBG acts=" + acts.map { it.title })
+    }
     @Test fun `快速修正 E-IMPL-INCOMPLETE 为缺失方法补存根`() {
         val src = "class Show[T] { fun show(t: T): Str }\nimpl Show[Nat] for Nat { }"
         val a = opened(src)
@@ -1054,6 +1062,72 @@ class LspAnalysisTest {
         val text = fix.edit!!.changes!!["file:///t.subl"]!!.first().newText
         assertEquals(")", text)
     }
+    @Test fun `转到定义 标准库 print 跳到 core 文件`() {
+        val src = "fun main(): Null { print(1) }"
+        val a = opened(src)
+        // print 在 1:19（"fun main(): Null { " 之后）
+        val loc = a.definitionFor("file:///t.subl", Position(0, 19))
+        assertNotNull(loc, "stdlib 函数 print 应能转到定义")
+        assertTrue(loc!!.uri.endsWith(".subl"), "stdlib 定义应在 core 的 .subl 文件里: ${loc.uri}")
+    }
+
+    @Test fun `快捷操作 指名调用`() {
+        val src = "fun add(a: Nat, b: Nat): Nat = a + b\nfun main(): Null { add(1, 2) }"
+        val a = opened(src)
+        // add 调用名在 1:20
+        val acts = a.codeActionsFor("file:///t.subl", Range(Position(1, 19), Position(1, 22)), null)
+        val fix = acts.firstOrNull { it.title.contains("指名调用") } ?: error("无指名调用: ${acts.map { it.title }}")
+        val edits = fix.edit!!.changes!!["file:///t.subl"]!!
+        val texts = edits.map { it.newText }
+        assertTrue(texts.contains("a = ") && texts.contains("b = "), "应给两实参加形参名: $texts")
+    }
+
+    @Test fun `快捷操作 声明处给重命名 使用处给转到定义`() {
+        val src = "fun double(x: Nat): Nat = x + x\nfun main(): Nat = double(1)"
+        val a = opened(src)
+        // 声明处 double 在 0:4
+        val atDecl = a.codeActionsFor("file:///t.subl", Range(Position(0, 4), Position(0, 9)), null)
+        val rename = atDecl.firstOrNull { it.command != null }
+        assertNotNull(rename, "声明处应有命令型动作")
+        assertEquals("editor.action.rename", rename!!.command!!.command)
+        // 使用处 double 在 1:21
+        val atUse = a.codeActionsFor("file:///t.subl", Range(Position(1, 18), Position(1, 23)), null)
+        val goto = atUse.firstOrNull { it.command != null }
+        assertNotNull(goto, "使用处应有命令型动作")
+        assertEquals("editor.action.revealDefinition", goto!!.command!!.command)
+    }
+    @Test fun `快速修正 E-IMPURE-CALL 标记当前函数不纯`() {
+        val src = "fun work(): Null { print(1) }"
+        val a = opened(src)
+        val d = a.diagnosticsFor("file:///t.subl").firstOrNull { it.code == "E-IMPURE-CALL" } ?: error("应报 E-IMPURE-CALL（实际: ${a.diagnosticsFor("file:///t.subl").map { it.code }}）")
+        val acts = a.codeActionsFor("file:///t.subl", d.range, listOf(d))
+        val fix = acts.firstOrNull { it.title.contains("不纯") } ?: error("无修正: ${acts.map { it.title }}")
+        val text = fix.edit!!.changes!!["file:///t.subl"]!!.joinToString("") { it.newText }
+        assertEquals("@impure ", text, "应在 fun 前插 @impure")
+    }
+
+    @Test fun `快速修正 E-IMPURE-CALL 使调用不受检`() {
+        val src = "fun work(): Null { print(1) }"
+        val a = opened(src)
+        val d = a.diagnosticsFor("file:///t.subl").firstOrNull { it.code == "E-IMPURE-CALL" } ?: error("应报 E-IMPURE-CALL")
+        val acts = a.codeActionsFor("file:///t.subl", d.range, listOf(d))
+        val fix = acts.firstOrNull { it.title.contains("不受检") } ?: error("无修正: ${acts.map { it.title }}")
+        val text = fix.edit!!.changes!!["file:///t.subl"]!!.joinToString("") { it.newText }
+        assertEquals("unchecked ", text, "应在语句前插 unchecked")
+    }
+
+    @Test fun `快速修正 E-IMMUT-ASSIGN 使变量可变`() {
+        val src = "fun main(): Null { var x = 1\n    x = 2\n    0 }"
+        val a = opened(src)
+        val d = a.diagnosticsFor("file:///t.subl").firstOrNull { it.code == "E-IMMUT-ASSIGN" } ?: error("应报 E-IMMUT-ASSIGN（实际: ${a.diagnosticsFor("file:///t.subl").map { it.code }}）")
+        run {
+            val acts = a.codeActionsFor("file:///t.subl", d.range, listOf(d))
+            val fix = acts.firstOrNull { it.title.contains("使变量可变") } ?: error("无修正: ${acts.map { it.title }}")
+            val text = fix.edit!!.changes!!["file:///t.subl"]!!.joinToString("") { it.newText }
+            assertEquals("@mut ", text, "应在 var 前插 @mut")
+        }
+    }
+
     @Test fun `快速修正 E-NEED-ASYNC 给所在函数加 async 注解`() {
         val src = "fun work(): Unit { t.join() }"
         val a = opened(src)

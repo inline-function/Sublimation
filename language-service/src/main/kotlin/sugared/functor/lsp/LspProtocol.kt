@@ -128,11 +128,19 @@ data class WorkspaceEdit(
     val changes: Map<String, List<TextEdit>> = emptyMap(),
 )
 
+/** 客户端命令（让 IDE 执行内置动作，如重命名/转到定义） */
+data class Command(
+    val title: String,
+    val command: String,
+    val arguments: List<Any?> = emptyList(),
+)
+
 /** 快速修复（灯泡） */
 data class CodeAction(
     val title: String,
     val kind: String = "quickfix",
     val edit: WorkspaceEdit? = null,
+    val command: Command? = null,   // 触发 IDE 内置命令（重命名/转到定义等），与 edit 互斥
 )
 
 /** 内联提示（inlayHint）：类型/参数名等 */
