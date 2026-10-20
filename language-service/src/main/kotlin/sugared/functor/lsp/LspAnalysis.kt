@@ -491,6 +491,7 @@ class LspAnalysis {
                 e.posts.forEach { walkExpr(it, w, add) }
                 e.body?.let { walkExpr(it, w, add) }
             }
+            is LinearBlockExpr -> e.block.stmts.forEach { walkStmt(it, w, add) }
             is BlockExpr -> e.stmts.forEach { walkStmt(it, w, add) }
             is IfExpr -> {
                 walkExpr(e.cond, w, add)
@@ -1287,7 +1288,7 @@ class LspAnalysis {
         // 存根文本：fun m(p: T, ...): R = ???
         val sig = member.params.joinToString(", ") { p -> p.name + ": " + p.type.render() }
         val ret = member.retType?.let { ": " + it.render() } ?: ""
-        val stubText = "    fun " + m + "(" + sig + ")" + ret + " = ???\n
+        val stubText = "    fun " + m + "(" + sig + ")" + ret + " = ???\n"
         // 插入点：impl 块的最后一个 } 前 —— 用源码文本定位 impl.pos 行后第一个 }（块体末尾）
         val source = state.source
         val implPos = off
