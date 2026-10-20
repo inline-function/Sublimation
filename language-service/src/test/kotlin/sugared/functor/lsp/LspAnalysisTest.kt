@@ -1130,6 +1130,31 @@ class LspAnalysisTest {
         }
     }
 
+    @Test fun `补全 @ 前缀给出内建注解列表`() {
+        val src = "@"
+        val a = opened(src)
+        // 光标在 @ 之后（偏移 1，前缀为空 → 列全部注解）
+        val list = a.completionFor("file:///t.subl", Position(0, 1))
+        val labels = list.items.map { it.label }
+        assertTrue(labels.contains("async"), "应提供 async 注解: $labels")
+        assertTrue(labels.contains("impure") && labels.contains("mut"), "应提供 impure 与 mut: $labels")
+    }
+
+    @Test fun `补全 @as 前缀过滤出 async`() {
+        val src = "@as"
+        val a = opened(src)
+        val list = a.completionFor("file:///t.subl", Position(0, 3))
+        val labels = list.items.map { it.label }
+        assertTrue(labels.any { it == "async" }, "@as 前缀应至少匹配 async: $labels")
+        assertTrue(labels.none { it == "mut" }, "@as 前缀不应匹配 mut: $labels")
+    }
+
+    @Test fun `格式化保留字符串引号`() {
+        val src = "fun main() { var s = \"hello\" }"
+        val a = opened(src)
+        val text = (a.formatDocument("file:///t.subl") ?: error("null")).first().newText
+        assertTrue(text.contains("\"hello\""), "格式化后字符串引号必须在: " + text.lines().filter { it.contains("\"hello\"") })
+    }
     @Test fun `格式化标准 链式调用换行缩进对齐成员`() {
         val src = "fun main() { xs.map(f).filter(g) }"
         val a = opened(src)

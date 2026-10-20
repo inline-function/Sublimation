@@ -1780,7 +1780,9 @@ class LspAnalysis {
                         if (tk.kind == Kind.DOT && out.isNotEmpty() && out.last() == '\n') extraIndent = 1   // 比语句基准深一级
 
                     }
-                    emit(tk.text, prev != null && spaceBetween(prev, tk))
+                    // STR token 的 text 已被 Lexer 剥掉引号：格式化必须补回，否则字符串丢内容界定
+                    val text = if (tk.kind == Kind.STR) '"' + tk.text + '"' else tk.text
+                    emit(text, prev != null && spaceBetween(prev, tk))
                     prev = tk
                 }
             }
@@ -1836,6 +1838,22 @@ class LspAnalysis {
         }
 
         // 成员上下文补全：. 或 :: 之后按 receiver 类型过滤（字段/方法/构造子）
+        // 注解补全：@ 前缀（@as、@）→ 内建注解表（IDE 输 @ 即提示，含中文说明）
+        val annoCtx = annotationContextAt(state.source, offset)
+        if (annoCtx != null) {
+            val (aprefix, _) = annoCtx
+            val items = ANNOTATIONS.filter { aprefix.isEmpty() || it.first.startsWith(aprefix) }
+                .map { (name, doc) ->
+                    CompletionItem(
+                        label = name,
+                        kind = CompletionItemKind.Keyword,
+                        detail = "注解",
+                        documentation = doc,
+                        sortText = (if (name == aprefix) "0" else "1") + "_" + name,
+                    )
+                }
+            return CompletionList(isIncomplete = false, items = items)
+        }
         val memberCtx = memberContextAt(state.source, offset)
         if (memberCtx != null) {
             val members = memberCompletion(uri, memberCtx.first, memberCtx.second)
@@ -1987,6 +2005,16 @@ class LspAnalysis {
         var start = offset - 1
         while (start >= 0 && (source[start].isLetterOrDigit() || source[start] == '_')) start--
         return source.substring(start + 1, offset)
+    }
+
+    /** 注解上下文：光标在 @xxx 前缀内（或紧邻 @）→ 返回 (前缀, 起始偏移)；否则 null */
+    private fun annotationContextAt(source: String, offset: Int): Pair<String, Int>? {
+        // 扫出标识符前缀
+        var start = offset - 1
+        while (start >= 0 && (source[start].isLetterOrDigit() || source[start] == '_')) start--
+        // 前缀起点必须紧邻 @（中间允许无字符，即 "@" 后立即提示）
+        if (start >= 0 && source[start] == '@') return source.substring(start + 1, offset) to (start + 1)
+        return null
     }
 
     private fun kindOf(variety: String): CompletionItemKind = when (variety) {
@@ -2144,6 +2172,16 @@ class LspAnalysis {
         )
         /** typeDefinition 目标成员类型（类型声明 varieties） */
         val TYPE_VARIETIES: Set<String> = setOf("struct", "enum", "class", "type")
+
+        /** 内建注解（编译器实际识别的集合）：名字 → 中文说明（补全 documentation 直接给 IDE） */
+        val ANNOTATIONS: List<Pair<String, String>> = listOf(
+            "async" to "标记函数为异步上下文：内部可调用 t.join()/ch.send() 等挂起操作（不可在纯函数里用）",
+            "impure" to "标记函数有副作用：解除纯函数限制（I/O、可变状态、随机等）；调用方需相应处理",
+            "mut" to "标记类型可变或函数以可变视图访问接收者：@mut 函数要求接收者持有 @mut 视图",
+            "list" to "标记参数为可变 List 视图（调用时按引用传递，修改对调用方可见）",
+            "ref" to "标记字段/参数为引用绑定：深拷贝时按引用而非值复制",
+            "root" to "标记标准库内建声明（core 专属，用户代码通常不用）",
+        )
 
         // ───────── Unicode 符号补全（\xxx 触发）─────────
         /** 触发串（不含反斜杠）→ 目标 Unicode 符号 */
