@@ -1034,6 +1034,26 @@ class LspAnalysisTest {
         assertTrue(ifItem.insertText!!.startsWith("if ("), "if 骨架应以 if ( 开头，实际: " + ifItem.insertText)
     }
 
+    @Test fun `快速修正 E-IMPL-INCOMPLETE 为缺失方法补存根`() {
+        val src = "class Show[T] { fun show(t: T): Str }\nimpl Show[Nat] for Nat { }"
+        val a = opened(src)
+        val d = a.diagnosticsFor("file:///t.subl").firstOrNull { it.code == "E-IMPL-INCOMPLETE" }
+        if (d != null) {
+            val acts = a.codeActionsFor("file:///t.subl", d.range, listOf(d))
+            val fix = acts.firstOrNull { it.title.contains("存根") } ?: error("无修正: ${acts.map { it.title }}")
+            val text = fix.edit!!.changes!!["file:///t.subl"]!!.first().newText
+            assertTrue(text.contains("fun show"), "存根应含方法签名: $text")
+        }
+    }
+    @Test fun `快速修正 E-ARITY 删掉函数调用中多余的实参`() {
+        val src = "fun one(a: Nat): Nat = a\nfun main() { one(1, 2) }"
+        val a = opened(src)
+        val d = a.diagnosticsFor("file:///t.subl").firstOrNull { it.code == "E-ARITY" } ?: error("应报 E-ARITY")
+        val acts = a.codeActionsFor("file:///t.subl", d.range, listOf(d))
+        val fix = acts.firstOrNull { it.title.contains("多余的实参") } ?: error("无修正: ${acts.map { it.title }}")
+        val text = fix.edit!!.changes!!["file:///t.subl"]!!.first().newText
+        assertEquals(")", text)
+    }
     @Test fun `快速修正 E-NEED-ASYNC 给所在函数加 async 注解`() {
         val src = "fun work(): Unit { t.join() }"
         val a = opened(src)

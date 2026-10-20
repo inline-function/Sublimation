@@ -953,7 +953,7 @@ private var ifIsCond: Boolean = false
 
     private fun parseImpl(): ImplDecl {
         at(Kind.IMPL)
-        val implTok = tokens[pos - 1]   // impl 关键字 token（诊断/跳转定位锚点）
+        val implTok = toks[pos - 1]   // impl 关键字 token（诊断/跳转定位锚点）
         val t0 = parseType()
         // impl 无 for（`impl T { … }`）= 单纯方法添加（用户拍板：承担重载职责）：trait 置 null，成员在 parseFile 展开为自由函数
         val trait: Type?
