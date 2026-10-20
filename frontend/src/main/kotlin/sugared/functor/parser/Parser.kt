@@ -1169,7 +1169,11 @@ private var ifIsCond: Boolean = false
                     else FunRefExpr(e, member, e.pos)
                 }
                 // v3.0 特性 7：`.` 字段访问 ⇔ 点前无空格（`a.b`），或点在自己行的行首（换行链 `\n    .map`）；`1 . x = 1` 同行带空格点是 ∃ 分隔符
-                t.kind == Kind.DOT && (!t.precededBySpace || toks.getOrNull(pos - 1)?.line != t.line) -> { pos++; e = FieldExpr(e, nameToken()) }
+                t.kind == Kind.DOT && (!t.precededBySpace || toks.getOrNull(pos - 1)?.line != t.line) -> {
+                    pos++
+                    val mt = cur()   // 成员 token（保留行列：rename/诊断定位靠它，而非接收者）
+                    e = FieldExpr(e, nameToken(), "${mt.line}:${mt.col}")
+                }
                 t.kind == Kind.LPAREN -> {
                     // O3（决策 69）：大写名字 + `()`/`(IDENT = …)` 形态 → 命名字段构造；其余仍走普通调用
                     // v2.1：`E::A(...)` 枚举成员路径不走命名字段构造（复合名含 ::），保持普通调用 → codegen 归一化裸名
@@ -1177,7 +1181,8 @@ private var ifIsCond: Boolean = false
                         e = StructCtorExpr(e.name, parseStructCtorArgs())
                     else {
                         val (pa, na) = parseArgs()
-                        e = CallExpr(e, pa, namedArgs = na)
+                        // 调用位置取 callee 位置（方法糖=成员名、普通函数=函数名）：诊断/快速修正据此定位
+                        e = CallExpr(e, pa, namedArgs = na, pos = e.pos)
                     }
                 }
                 t.kind == Kind.LT && !t.precededBySpace -> {
