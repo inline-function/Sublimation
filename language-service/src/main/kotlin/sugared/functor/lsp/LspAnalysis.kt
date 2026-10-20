@@ -1142,6 +1142,9 @@ class LspAnalysis {
                 "E-NAMED-ARG" -> fixMethodSugarNamedArg(state, tokens, d)?.let {
                     byCode.getOrPut("E-NAMED-ARG" to "改成自由函数调用 f(接收者, …)") { mutableListOf() } += it
                 }
+                "E-ARITY" -> fixArity(state, tokens, d)?.let {
+                    byCode.getOrPut("E-ARITY" to "删掉多余的实参") { mutableListOf() } += it
+                }
                 else -> {}
             }
         }
@@ -1199,6 +1202,65 @@ class LspAnalysis {
         val p0 = offsetToPosition(source, recvOff, lineStarts)
         val p1 = offsetToPosition(source, nameEnd, lineStarts)
         return TextEdit(Range(p0, p1), tokens[nameIdx].text + "(" + recvText + ", ")
+    }
+
+    /** E-ARITY：实参比形参多——删掉从第 (paramCount+1) 个顶层逗号到匹配右括号前的多余实参文本 */
+    private fun fixArity(state: DocState, tokens: List<Token>, diag: Diagnostic): TextEdit? {
+        val source = state.source
+        val lineStarts = state.lineStarts ?: return null
+        val diagOff = positionToOffset(source, diag.range.start, lineStarts) ?: return null
+        // 诊断位置（函数名/方法名 token）向后找最近的 LPAREN —— 本调用的实参起点
+        var parenIdx = -1
+        for (i in tokens.indices) {
+            val ls = lineStarts.getOrNull(tokens[i].line - 1) ?: continue
+            val start = ls + tokens[i].col - 1
+            if (start >= diagOff && tokens[i].kind == Kind.LPAREN) { parenIdx = i; break }
+        }
+        if (parenIdx < 1) return null
+        val nameTok = tokens[parenIdx - 1]
+        if (nameTok.kind != Kind.IDENT) return null
+        val fn = findFunction(state.ast, nameTok.text) ?: return null
+        val paramCount = fn.params.size
+        // 顶层逗号分界（含命名实参的 = 与括号嵌套不算顶层逗号）
+        val parenOff = lineStarts.getOrNull(tokens[parenIdx].line - 1)!!.let { it + tokens[parenIdx].col - 1 }
+        val closes = matchingClose(source, parenOff) ?: return null
+        var depth = 0
+        var argNo = 1   // 已扫过的实参个数（parenOff 后第一个实参为 1 号）
+        var cutStart = -1
+        var j = parenOff + 1
+        while (j < closes) {
+            val c = source[j]
+            when {
+                c == '(' || c == '[' || c == '{' -> depth++
+                c == ')' || c == ']' || c == '}' -> depth--
+                c == ',' && depth == 0 -> {
+                    argNo++
+                    if (argNo == paramCount + 1) { cutStart = j; break }
+                }
+            }
+            j++
+        }
+        if (cutStart < 0) return null   // 实参并未超出，不修
+        val p0 = offsetToPosition(source, cutStart, lineStarts)
+        val p1 = offsetToPosition(source, closes, lineStarts)
+        return TextEdit(Range(p0, p1), ")")   // 从多余逗号起连同右括号一起换成 )
+    }
+
+    /** 左括号偏移 → 匹配的右括号偏移（string 里的括号不特殊处理，与 signatureHelp 一致） */
+    private fun matchingClose(source: String, open: Int): Int? {
+        var depth = 0
+        var k = open
+        while (k < source.length) {
+            when (source[k]) {
+                '(', '[', '{' -> depth++
+                ')', ']', '}' -> {
+                    depth--
+                    if (depth == 0) return k
+                }
+            }
+            k++
+        }
+        return null
     }
 
     /** E-NEED-ASYNC：挂起调用需 @async 上下文——在最近的 fun 关键字（含局部/匿名函数）前插入注解 */
