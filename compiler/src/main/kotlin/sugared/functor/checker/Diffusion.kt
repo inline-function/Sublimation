@@ -295,6 +295,11 @@ internal fun Checker.proveOrDeepInner(gamma0: List<Prop>, goal: Prop): Boolean {
         if (av == false) return true
         if (av == true) return proveOrDeep(gamma, goal.b)
     }
+    // PAnd 目标（合取引入）：证 A ∧ B ⟺ 分别证 A 与 B。
+    // wiki/上下文系统曾载「存在语句的见证部分不支持类型断言（x : Nat）混在性质里」——
+    // 缺此通道时 ∃ x = 1 . (x : Nat) ∧ (x > 0) 的替换实例是合取目标，逐通道都吃不下。
+    // 单调性保证：成分比整体小，递归必终止。
+    if (goal is PAnd) return proveOrDeep(gamma, goal.a) && proveOrDeep(gamma, goal.b)
     // v3.0 特性 1：常量原子真值直接判定（不动推理规则；构造位伴生命题字面量场景）
     constAtomValue(goal)?.let { return it }
     // 根文档·为命题 `e : T`：字面量类型判定
