@@ -1110,6 +1110,27 @@ class LspAnalysisTest {
         }
     }
 
+    @Test fun `格式化保留块体多语句换行不压一行`() {
+        val src = "fun main() { var a = 1\nvar b = 2\nprint(a)\nprint(b) }"
+        val a = opened(src)
+        val edits = a.formatDocument("file:///t.subl") ?: error("formatDocument 返回 null")
+        val text = edits[0].newText
+        val lines = text.split("\n").filter { it.isNotBlank() }
+        assertTrue(lines.size >= 3, "块体 3 条语句应至少占 3 行，实际: ${lines.size} 行 -> ${lines}")
+        assertTrue(lines.any { it.contains("var a") } && lines.any { it.contains("var b") },
+            "a 与 b 应各占一行: $lines")
+    }
+
+    @Test fun `挂 core 后诊断不泄漏 stdlib 行号偏移`() {
+        // 用户文件只有 2 行；core 挂上后 stdlib 自身诊断行号必然 > 2，应全部过滤掉
+        val src = "fun f(s: Nat, x: Nat): Nat = x\nfun main() { f(1) }"
+        val a = opened(src)
+        val ds = a.diagnosticsFor("file:///t.subl")
+        val userLines = src.split("\n").size
+        val spilled = ds.filter { it.range.start.line + 1 > userLines && (it.range.start.line != 0 || it.range.start.character != 0) }
+        assertTrue(spilled.isEmpty(), "不应有行号超出用户文件的诊断: ${spilled.map { it.code + "@" + it.range.start.line }}")
+    }
+
     @Test fun `工程模式也应识别 core 内建构造子 Ok`() {
         // core/collection/result.subl 定义 Result 及构造子 Ok/Err；工程模式未挂 core 时此处报未知构造子
         val src = "fun f(): Result<Nat, Str> = Ok(1)"

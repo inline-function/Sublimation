@@ -194,9 +194,11 @@ class LspAnalysis {
                     inferNotes = emptyList()
                 }
                 ast = userFinal
-                // Checker 输入 = stdlib（core 目录 .subl）+ 用户条目：脚本与工程模式都要挂 core，
-                // 否则工程模式编辑期会把 Ok/List 等内建构造子报成「未知构造子」，补全/诊断/高亮皆受影响
-                val checkedAst = FileAst(scriptStdlib() + userFinal.entries)
+                // Checker 输入 = 用户条目 + stdlib（core 目录 .subl）：脚本与工程模式都要挂 core，
+                // 否则工程模式编辑期会把 Ok/List 等内建构造子报成未知构造子（补全/诊断/高亮皆受影响）。
+                // 用户条目放**前面**：诊断的 line:col 相对用户源码原样，stdlib 的诊断行号超出用户文件
+                // 行数，由 diagnosticsFor 过滤掉，避免行号偏移污染与 core 自身诊断泄漏。
+                val checkedAst = FileAst(userFinal.entries + scriptStdlib())
                 val checker = Checker(checkedAst, scriptMode = isScript)
                 bag = checker.run()
                 syms = checker.syms
@@ -243,7 +245,12 @@ class LspAnalysis {
     fun diagnosticsFor(uri: String): List<Diagnostic> {
         val state = docs[uri] ?: return emptyList()
         val bag = state.bag ?: return emptyList()
-        return bag.diags.map { d ->
+        // 挂 core 后 stdlib 的诊断行号会超出用户文件范围：过滤掉（pos 为空的用户诊断保留）
+        val userLines = state.source.split("\n").size
+        return bag.diags.filter { d ->
+            val ln = d.pos.substringBefore(":").toIntOrNull() ?: return@filter true
+            ln <= userLines
+        }.map { d ->
             Diagnostic(
                 range = diagPosToRange(d.pos, state.source),
                 severity = d.severity.toDiagnosticSeverity(),
@@ -1640,6 +1647,12 @@ class LspAnalysis {
                     }
                 }
                 else -> {
+                    // 块体多语句以换行分隔（Lexer 吞 \n、无 NEWLINE token）：
+                    // 若本 token 与前一个不同行（且前者不是结构符），先断行再 emit，避免全压一行
+                    if (prev != null && prev.line != tk.line &&
+                        prev.kind != Kind.LBRACE && prev.kind != Kind.SEMI && prev.kind != Kind.AT) {
+                        if (out.isNotEmpty() && out.last() != '\n') newline()
+                    }
                     emit(tk.text, prev != null && spaceBetween(prev, tk))
                     prev = tk
                 }
