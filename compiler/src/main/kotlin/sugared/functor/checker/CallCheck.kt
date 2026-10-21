@@ -25,7 +25,10 @@ internal fun Checker.checkStructCtor(e: StructCtorExpr, f: Frame, pure: Boolean)
     val st = syms.structs[e.struct] ?: run {
         d.error("E-UNBOUND-NAME", e.pos, "构造未定义结构体 ${e.struct}"); return syntheticT("构造${e.struct}")
     }
-    if (st.fields.any { it.type.containsAny() } && uncheckedDepth == 0)
+    // 安卓视图结构体（android doc/安卓标准库.md §视图结构体）：children: List[Any] 与
+    // recomposion: (Any)=>Null 是编译器注入的属性（@view 注解处理器），含 Any 属设计必然，豁免。
+    val isViewStruct = "view" in st.annotations
+    if (st.fields.any { it.type.containsAny() } && uncheckedDepth == 0 && !isViewStruct)
         d.error("E-ANY-STRUCT", e.pos, "结构体 ${e.struct} 含有 Any 类型的成员，必须用 unchecked 关键字才能创建。更好的做法：给该成员标注具体类型")
     // HKT-2（《高阶类型.md》§7.2）：命名字段构造同样反推类型实参（Pair(first = 1, second = "a") → Pair[Nat, Str]）
     val tps = st.theory.filterIsInstance<TypeParam>().map { it.name }

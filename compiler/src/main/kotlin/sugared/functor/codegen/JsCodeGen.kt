@@ -95,6 +95,10 @@ class JsCodeGen {
     private var rangeUsed = false
     /** v2.0 异步（CH-5）：receive 智能转换（CallExpr → true）→ codegen 解包 `(…)[0]` */
     private var receiveSmartHits: Map<CallExpr, Boolean> = emptyMap()
+    /** 安卓内建（android doc/安卓标准库.md）：@android 无体声明调用点的编译期桥接名集合。
+     *  桌面/node 环境走 __dshAndroid 注入桩（空操作，保证产物可运行）；android webview 内由
+     *  原生支持器注入同名全局函数，实现 log/toast/layout/生命周期/重组通知。 */
+    private var androidUsed = false
     /** v2.0 异步（root doc《异步》）：Flow 体 emit(v) 调用点 → codegen 生成 yield v */
     private var flowEmitHits: Map<CallExpr, Boolean> = emptyMap()
     /** HKT（《高阶类型.md》HKT-D2）：带参类型类方法调用点 → kind 应用位下标（点号式 `xs.map(f)` 的 fa 位）。
@@ -267,6 +271,15 @@ class JsCodeGen {
             line("  return ka.every(k => __eq(a[k], b[k]));")
             line("};")
         }
+        androidUsed = units.any { (_, fa) -> androidPreScan(fa) }
+                // 安卓桥接兜底（android doc/安卓标准库.md）：仅在用到 @android 内建时注入。
+        // node/桌面：log 打到 console，其余空操作；webview 内由原生注入的 __dshAndroid 接管。
+        if (androidUsed) {
+            line("const __dshAndroid = (kind, args) => {")
+            line("  if (kind === \"log\") console.log(...args);")
+            line("  return null;")
+            line("};")
+        }
         // root doc《副作用与可变性控制》85-144：可变视图深拷贝助手——绑定/赋值触发 __dc(value)。
         // 仅在源码用到可变视图拷贝时注入（编译器按 binderNeedsCopy 留痕 deepCopyHits）。
         if (deepCopyHits.isNotEmpty()) {
@@ -372,7 +385,55 @@ class JsCodeGen {
      * 预扫描：源码里是否出现 `==`/`!=`（决定是否注入结构相等助手）。
      * 用类成员函数而非局部函数——局部函数不能互相前向引用（表达式遍历需调语句遍历，反之亦然）。
      */
-    private fun needEqPreScan(file: FileAst): Boolean {
+    
+/** 安卓内建兜底桥接名集合（android doc/安卓标准库.md）。*/
+private val ANDROID_CALL_SPECIAL: Set<String> = setOf(
+    "log", "toast", "layout",
+    "onCreate", "onStart", "onResume", "onPause", "onStop", "onDestroy", "onRestart",
+    "androidRecompose",
+)
+
+/** 安卓桥接预扫描：源码里是否调用了 @android 内建（决定是否注入 __dshAndroid 兜底桩）。 */
+private fun androidPreScan(file: FileAst): Boolean {
+    for (e in file.entries) {
+        val d = (e as? DeclEntry)?.decl ?: continue
+        if (d is FunDecl && d.body != null && exprHasAndroidCall(d.body!!)) return true
+    }
+    return false
+}
+
+private fun exprHasAndroidCall(e: Expr): Boolean = when (e) {
+    is CallExpr -> {
+        val n = when (val c = e.callee) {
+            is NameRef -> c.name
+            is InstExpr -> (c.target as? NameRef)?.name
+            else -> null
+        }
+        if (n != null && n in ANDROID_CALL_SPECIAL) true
+        else exprHasAndroidCall(e.callee) || e.args.any { exprHasAndroidCall(it) } ||
+            e.namedArgs.values.any { exprHasAndroidCall(it) }
+    }
+    is BlockExpr -> e.stmts.any { stmtHasAndroidCall(it) }
+    is LambdaExpr -> exprHasAndroidCall(e.body)
+    is StructCtorExpr -> e.assigns.any { exprHasAndroidCall(it.second) }
+    is BinExpr -> exprHasAndroidCall(e.left) || exprHasAndroidCall(e.right)
+    is UniExpr -> exprHasAndroidCall(e.operand)
+    is IfExpr -> exprHasAndroidCall(e.cond) || exprHasAndroidCall(e.thenBlock) ||
+        (e.elseBlock != null && exprHasAndroidCall(e.elseBlock!!))
+    is FieldExpr -> exprHasAndroidCall(e.target)
+    is VarExpr -> exprHasAndroidCall(e.value)
+    else -> false
+}
+
+private fun stmtHasAndroidCall(s: Stmt): Boolean = when (s) {
+    is VarStmt -> exprHasAndroidCall(s.value)
+    is ExprStmt -> exprHasAndroidCall(s.expr)
+    is AssignStmt -> exprHasAndroidCall(s.target) || exprHasAndroidCall(s.value)
+    is ReturnStmt -> s.expr != null && exprHasAndroidCall(s.expr!!)
+    is UncheckedStmt -> stmtHasAndroidCall(s.inner)
+    else -> false
+}
+private fun needEqPreScan(file: FileAst): Boolean {
         eqHit = false
         for (e in file.entries) when (e) {
             is DeclEntry -> walkDeclEq(e.decl)
@@ -914,6 +975,13 @@ class JsCodeGen {
         // v2.0 异步（root doc《异步》）：Mutex 创建 `Mutex()` → new Mutex()
         if (name == "Mutex" && e.args.isEmpty())
             return "new Mutex()"
+        // 安卓内建（android doc/安卓标准库.md）：@android 无体声明的编译期 JS 桥接——
+        // 桌面/node 走 __dshAndroid 兜底注入桩；webview 内由 KT 端注入实现。
+        if (name != null && name in ANDROID_CALL_SPECIAL) {
+            androidUsed = true
+            val a = e.args.joinToString(", ") { expr(it) }
+            return "__dshAndroid(\"" + name + "\", [" + a + "])"
+        }
         if (name == "println" || name == "print") {
             // 修复（#8）：print 与 toStr 统一走 __dshtoStr（列表打印为 [] 形式，无空格）
             val a = e.args.joinToString(", ") { "__dshtoStr(${expr(it)})" }

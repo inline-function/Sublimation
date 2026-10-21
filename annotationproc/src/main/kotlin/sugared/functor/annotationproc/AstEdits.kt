@@ -7,6 +7,7 @@ import sugared.functor.ast.Entry
 import sugared.functor.ast.FileAst
 import sugared.functor.ast.FunDecl
 import sugared.functor.ast.ReturnStmt
+import sugared.functor.ast.StructDecl
 import sugared.functor.ast.Stmt
 import sugared.functor.checker.Diag
 import sugared.functor.checker.Severity
@@ -43,6 +44,14 @@ internal sealed interface AstEdit {
 
     /** 把名为 [name] 的声明整体替换为解析自 [src] 的新声明。 */
     data class ReplaceDecl(val name: String, val src: String) : AstEdit
+
+    /** 视图构造点整体改写（android doc/安卓标准库.md §3.2）：把 X(...) { 子视图 } 改写为
+     *  X(..., children = listOf(子视图), recomposion = recomposion$X$N)。body 擦除、
+     *  子视图成为 children 成员。幂等：已改写的构造点不再匹配。 */
+    data class RewriteViewCtors(val viewNames: Set<String>) : AstEdit
+
+    /** 视图结构体字段注入（幂等）：给结构体追加 children: List[Any] + recomposion: (Any)=>Null。 */
+    data class InjectViewFields(val structName: String) : AstEdit
 }
 
 /**
@@ -62,6 +71,32 @@ internal fun applyAstEdits(
 ): FileAst {
     if (edits.isEmpty()) return ast
 
+    val applied = HashSet<AstEdit>()
+    var changed = false
+
+    // ---------- 阶段零：视图结构体字段注入 + 构造点整体改写（先于其他结构性编辑） ----------
+    var cur = ast
+    val injects = edits.filterIsInstance<AstEdit.InjectViewFields>()
+    if (injects.isNotEmpty()) {
+        var iChanged = false
+        val iOut = ArrayList<Entry>(cur.entries.size)
+        for (e in cur.entries) {
+            val d = (e as? DeclEntry)?.decl as? StructDecl
+            val ed = if (d != null) injects.firstOrNull { it.structName == d.name } else null
+            if (d != null && ed != null) {
+                applied += ed
+                val nd = injectViewFields(d)
+                if (nd !== d) { iChanged = true; iOut += DeclEntry(nd) } else iOut += e
+            } else iOut += e
+        }
+        if (iChanged) { cur = FileAst(iOut); changed = true }
+    }
+    for (ed in edits.filterIsInstance<AstEdit.RewriteViewCtors>()) {
+        applied += ed
+        val nw = rewriteViewCtors(cur, ed.viewNames)
+        if (nw !== cur) { cur = nw; changed = true }
+    }
+
     // ---------- 阶段一：解析全部片段 ----------
     val bodies = HashMap<AstEdit.SetFunBody, sugared.functor.ast.Expr>()
     val stmts = HashMap<AstEdit.PrependStmts, List<Stmt>>()
@@ -76,6 +111,8 @@ internal fun applyAstEdits(
                     if (ed.stmts.isEmpty()) emptyList() else parseStmtsSnippet(ed.stmts.joinToString("\n"), "<processor:prepend:${ed.name}>")
                 is AstEdit.AddDecl -> decls[ed] = parseDeclSnippet(ed.src, "<processor:addDecl>")
                 is AstEdit.ReplaceDecl -> decls[ed] = parseDeclSnippet(ed.src, "<processor:replaceDecl:${ed.name}>")
+                is AstEdit.RewriteViewCtors -> {}   // 阶段零已整体应用，此阶段无需解析
+                is AstEdit.InjectViewFields -> {}    // 阶段零已整体应用，此阶段无需解析
             }
             parsedOk += ed
         } catch (ex: ParseFailure) {
@@ -83,14 +120,12 @@ internal fun applyAstEdits(
                 "处理器结构性编辑的源码片段解析失败（编辑被丢弃）：" + ex.message)
         }
     }
-    if (parsedOk.isEmpty()) return ast
+    if (parsedOk.isEmpty()) return if (changed) cur else ast
 
-    // ---------- 阶段二：嫁接 ----------
-    val applied = HashSet<AstEdit>()
-    val out = ArrayList<Entry>(ast.entries.size)
-    var changed = false
+    // ---------- 阶段二：嫁接（基于阶段零改写后的 cur） ----------
+    val out = ArrayList<Entry>(cur.entries.size)
 
-    for (e in ast.entries) {
+    for (e in cur.entries) {
         var entry = e
         val decl = (entry as? DeclEntry)?.decl
         if (decl != null) {
@@ -105,29 +140,29 @@ internal fun applyAstEdits(
                 }
             }
             // setFunBody / prependStmts：作用于当前 entry 的函数声明
-            val cur = (entry as? DeclEntry)?.decl as? FunDecl
-            if (cur != null && cur.name.isNotEmpty()) {
+            val fcur = (entry as? DeclEntry)?.decl as? FunDecl
+            if (fcur != null && fcur.name.isNotEmpty()) {
                 for (ed in edits) {
                     if (ed !in parsedOk || applied.contains(ed)) continue
                     when (ed) {
                         is AstEdit.SetFunBody -> {
-                            if (ed.name == cur.name) {
+                            if (ed.name == fcur.name) {
                                 applied += ed
-                                entry = DeclEntry(cur.copy(body = bodies[ed])); changed = true
+                                entry = DeclEntry(fcur.copy(body = bodies[ed])); changed = true
                             }
                         }
                         is AstEdit.PrependStmts -> {
-                            if (ed.name == cur.name && ed.stmts.isNotEmpty()) {
+                            if (ed.name == fcur.name && ed.stmts.isNotEmpty()) {
                                 val prep = stmts[ed]
                                 if (prep.isNullOrEmpty()) continue
-                                val nb = when (val b = cur.body) {
+                                val nb = when (val b = fcur.body) {
                                     is BlockExpr -> BlockExpr(prep + b.stmts)
                                     null -> null   // 无体声明（@host 等）：无法插入
                                     else -> BlockExpr(prep + listOf(ReturnStmt(b)))   // 表达式体脱糖
                                 }
                                 if (nb != null) {
                                     applied += ed
-                                    entry = DeclEntry(cur.copy(body = nb)); changed = true
+                                    entry = DeclEntry(fcur.copy(body = nb)); changed = true
                                 }
                             }
                         }
@@ -162,10 +197,12 @@ internal fun applyAstEdits(
                 diags += Diag(Severity.WARN, "W-PROCESSOR-EDIT", "",
                     "处理器编辑未命中：目标声明 " + edTargetName(ed) + " 不存在")
             is AstEdit.AddDecl -> {}
+            is AstEdit.RewriteViewCtors -> {}
+            is AstEdit.InjectViewFields -> {}
         }
     }
 
-    return if (changed) FileAst(out) else ast
+    return if (changed) FileAst(out) else if (cur !== ast) cur else ast
 }
 
 private fun edTargetName(ed: AstEdit): String = when (ed) {
@@ -173,6 +210,8 @@ private fun edTargetName(ed: AstEdit): String = when (ed) {
     is AstEdit.PrependStmts -> ed.name
     is AstEdit.ReplaceDecl -> ed.name
     is AstEdit.AddDecl -> ""
+    is AstEdit.RewriteViewCtors -> ""
+    is AstEdit.InjectViewFields -> ""
 }
 
 /** 声明的（按名匹配的）名字；ImplDecl 无名字段（按 trait/self 匹配），返回 null。 */

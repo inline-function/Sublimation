@@ -96,7 +96,16 @@ private var ifIsCond: Boolean = false
     /** 片段解析：单条声明（fun / struct / enum / class / impl / type 声明）。
      *  解析后要求整段耗尽（多余内容报语法错），供 parseDeclSnippet 复用。 */
     fun snippetDecl(): Decl {
-        val d = parseDecl()
+        // 注解处理器的 replaceDecl/addDecl 片段允许带注解声明（如 "@view struct Box(...)"、
+        // "@android fun recomposion$Box$1(v: Any): Null = ...")——先吃注解再走声明解析。
+        val anns = if (peek(Kind.AT)) parseAnnotations() else emptyList()
+        fun apply(d: Decl): Decl = when (d) {
+            is FunDecl -> if (anns.isEmpty()) d else d.copy(annotations = anns + d.annotations)
+            is StructDecl -> if (anns.isEmpty()) d else d.copy(annotations = anns + d.annotations)
+            is ClassDecl -> if (anns.isEmpty()) d else d.copy(annotations = anns + d.annotations)
+            else -> d
+        }
+        val d = apply(parseDecl())
         requireSnippetEof("声明")
         return d
     }

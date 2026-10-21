@@ -98,6 +98,31 @@ object ProcessorApi {
             val names: List<String> = structByName(args[0] as String)?.fields?.map { it.name } ?: emptyList()
             names
         }
+
+        // ---------- 安卓视图处理器支撑（android doc/安卓标准库.md） ----------
+        interp.register("fieldDeclText", "name" to ScriptType.Str, "field" to ScriptType.Str,
+            retType = ScriptType.Str) { args ->
+            val st = structByName(args[0] as String)
+            val fp = st?.fields?.firstOrNull { it.name == args[1] as String }
+            if (fp == null) "" else fieldDeclText(fp)
+        }
+        interp.register("structHasFieldList", "name" to ScriptType.Str,
+            retType = ScriptType.Bool) { args ->
+            val st = structByName(args[0] as String)
+            (st != null && st.fields.isNotEmpty())
+        }
+        interp.register("viewCtorSites", retType = ScriptType.ListT(ScriptType.Str)) { _ ->
+            val views = structs.filter { it.isView() }.map { it.name }.toSet()
+            val sites = collectViewCtorSites(input.ast, views)
+            sites.map { it.funName + "|" + it.viewName + "|" + it.ordinal }
+        }
+        interp.register("rewriteViewCtors") { _ ->
+            val views = structs.filter { it.isView() }.map { it.name }.toSet()
+            astEdits += AstEdit.RewriteViewCtors(views); null
+        }
+        interp.register("injectViewStruct", "name" to ScriptType.Str) { args ->
+            astEdits += AstEdit.InjectViewFields(args[0] as String); null
+        }
         interp.register("fieldAnnotations", "struct" to ScriptType.Str, "field" to ScriptType.Str,
             retType = ScriptType.ListT(ScriptType.Str)) { args ->
             val st = structByName(args[0] as String)
@@ -258,6 +283,12 @@ private fun applyFunEdits(
     return sugared.functor.ast.DeclEntry(decl.copy(annotations = newAnnos.toList()))
 }
 
+
+/** 字段声明的源码文本（注解 + 名字 + 类型），供 .subs 脚本重组结构体声明。 */
+private fun fieldDeclText(fp: sugared.functor.ast.Param): String {
+    val annos = if (fp.annotations.isEmpty()) "" else fp.annotations.joinToString(" ") { "@" + it } + " "
+    return annos + fp.name + ": " + fp.type.render()
+}
 /** 幂等地增/删一条注解。 */
 private fun applyOne(annos: MutableList<String>, ed: AnnotationEdit) {
     if (ed.add) { if (ed.annotation !in annos) annos += ed.annotation }

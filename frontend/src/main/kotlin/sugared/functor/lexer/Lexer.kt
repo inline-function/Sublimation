@@ -215,6 +215,18 @@ class Lexer(private val src: String, private val fileName: String) {
         while (i < src.length && (src[i].isLetterOrDigit() || src[i] == '_')) {
             sb.append(src[i]); adv()
         }
+        // 安卓注解处理器（android doc/安卓标准库.md）：编译器生成的合成名 recomposion$Box$1——
+        // 标识符**内部**的 $ 段粘连为一个 token。仅当 $ 不在开头（`$1` 参数引用仍在 next() 单独处理）
+        // 且 $ 后紧跟字母/下划线（段首）时续读，避免吞掉独立的 `$` 符号 token。
+        while (i < src.length && src[i] == '\$' && i + 1 < src.length &&
+            (src[i + 1].isLetter() || src[i + 1] == '_')) {
+            sb.append(src[i]); adv()   // $
+            while (i < src.length && (src[i].isLetterOrDigit() || src[i] == '_')) { sb.append(src[i]); adv() }
+            if (i < src.length && src[i] == '\$' && i + 1 < src.length && src[i + 1] in '0'..'9') {
+                sb.append(src[i]); adv()   // 次序位的 $
+                while (i < src.length && src[i] in '0'..'9') { sb.append(src[i]); adv() }
+            }
+        }
         val text = sb.toString()
         return (keywords[text] ?: Kind.IDENT) to text
     }
