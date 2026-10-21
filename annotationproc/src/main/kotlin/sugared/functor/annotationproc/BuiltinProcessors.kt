@@ -39,10 +39,15 @@ object BuiltinProcessors {
 
     private fun scriptProcessor(f: File): ScriptProcessor {
         val name = f.name.removeSuffix(".subs")
+        val src = f.readText()
+        // 处理器可声明额外关注的注解：首行/注释行 `@interested ann1, ann2`。
+        // 用于跨注解纪律（如 composable.subs 同时关注 view：@view 出现时也要校验视图构造纪律）。
+        val extra = Regex("@interested\\s+([A-Za-z0-9_, ]+)").find(src)
+            ?.groupValues?.get(1)?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
         return ScriptProcessor(
             name = name,
-            interestedAnnotations = setOf(name),
-            scriptSource = f.readText(),
+            interestedAnnotations = setOf(name) + extra,
+            scriptSource = src,
             scriptFileName = f.path,
             stdlibDir = stdlibDir,
         )

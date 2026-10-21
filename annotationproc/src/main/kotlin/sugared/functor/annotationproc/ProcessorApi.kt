@@ -139,6 +139,16 @@ object ProcessorApi {
             val a = args[0] as String
             funs.filter { a in it.annotations }.map { it.name }
         }
+        interp.register("funHasBody", "name" to ScriptType.Str,
+            retType = ScriptType.Bool) { args ->
+            val fn = funs.firstOrNull { it.name == args[0] as String }
+            (fn?.body != null)
+        }
+        interp.register("funHasAnnotation", "name" to ScriptType.Str, "ann" to ScriptType.Str,
+            retType = ScriptType.Bool) { args ->
+            val fn = funs.firstOrNull { it.name == args[0] as String }
+            (fn != null && (args[1] as String) in fn.annotations)
+        }
         interp.register("funAnnotations", "name" to ScriptType.Str,
             retType = ScriptType.ListT(ScriptType.Str)) { args ->
             val annos: List<String> = funByName(args[0] as String)?.annotations ?: emptyList()
