@@ -40,7 +40,7 @@ fun emitOne(line: Str): Null {
 }
 
 fun recomposionFun(view: Str, ord: Str): Str =
-    "@android fun recomposion$" + view + "$" + ord + "(v: Any): Null = androidRecompose(\"" + view + "\", " + ord + ", v)"
+    "@android @impure fun recomposion$" + view + "$" + ord + "(v: Any): Null = androidRecompose(\"" + view + "\", " + ord + ", v)"
 
 // List[Str] 按下标取（0 基）。
 fun nth(xs: List[Str], i: Nat): Str =

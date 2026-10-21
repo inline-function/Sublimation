@@ -264,11 +264,17 @@ internal const val RECOMPOSION = "recomposion"
 */
 internal fun injectViewFields(decl: StructDecl): StructDecl {
     val kept = decl.fields.filterNot { it.name == CHILDREN || it.name == RECOMPOSION }
-    val childrenT = NamedType("List", listOf(NamedType("Any", emptyList())))
+    // children 字段用 Any（自动类型类）而非 List[Any]：List 不变（invariant），异构子视图
+    // listOf(Button(), Text()) 会推成联合 List 与 List[Any] 不符；Any 接受任意具体类型
+    // （List[Button] 本身即一具体类型），JS 侧 children 仍是数组。
+    val childrenT = NamedType("Any", emptyList())
     val recomT = FunType(listOf(NamedType("Any", emptyList())), NamedType("Null", emptyList()))
-    val newFields = kept +
-        Param(CHILDREN, childrenT) +
-        Param(RECOMPOSION, recomT)
+    // 视图结构体全部字段标 @mut（android doc/安卓标准库.md §视图结构体的可变性函数：
+    //  实例不可变语义下字段可被可变性函数修改）——不然 v.modifier = x 会被 E-NOT-MUT 拦截。
+    val mutKept = kept.map { if ("mut" in it.annotations) it else it.copy(annotations = it.annotations + "mut") }
+    val newFields = mutKept +
+        Param(CHILDREN, childrenT, annotations = listOf("mut")) +
+        Param(RECOMPOSION, recomT, annotations = listOf("mut"))
     return if (newFields == decl.fields) decl else decl.copy(fields = newFields)
 }
 internal fun recomposionName(viewName: String, ordinal: Int): String =

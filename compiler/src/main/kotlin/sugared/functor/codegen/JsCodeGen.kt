@@ -203,7 +203,9 @@ class JsCodeGen {
         viewFieldsByStruct.clear()
         overloadsByUnit.clear()
         for ((_, fa) in units) for (e in fa.entries) if (e is DeclEntry) {
-            (e.decl as? FunDecl)?.let { userFns += it.name }
+            // 仅带体的函数算「用户定义」接管名字；无体声明（@android/@root 内建占位）不算——
+            // 否则 androidRecompose 的桥接会被误判为用户函数（回归：合成函数里直接调到未定义符号）
+            (e.decl as? FunDecl)?.takeIf { it.body != null }?.let { userFns += it.name }
             val s = e.decl as? StructDecl ?: continue
             if ("view" in s.annotations) viewFieldsByStruct[s.name] = s.fields.map { it.name }
             structFields[s.name] = s.fields.map { it.name }
@@ -281,6 +283,9 @@ class JsCodeGen {
             line("};")
         }
         androidUsed = units.any { (_, fa) -> androidPreScan(fa) }
+        // 视图变异预扫描：AssignStmt 的字段命中任一 @view 结构体 → 登记深拷贝留痕，
+        // 保证下方 __dc 助手注入（生成阶段的 viewMutation 留痕晚于注入判定）。
+        val viewMutationUsed = units.any { (_, fa) -> viewMutationPreScan(fa) }
                 // 安卓桥接兜底（android doc/安卓标准库.md）：仅在用到 @android 内建时注入。
         // node/桌面：log 打到 console，其余空操作；webview 内由原生注入的 __dshAndroid 接管。
         if (androidUsed) {
@@ -291,7 +296,8 @@ class JsCodeGen {
         }
         // root doc《副作用与可变性控制》85-144：可变视图深拷贝助手——绑定/赋值触发 __dc(value)。
         // 仅在源码用到可变视图拷贝时注入（编译器按 binderNeedsCopy 留痕 deepCopyHits）。
-        if (deepCopyHits.isNotEmpty()) {
+        // 视图变异（@view 字段赋值）也走 __dc 深拷贝——预扫描留痕晚于注入判定，这里并判。
+        if (deepCopyHits.isNotEmpty() || viewMutationUsed) {
             line("const __dc = (v) => {")
             line("  if (v === null || typeof v !== \"object\") return v;")
             line("  if (Array.isArray(v)) return v.map(__dc);")
@@ -403,6 +409,33 @@ private val ANDROID_CALL_SPECIAL: Set<String> = setOf(
 )
 
 /** 安卓桥接预扫描：源码里是否调用了 @android 内建（决定是否注入 __dshAndroid 兜底桩）。 */
+/** 视图变异预扫描：函数体里是否存在 @view 结构体的字段赋值（决定是否注入 __dc 深拷贝助手）。 */
+private fun viewMutationPreScan(file: FileAst): Boolean {
+    if (viewFieldsByStruct.isEmpty()) return false
+    val anyViewField = viewFieldsByStruct.values.flatten().toHashSet()
+    for (e in file.entries) {
+        val d = (e as? DeclEntry)?.decl ?: continue
+        if (d is FunDecl && d.body != null && stmtHasViewMutation(d.body!!)) return true
+    }
+    return false
+}
+
+private fun stmtHasViewMutation(s: Stmt): Boolean = when (s) {
+    is AssignStmt -> (s.target as? FieldExpr)?.name in anyViewField
+    is ExprStmt -> stmtHasViewMutation(s.expr)
+    is UncheckedStmt -> stmtHasViewMutation(s.inner)
+    is VarStmt -> stmtHasViewMutation(s.value)
+    is ReturnStmt -> s.expr?.let { stmtHasViewMutation(it) } ?: false
+    else -> false
+}
+
+private fun stmtHasViewMutation(e: Expr): Boolean = when (e) {
+    is BlockExpr -> e.stmts.any { stmtHasViewMutation(it) }
+    else -> false
+}
+
+private val anyViewField: HashSet<String> get() = viewFieldsByStruct.values.flatten().toHashSet()
+
 private fun androidPreScan(file: FileAst): Boolean {
     for (e in file.entries) {
         val d = (e as? DeclEntry)?.decl ?: continue
@@ -1340,17 +1373,17 @@ private fun needEqPreScan(file: FileAst): Boolean {
     private fun blockIIFE(e: BlockExpr): String = blockStr(e)
 
 
-    /** 安卓视图可变性检测（android doc §77）：`v.f = x` 中 v 是不是函数内的视图结构体实例。
-     *  做法：函数内 `var v = X(...)`（X 是 @view 结构体）登记 v → X；满足时 AssignStmt 的
-     *  字段变更按「拷贝 → 改副本 → recomposion(副本)」发射。X 的字段表由 viewFieldsByStruct 提供。 */
+    /** 安卓视图可变性检测（android doc/安卓标准库.md §视图结构体可变性函数）：`v.f = x`
+     *  v 是不是函数内的视图结构体实例。视图实例常经 @composable 函数间接返回（var r = root()），
+     *  直接构造检测会漏——改为按字段名命中任一 @view 结构体字段即判定（E-NOT-MUT 已保证字段
+     *  是 @mut 的，且持有方是 @mut 视图）。命中时按「拷贝 → 改副本 → recomposion(副本)」发射。 */
     private fun viewMutation(s: AssignStmt): Pair<String, String>? {
         val fe = s.target as? FieldExpr ?: return null
         val vr = fe.target as? NameRef ?: return null
-        val fn = currentFun ?: return null
-
-        val owner = viewVarOwner(fn, vr.name) ?: return null
-        val fields = viewFieldsByStruct[owner] ?: return null
-        return if (fe.name in fields) vr.name to fe.name else null
+        if (viewFieldsByStruct.none { (_, fs) -> fe.name in fs }) return null
+        val direct = currentFun?.let { viewVarOwner(it, vr.name) }
+        if (direct != null && fe.name in (viewFieldsByStruct[direct] ?: emptyList())) return vr.name to fe.name
+        return vr.name to fe.name
     }
 
     /** 函数体内变量名 → 视图结构体名（var v = X(...) 形态的绑定）。 */
