@@ -72,8 +72,14 @@ class JsCodeGen {
     private var dictMethod = false
     /** 结构体字段名索引（从 AST 声明收集，codegen 不读符号表；P0：同名跨模块取最后者，见《模块系统.md》限制） */
     private val structFields = HashMap<String, List<String>>()
+    /** 安卓视图结构体（@view）名 → 字段名（android doc：mutation → 副本 → recomposion 用）。 */
+    private val viewFieldsByStruct = HashMap<String, List<String>>()
+    /** 当前正在生成的函数（安卓视图可变性检测用）。 */
+    private var currentFun: FunDecl? = null
     /** v2.0：重载函数名集合（同名 >1 声明）——这些名字在 JS 里需按首参标签唯一化，避免同名覆盖 */
     private val overloadedFns = HashSet<String>()
+    /** 本模块用户定义函数名集合（安卓桥接优先级：用户函数 > @android 内建）。 */
+    private val userFns = HashSet<String>()
     /** HKT（《高阶类型.md》HKT-D2）：kind 类型类名集合（类声明 theory 含 arity>0 形参，如 Functor[F[_]]）。
      *  其字典方法签名**无 __self**（self 显式在形参表 fa 位）——`(d, f, fa...)`，与零参类型类 `(d, __self)` 区分。 */
     private val kindTraits = HashSet<String>()
@@ -194,9 +200,12 @@ class JsCodeGen {
         }
         currentPrefix = ""
         structFields.clear()
+        viewFieldsByStruct.clear()
         overloadsByUnit.clear()
         for ((_, fa) in units) for (e in fa.entries) if (e is DeclEntry) {
+            (e.decl as? FunDecl)?.let { userFns += it.name }
             val s = e.decl as? StructDecl ?: continue
+            if ("view" in s.annotations) viewFieldsByStruct[s.name] = s.fields.map { it.name }
             structFields[s.name] = s.fields.map { it.name }
         }
         // HKT（《高阶类型.md》HKT-D2）：收集 kind 类型类名（theory 含 arity>0 形参）——genDict 按此决定
@@ -409,7 +418,7 @@ private fun exprHasAndroidCall(e: Expr): Boolean = when (e) {
             is InstExpr -> (c.target as? NameRef)?.name
             else -> null
         }
-        if (n != null && n in ANDROID_CALL_SPECIAL) true
+        if (n != null && n in ANDROID_CALL_SPECIAL && n !in userFns) true
         else exprHasAndroidCall(e.callee) || e.args.any { exprHasAndroidCall(it) } ||
             e.namedArgs.values.any { exprHasAndroidCall(it) }
     }
@@ -618,6 +627,7 @@ private fun needEqPreScan(file: FileAst): Boolean {
     }
 
     private fun genFun(fn: FunDecl) {
+        currentFun = fn
         val body = fn.body ?: return   // 纯签名不生成
         // P6（决策 82）：带约束泛型函数的隐藏字典槽参数——`fun f[T: Show]` → f(d_Show_T, ...)
         // v2.1：Any 是默认类型类（恒满足、零方法无字典）——不生成槽
@@ -718,7 +728,17 @@ private fun needEqPreScan(file: FileAst): Boolean {
                     line("$kw ${mangle(s.name)} = ${dcWrap(s, initJs)};")
                 }
             }
-            is AssignStmt -> line("${expr(s.target)} = ${dcWrap(s, expr(s.value))};")
+            is AssignStmt -> {
+                // 安卓视图可变性（android doc/安卓标准库.md §77）：v.f = x「看似返回 Null，
+                //  实则返回视图自己的副本，再据副本调用 recomposion」——
+                //  深拷贝 v → 改副本 → recomposion(副本)。
+                val vw = viewMutation(s)
+                if (vw != null) {
+                    deepCopyHits += s to true
+                    val (vname, fname) = vw
+                    line("(() => { const __c = __dc($vname); __c.$fname = ${expr(s.value)}; __c.recomposion(__c); })();")
+                } else line("${expr(s.target)} = ${dcWrap(s, expr(s.value))};")
+            }
             // 命题逃逸：擦除为注释，可 grep 审计
             is AxiomStmt -> s.props.forEach { comment("axiom: ${tag(it)}") }
             is ByStmt -> s.props.forEach { comment("by: ${tag(it)}") }
@@ -977,7 +997,9 @@ private fun needEqPreScan(file: FileAst): Boolean {
             return "new Mutex()"
         // 安卓内建（android doc/安卓标准库.md）：@android 无体声明的编译期 JS 桥接——
         // 桌面/node 走 __dshAndroid 兜底注入桩；webview 内由 KT 端注入实现。
-        if (name != null && name in ANDROID_CALL_SPECIAL) {
+        // 仅当本模块没有同名用户定义时才走安卓桥接——用户函数优先（回归 E2E v30：
+        // "@impure fun log(x: Nat)" 是用户函数，不得编成 __dshAndroid("log", ...)）。
+        if (name != null && name in ANDROID_CALL_SPECIAL && name !in userFns) {
             androidUsed = true
             val a = e.args.joinToString(", ") { expr(it) }
             return "__dshAndroid(\"" + name + "\", [" + a + "])"
@@ -1317,6 +1339,40 @@ private fun needEqPreScan(file: FileAst): Boolean {
 
     private fun blockIIFE(e: BlockExpr): String = blockStr(e)
 
+
+    /** 安卓视图可变性检测（android doc §77）：`v.f = x` 中 v 是不是函数内的视图结构体实例。
+     *  做法：函数内 `var v = X(...)`（X 是 @view 结构体）登记 v → X；满足时 AssignStmt 的
+     *  字段变更按「拷贝 → 改副本 → recomposion(副本)」发射。X 的字段表由 viewFieldsByStruct 提供。 */
+    private fun viewMutation(s: AssignStmt): Pair<String, String>? {
+        val fe = s.target as? FieldExpr ?: return null
+        val vr = fe.target as? NameRef ?: return null
+        val fn = currentFun ?: return null
+
+        val owner = viewVarOwner(fn, vr.name) ?: return null
+        val fields = viewFieldsByStruct[owner] ?: return null
+        return if (fe.name in fields) vr.name to fe.name else null
+    }
+
+    /** 函数体内变量名 → 视图结构体名（var v = X(...) 形态的绑定）。 */
+    private fun viewVarOwner(fn: FunDecl, name: String): String? {
+        var owner: String? = null
+        fun look(e: Expr) {
+            val ctor = when (e) {
+                is StructCtorExpr -> e
+                is CallExpr -> e.callee as? StructCtorExpr
+                else -> null
+            }
+            if (ctor != null && ctor.struct in viewFieldsByStruct) owner = ctor.struct
+        }
+        for (st in bodyStmtsOf(fn)) when (st) {
+            is VarStmt -> if (st.name == name) look(st.value)
+            else -> {}
+        }
+        return owner
+    }
+
+    private fun bodyStmtsOf(fn: FunDecl): List<Stmt> =
+        (fn.body as? BlockExpr)?.stmts ?: emptyList()
     /** 语句转单行字符串（供 IIFE 内联；var/assign/expr 足够，axiom/by 擦除为空） */
     private fun stmtStr(s: Stmt): String = when (s) {
         is BTSStmt, is WhenPropStmt, is StrategyStmt, is IfPropStmt, is ExistIntroStmt, is ExistsElimStmt, is FunStmt -> ""
@@ -1376,7 +1432,18 @@ private fun needEqPreScan(file: FileAst): Boolean {
                     out += "$ind${if ("mut" in s.annotations) "let" else "const"} [${destruct.joinToString(", ") { mangle(it) }}] = ${dcWrap(s, expr(s.value))};"
                 else out += "$ind${if ("mut" in s.annotations) "let" else "const"} ${mangle(s.name)} = ${dcWrap(s, expr(s.value))};"
             }
-            is AssignStmt -> out += "$ind${expr(s.target)} = ${dcWrap(s, expr(s.value))};"
+            is AssignStmt -> {
+                // 安卓视图结构体（android doc/安卓标准库.md §77）：视图可变性函数"看似返回 Null，
+                //  实则返回视图自己的副本，然后根据副本调用 recomposion"——
+                //  `v.f = x` → 深拷贝 v、在副本上改、再把副本交给 recomposion 回调。
+                val vw = viewMutation(s)
+                if (vw != null) {
+                    deepCopyHits += s to true   // 确保注入 __dc 运行时助手
+                    val (vname, fname) = vw
+                    val rhs = expr(s.value)
+                    out += "$ind(() => { const __c = __dc($vname); __c.$fname = $rhs; __c.recomposion(__c); })();"
+                } else out += "$ind${expr(s.target)} = ${dcWrap(s, expr(s.value))};"
+            }
             is ExprStmt -> if (s.expr is IfExpr) lambdaIfLines(s.expr as IfExpr, out, ind)
                 else if (s.expr is WhenExpr) lambdaWhenLines(s.expr as WhenExpr, out, ind)   // 含 ifis 脱糖形态：return 穿透 lambda
                 else out += "$ind${expr(s.expr)};"

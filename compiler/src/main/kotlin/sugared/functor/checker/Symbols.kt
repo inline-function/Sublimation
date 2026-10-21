@@ -18,7 +18,10 @@ internal fun Checker.registerPureFacts() {
     for ((name, fn) in syms.funs) {
         // v2.0 @root：无体内建声明的纯度/副作用由**内建表**决定（builtinimpure/builtinPure），用户注解不参与——
         // 否则用户 `@root fun readFile(...)`（无 @impure）会被误注册 pure<readFile>，制造错误证明。
-        val builtin = builtinimpure(name) ?: builtinPure(name) ?: builtinAndroid(name)
+        // 安卓内建（@android）只在用户声明带 @android 注解时才接管注解——否则用户自定义
+        // （如 @impure fun log(x: Nat)）仍按自己的注解注册（回归 E2E v30 函数值 purity 用例）。
+        val androidBuiltin = if ("android" in fn.annotations) builtinAndroid(name) else null
+        val builtin = builtinimpure(name) ?: builtinPure(name) ?: androidBuiltin
         val anns = if (builtin != null) builtin.annotations else fn.annotations
         if ("impure" !in anns) globalFacts += PAtom("pure", listOf(NameRef(name)))
         // v2.0 异步（决策 93）：@async 函数注册自然命题 async<name>——同步上下文调用须显式供给/放行
@@ -33,7 +36,8 @@ internal fun Checker.registerPureFacts() {
         for (p in visiblePaths) {
             val s = allSymbols[p] ?: continue
             for ((name, fn) in s.funs) {
-                val builtin = builtinimpure(name) ?: builtinPure(name) ?: builtinAndroid(name)
+                val androidBuiltin2 = if ("android" in fn.annotations) builtinAndroid(name) else null
+                val builtin = builtinimpure(name) ?: builtinPure(name) ?: androidBuiltin2
                 val anns = if (builtin != null) builtin.annotations else fn.annotations
                 if ("impure" in anns) impureNames += name
                 else if (name !in syms.funs) foreignPure += name   // 本模块已注册过的不重复

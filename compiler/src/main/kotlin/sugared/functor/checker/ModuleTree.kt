@@ -153,7 +153,8 @@ fun jsMangle(n: String): String {
         "typeof", "in", "of", "if", "else", "for", "while", "do", "switch", "case", "default",
         "break", "continue", "delete", "void", "null", "true", "false", "instanceof",
     )
-    val base = if (n.all { it.isLetterOrDigit() || it == '_' }) n
+    // $ 在 JS 标识符里合法（安卓注解处理器生成的合成名 recomposion$Box$1 直接保留，便于 KT 端注入识别）
+    val base = if (n.all { it.isLetterOrDigit() || it == '_' || it == '$' }) n
                else "op_" + n.toCharArray().joinToString("") { "%04x".format(it.code) }
     return if (base in jsReserved) "\$$base" else base
 }

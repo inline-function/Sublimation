@@ -385,7 +385,7 @@ class Symbols {
     /** v3.0 特性 2：委托 impl（by field）的展开方法表（ImplDecl → 含转发的完整成员列表），供 codegen 字典生成 */
     val delegatedImpls = LinkedHashMap<ImplDecl, List<FunDecl>>()
 
-    fun findFun(name: String): FunDecl? = builtinimpure(name) ?: builtinPure(name) ?: builtinAndroid(name) ?: funs[name]
+    fun findFun(name: String): FunDecl? = funs[name] ?: builtinimpure(name) ?: builtinPure(name) ?: builtinAndroid(name)
 
     /** 别名展开（有限深度防环；v1 无递归别名；函数/元组类型不参与，T1）。
      *  P0：跨模块限定类型折叠为同简单名的 NamedType（校验由 checkTypeResolvable 负责）。 */
