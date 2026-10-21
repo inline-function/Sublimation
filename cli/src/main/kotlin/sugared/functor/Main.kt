@@ -2,6 +2,7 @@ package sugared.functor
 
 import sugared.functor.ast.AstPrinter
 import sugared.functor.annotationproc.ProcessorPipeline
+import sugared.functor.annotationproc.BuiltinProcessors
 import sugared.functor.ast.tokenLine
 import sugared.functor.checker.MultiModule
 import sugared.functor.checker.checkFile
@@ -21,6 +22,8 @@ const val USAGE = """sublimationc — Sublimation 编译器（M1 词法 + M2 语
   check <file.subl>        语义分析（弥散/证明义务/纯度/可变性/impl/when 穷尽），诊断分级输出
   check <file.subl> -v     同时输出补充级诊断（类型推导结果等）
   -p <processor.subs|dir>  附加注解处理器（可多次）；目录装载其全部 .subs
+  -A key=value             传给注解处理器的编译参数（可多次；安卓 APT 用它收工具路径）
+
             处理器即 Sublimation 脚本（文件名=处理器名=关注的注解），编译时由解释器解释执行
   compile <file.subl> [-o out.js] [-p ...]   语义通过后生成 JS（默认打印到标准输出）
   run-script <file.subs> [<file2.subs> ...]  脚本模式解释执行：顶层语句直接运行（无需 main）；多条脚本互不共享
@@ -214,12 +217,28 @@ fun main(args: Array<String>) {
             } else i++
         }
     }
+        // -A key=value / -A key（可多次）：传给注解处理器的编译参数（安卓 APT 用它收 SDK/构建工具路径）
+        val processorOptions = LinkedHashMap<String, String>()
+        run {
+            val rest = args.toList()
+            var i = 1
+            while (i < rest.size) {
+                if (rest[i] == "-A" || rest[i] == "--processor-arg") {
+                    if (i + 1 >= rest.size) { System.err.println("[错误] -A 后面要跟 key 或 key=value"); exitProcess(2) }
+                    val kv = rest[i + 1]
+                    val eq = kv.indexOf("=")
+                    if (eq < 0) processorOptions[kv] = "" else processorOptions[kv.substring(0, eq)] = kv.substring(eq + 1)
+                    i += 2
+                } else i++
+            }
+        }
+
     val extraProcessors = ProcessorPipeline.loadProcessorFiles(processorPaths)
     try {
         // 脚本模式：支持多条脚本路径 / 一个目录，每个 .subs 独立执行（互不共享，无需 main）
         if (cmd == "run-script") {
             runScriptCmd(args.drop(1).filter { it != "-v" })
-            return
+                return
         }
         val pathStr = args.drop(1).firstOrNull { !it.startsWith("-") } ?: args[1]
         val path = File(pathStr)
@@ -236,7 +255,7 @@ fun main(args: Array<String>) {
             //（如 @allMut 引入的 @mut）；-p 追加的处理器也一并装载。processModules 内部统一重跑阶段 A/B/C
             val loadErrs = ProcessorPipeline.loadErrorsToBag(extraProcessors)
             if (loadErrs.hasError) { println(loadErrs.report()); System.err.println("[错误] 注解处理器装载失败"); exitProcess(1) }
-            val pbag = mm.processModules(ProcessorPipeline.builtinModuleTransformer(extraProcessors))
+            val pbag = mm.processModules(ProcessorPipeline.builtinModuleTransformer(extraProcessors, processorOptions))
             val bag = mm.checkAll()
             bag.absorb(pbag)
             val report = bag.report(includeSupplement = verbose)
@@ -250,12 +269,23 @@ fun main(args: Array<String>) {
             } else {
                 val js = mm.generateJs()
                 val oi = args.indexOf("-o")
-                if (oi >= 0 && oi + 1 < args.size) {
-                    val target = File(args[oi + 1])
-                    target.parentFile?.mkdirs()
-                    target.writeText(js)
-                    println("[完成] 已生成 ${target.path}（${js.length} 字节）")
+                val targetFile: File? = if (oi >= 0 && oi + 1 < args.size) File(args[oi + 1]) else null
+                if (targetFile != null) {
+                    targetFile.parentFile?.mkdirs()
+                    targetFile.writeText(js)
+                    println("[完成] 已生成 ${targetFile.path}（${js.length} 字节）")
                 } else print(js)
+                // V2 编译后阶段：处理器收尾（安卓 APT 在此构建 APK）；诊断只报告不阻断。
+                val postBag = ProcessorPipeline.runPostCompile(
+                    BuiltinProcessors.all() + extraProcessors.processors,
+                    ProcessorPipeline.PostCompileCtx(
+                        finalAst = mm.finalAst(), js = js, outputPath = targetFile, projectDir = path,
+                        options = processorOptions,
+                    ) { d -> when (d.severity) { sugared.functor.checker.Severity.ERROR -> bag.error(d.code, d.pos, d.message); sugared.functor.checker.Severity.WARN -> bag.warn(d.code, d.pos, d.message); else -> bag.hint(d.code, d.pos, d.message) } },
+                )
+                val postReport = postBag.report()
+                if (postReport.isNotEmpty()) println(postReport)
+                if (postBag.hasError) System.err.println("[警告] 注解处理器编译后阶段出错")
             }
             return
         }
@@ -283,7 +313,7 @@ fun main(args: Array<String>) {
                 val pr = parseSourceWithNotes(src, path.name)
                 var ast = pr.ast
                 // 注解处理器（脚本模式解释执行）先跑：变换后的 AST 才是检查对象（@allMut → @mut 等）
-                val (ast2, pbag) = ProcessorPipeline.runBuiltin(ast, extraProcessors)
+                val (ast2, pbag) = ProcessorPipeline.runBuiltin(ast, extraProcessors, processorOptions)
                 if (ast2 !== ast) ast = ast2
                 val chk = sugared.functor.checker.Checker(ast,
                     aggressive = pf.aggressive, proveVerbose = pf.verbose,
@@ -307,6 +337,19 @@ fun main(args: Array<String>) {
                     target.writeText(js)
                     println("[完成] 已生成 ${target.path}（${js.length} 字节）")
                 } else print(js)
+                // V2 编译后阶段：处理器收尾（安卓 APT 在此构建 APK）；诊断只报告不阻断。
+                val targetFile: File? = if (oi >= 0 && oi + 1 < args.size) File(args[oi + 1]) else null
+                val postBag = ProcessorPipeline.runPostCompile(
+                    BuiltinProcessors.all() + extraProcessors.processors,
+                    ProcessorPipeline.PostCompileCtx(
+                        finalAst = ast, js = js, outputPath = targetFile, projectDir = path.parentFile ?: File("."),
+                        options = processorOptions,
+                    ) { d -> when (d.severity) { sugared.functor.checker.Severity.ERROR -> bag.error(d.code, d.pos, d.message); sugared.functor.checker.Severity.WARN -> bag.warn(d.code, d.pos, d.message); else -> bag.hint(d.code, d.pos, d.message) } },
+                )
+                val postReport = postBag.report()
+                if (postReport.isNotEmpty()) println(postReport)
+                if (postBag.hasError) System.err.println("[警告] 注解处理器编译后阶段出错")
+
             }
             "run-script" -> {
                 // 脚本模式：Checker 类型检查 + 解释器直接求值（§6 执行模型）

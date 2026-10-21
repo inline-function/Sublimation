@@ -70,6 +70,8 @@ class ProcessorEngine(
         typeOf: (Expr) -> Type? = { null },
         emit: (String) -> Unit = {},
         recheck: ((FileAst) -> RecheckResult?)? = null,
+        /** 处理器编译参数（CLI `-A key=value`）；传入后每轮 ProcessorInput 携带。 */
+        options: Map<String, String> = emptyMap(),
     ): RunResult {
         var currentSymbols = symbols
         val diags = ArrayList<Diag>()
@@ -90,7 +92,7 @@ class ProcessorEngine(
                 if (sites.none { it.annotation.name in p.interestedAnnotations })
                     continue
 
-                val input = ProcessorContext(current, currentSymbols, sites, typeOf, emit)
+                val input = ProcessorContext(current, currentSymbols, sites, typeOf, emit, options = options)
                 val output = try {
                     p.process(input)
                 } catch (ex: Exception) {

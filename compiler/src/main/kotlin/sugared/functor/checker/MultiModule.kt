@@ -144,6 +144,9 @@ class MultiModule(
         return bag
     }
 
+    /** 变换+检查后的模块 AST 合并视图（供 V2 编译后阶段/处理器使用）。 */
+    fun finalAst(): FileAst = FileAst(asts.values.flatMap { it.entries })
+
     /** 合并编译（M8）：全部模块合成一个 JS 文件，顶层名字带模块前缀。 */
     fun generateJs(): String {
         val dictHits = IdentityHashMap<CallExpr, String>()

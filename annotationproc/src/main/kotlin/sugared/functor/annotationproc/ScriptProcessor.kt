@@ -31,6 +31,8 @@ class ScriptProcessor(
     private val scriptSource: String,
     private val scriptFileName: String = "<processor:$name>",
     private val stdlibDir: File = File("test/core"),
+    /** `@postcompile` 指令声明的入口名：指明文件内哪个顶层函数是编译后阶段入口。 */
+    private val postEntry: String? = null,
 ) : AnnotationProcessor {
 
     override fun process(input: ProcessorInput): ProcessorOutput {
@@ -52,5 +54,35 @@ class ScriptProcessor(
         val afterStruct = applyAstEdits(input.ast, astEdits, diags)
         val newAst = applyAnnotationEdits(afterStruct, edits, diags)
         return ProcessorResult(newAst, diags)
+    }
+
+    /**
+     * 编译后阶段（V2）：`@postcompile <入口函数名>` 指令声明时，重新跑脚本并调用该入口；
+     * 脚本可通过 option() 读 `-A key=value` 参数、用 runShell/writeFile 产物。
+     * 入口名约定：`@postcompile build` → 执行脚本顶层定义的 build()。
+     */
+    override fun postCompile(ctx: PostCompileContext): List<Diag> {
+        val entry = postEntry ?: return emptyList()
+        val diags = ArrayList<Diag>()
+        val interp = Interpreter(stdlibDir)
+        ProcessorApi.register(interp, postInput(ctx), ArrayList(), ArrayList(), diags)
+        try {
+            // 入口调用作为顶层语句执行一次：脚本体先声明辅助函数，末尾调用入口；
+            // 处理器常规处理语句须自行幂等或由 option("__post_compile__") 分支守卫。
+            interp.run("fun __dshPostGuard() : Null = " + entry + "()\n" + scriptSource
+                + "\n__dshPostGuard()\n", "<post:$name>")
+        } catch (ex: Exception) {
+            return diags + Diag(Severity.ERROR, "E-POSTCOMPILE-SCRIPT", "",
+                "脚本处理器 $name 编译后阶段失败：" + (ex.message ?: ex.toString()))
+        }
+        return diags
+    }
+
+    /** postCompile 的 ProcessorInput 视图：最终 AST + options；查询函数照常可用。 */
+    private fun postInput(ctx: PostCompileContext): ProcessorInput {
+        val base = ProcessorContext(ctx.finalAst, null, emptyList(), { null }, {}, options = ctx.options)
+        return object : ProcessorInput by base {
+            override val options: Map<String, String> = ctx.options
+        }
     }
 }

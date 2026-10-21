@@ -99,6 +99,51 @@ object ProcessorApi {
             names
         }
 
+        // ---------- 编译参数（CLI `-A key=value`；安卓 APT 用它收 SDK/构建工具路径） ----------
+        interp.register("option", "key" to ScriptType.Str, retType = ScriptType.Str) { args ->
+            input.options[args[0] as String] ?: ""
+        }
+        interp.register("optionOr", "key" to ScriptType.Str, "default" to ScriptType.Str,
+            retType = ScriptType.Str) { args ->
+            input.options[args[0] as String] ?: (args[1] as String)
+        }
+        interp.register("optionKeys", retType = ScriptType.ListT(ScriptType.Str)) {
+            input.options.keys.toList()
+        }
+
+        // ---------- 宿主执行力（V2：构建额外产物的处理器需要） ----------
+        // runShell 执行外部命令，返回 "exit|stdout|stderr"；非零退出不抛异常，由脚本自决。
+        interp.register("runShell", "cmd" to ScriptType.Str, retType = ScriptType.Str) { args ->
+            val c = args[0] as String
+            try {
+                val proc = ProcessBuilder("cmd", "/c", c)
+                    .redirectErrorStream(false).directory(java.io.File(".")).start()
+                val out = proc.inputStream.bufferedReader().use { it.readText() }
+                val err = proc.errorStream.bufferedReader().use { it.readText() }
+                val code = proc.waitFor()
+                "$code|$out|$err"
+            } catch (ex: Exception) {
+                "-1||" + (ex.message ?: ex.toString())
+            }
+        }
+        interp.register("writeFile", "path" to ScriptType.Str, "content" to ScriptType.Str) { args ->
+            val f = java.io.File(args[0] as String)
+            try {
+                f.parentFile?.mkdirs(); f.writeText(args[1] as String, kotlin.text.Charsets.UTF_8); null
+            } catch (ex: Exception) {
+                diags += Diag(Severity.ERROR, "E-PROCESSOR-IO", "", "writeFile 失败 " + f.path + "：" + (ex.message ?: "")); null
+            }
+        }
+        interp.register("readFile", "path" to ScriptType.Str, retType = ScriptType.Str) { args ->
+            val f = java.io.File(args[0] as String)
+            try { f.readText(kotlin.text.Charsets.UTF_8) } catch (ex: Exception) {
+                diags += Diag(Severity.WARN, "W-PROCESSOR-IO", "", "readFile 失败 " + f.path + "：" + (ex.message ?: "")); ""
+            }
+        }
+        interp.register("fileExists", "path" to ScriptType.Str, retType = ScriptType.Bool) { args ->
+            java.io.File(args[0] as String).exists()
+        }
+
         // ---------- 安卓视图处理器支撑（android doc/安卓标准库.md） ----------
         interp.register("fieldDeclText", "name" to ScriptType.Str, "field" to ScriptType.Str,
             retType = ScriptType.Str) { args ->

@@ -44,12 +44,16 @@ object BuiltinProcessors {
         // 用于跨注解纪律（如 composable.subs 同时关注 view：@view 出现时也要校验视图构造纪律）。
         val extra = Regex("@interested\\s+([A-Za-z0-9_, ]+)").find(src)
             ?.groupValues?.get(1)?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
+        // V2：`@postcompile <函数名>`——声明编译后阶段入口（安卓 APT 构建 APK 用）。
+        val postEntry = Regex("@postcompile\\s+([A-Za-z0-9_$]+)").find(src)
+            ?.groupValues?.get(1)
         return ScriptProcessor(
             name = name,
             interestedAnnotations = setOf(name) + extra,
             scriptSource = src,
             scriptFileName = f.path,
             stdlibDir = stdlibDir,
+            postEntry = postEntry,
         )
     }
 

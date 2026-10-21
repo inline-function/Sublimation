@@ -100,13 +100,20 @@ class Interpreter(
      * 执行脚本源码。
      * 管线：解析 → 注入 @host 声明 → Checker（类型检查） → Evaluator（求值）。
      */
-    fun run(source: String, fileName: String = "<script>") {
+    fun run(source: String, fileName: String = "<script>", entryName: String? = null) {
         // 全局类型推导开启时，解析放行省略标注（InferMarker 占位），由 GlobalInference 在 Checker 前填充
         val raw = if (globalInference)
             sugared.functor.parser.parseScriptSource(source, fileName, allowUntyped = true)
         else
             sugared.functor.parser.parseScriptSource(source, fileName)
-        runEntries(raw, scriptMode = true, mainName = null)
+        runEntries(raw, scriptMode = true, mainName = entryName)
+    }
+
+    /** 执行完顶层语句后调用脚本里已定义的顶级函数（V2：注解处理器 `@postcompile` 入口）。 */
+    fun callTopLevel(name: String) {
+        val frame = ScriptFrame(globalFrame)
+        val ev = Evaluator(hostFunctions = hostFunctionInfos.mapValues { it.value.fn }, hostStructs = hostStructs)
+        ev.callTopFunction(name, emptyList(), frame, "<postcompile:$name>")
     }
 
     /** 工程/目录模式：合并目录下顶层 .subl 文件 + stdlib，以 fun main() 为入口解释执行。 */

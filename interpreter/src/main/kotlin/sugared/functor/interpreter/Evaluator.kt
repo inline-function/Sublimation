@@ -47,6 +47,11 @@ class Evaluator(
         }
     }
 
+    /** 调一个已声明在帧内的顶层函数（V2：注解处理器 @postcompile 入口）。 */
+    fun callTopFunction(name: String, args: List<ScriptValue>, frame: ScriptFrame, pos: String) {
+        callFunction(name, emptyList(), frame, pos, emptyMap())
+    }
+
     private fun evalDecl(decl: Decl, frame: ScriptFrame) { }
 
     /** 收集脚本声明的 struct/enum 构造子 → 运行时结构体元数据（§4.3 常量折叠为引用语义） */

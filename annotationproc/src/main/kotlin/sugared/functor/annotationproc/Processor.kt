@@ -17,6 +17,31 @@ interface AnnotationProcessor {
     val interestedAnnotations: Set<String>
     /** 处理入口 */
     fun process(input: ProcessorInput): ProcessorOutput
+
+    /**
+     * 编译后阶段：语义检查与 JS 生成成功之后执行的收尾钩子（V2）。
+     *
+     * 用途：需要构建额外产物（安卓 APT 的 APK：aapt2/d8/zipalign/apksigner 由
+     * [PostCompileContext.options] 传入的工具路径驱动）的处理器在此执行；
+     * 只做 AST 变换的处理器无需实现（默认 no-op）。
+     */
+    fun postCompile(ctx: PostCompileContext): List<Diag> = emptyList()
+}
+
+/** postCompile 钩子上下文：编译产物只读视图 + 编译参数。 */
+interface PostCompileContext {
+    /** 最终通过检查的 AST（变换后） */
+    val finalAst: FileAst
+    /** 生成的 JS 文本（compile 命令；check 命令为空串） */
+    val js: String
+    /** JS 输出目标文件（-o 指定时），否则 null */
+    val outputPath: java.io.File?
+    /** 编译根目录或单文件 */
+    val projectDir: java.io.File
+    /** 编译参数（`-A key=value`） */
+    val options: Map<String, String>
+    /** 诊断收集器（postCompile 里报错给宿主） */
+    fun report(diag: Diag)
 }
 
 /**
@@ -76,6 +101,10 @@ internal object EmptySymbolsView : SymbolsView {
 interface ProcessorInput {
     /** 当前 AST（只读引用） */
     val ast: FileAst
+
+    /** 传给处理器的编译参数（CLI `-A key=value`；处理器据此接收工具路径等配置，V2 安卓 APT 用）。 */
+    val options: Map<String, String>
+        get() = emptyMap()
     /** 符号表（只读查询） */
     val symbols: SymbolsView
     /** 本次扫描收集的所有带注解的节点 */
@@ -116,6 +145,8 @@ class ProcessorContext(
     override val annotated: List<AnnotatedNode>,
     private val typeQuery: (Expr) -> Type? = { null },
     private val emitFn: (String) -> Unit = {},
+    /** 处理器编译参数（CLI `-A key=value` 传入；安卓处理器用它收 SDK/构建工具路径）。 */
+    override val options: Map<String, String> = emptyMap(),
 ) : ProcessorInput {
     override val symbols: SymbolsView = symbols?.let(::SymbolsViewImpl) ?: EmptySymbolsView
     override fun typeOf(expr: Expr): Type? = typeQuery(expr)
