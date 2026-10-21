@@ -621,8 +621,8 @@ class CheckerTest {
     }
 
     @Test
-    fun `T4 含 Any 成员的结构体禁直接构造`() {
-        assertTrue(errs("struct P(v: Any)\nfun mk(): P = P(1)").contains("E-ANY-STRUCT"))
+    fun `T4 含 Any 成员的结构体可直接构造(自动类型类)`() {
+        assertTrue(ok("struct P(v: Any)\nfun mk(): P = P(1)"))  // 《自动类型类》：E-ANY-STRUCT 已废弃
         assertTrue(ok("struct P(v: Any)\nfun mk(): P { unchecked var p = P(1)\nreturn p }"))
     }
 

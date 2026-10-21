@@ -330,16 +330,7 @@ fun typeEq(a: Type, b: Type): Boolean = when {
     else -> false
 }
 
-/** 类型是否含 Any（递归）。决策 59：涉 Any 则调用受限、推导失效须手动标注。 */
-fun Type.containsAny(): Boolean = when (this) {
-    is NamedType -> name == "Any" || args.any { it.containsAny() }
-    is QualifiedType -> args.any { it.containsAny() }
-    is FunType -> params.any { it.containsAny() } || ret.containsAny()
-    is TupleType -> items.any { it.containsAny() }
-    is UnionType -> variants.any { it.containsAny() }
-    is MutType -> inner.containsAny()
-    is AtomicType -> inner.containsAny()
-}
+
 
 data class CtorInfo(val enum: EnumDecl, val fields: List<Type>)
 data class MethodEntry(

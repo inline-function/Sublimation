@@ -117,19 +117,18 @@ class DiagCoverageTest {
     @Test fun `E-SELF-UNKNOWN 类型类成员带体合法(缺陷4)`() =
         assertFalse(has("class M { fun m(): Nat { return 1 } }", "E-SELF-UNKNOWN"))
 
-    // ---------- Any 准入（决策 59） ----------
+    // ---------- Any 自动类型类（idea doc/自动类型类.md）：决策 59 三层锁已全部移除 ----------
 
-    @Test fun `E-ANY-STRUCT`() =
-        assertTrue(has("struct P(v: Any)\nfun mk(): P = P(1)", "E-ANY-STRUCT"))
+    // E-ANY-STRUCT/E-ANY-CALL 已废弃不再触发：Any 是自动类型类，含 Any 字段的结构体/含 Any 实参的调用与普通类型同等对待。
+    @Test fun `E-ANY-STRUCT 已废弃不再触发`() =
+        assertTrue(diags("struct P(v: Any)\nfun mk(): P = P(1)").none { it.code == "E-ANY-STRUCT" })
 
-    @Test fun `E-ANY-CALL`() =
-        assertTrue(has("fun inner(x: Any): Null {}\nfun outer(a: Any): Null { inner(a) }", "E-ANY-CALL"))
-
+    @Test fun `E-ANY-CALL 已废弃不再触发`() =
+        assertTrue(diags("fun inner(x: Any): Null {}\nfun outer(a: Any): Null { inner(a) }").none { it.code == "E-ANY-CALL" })
     // ---------- P9 递归停机（决策 44/85） ----------
 
     @Test fun `E-NON-STRUCTURAL-REC`() =
         assertTrue(has("fun f(n: Nat): Nat = when(n) { 0 => 0\n_ => f(n + 1) }", "E-NON-STRUCTURAL-REC"))
-
     // ---------- P8 命名参数（决策 84） ----------
 
     @Test fun `E-NAMED-ARG-UNKNOWN`() =

@@ -186,7 +186,7 @@ private fun rewriteExpr(
                 val n = ordinals.getOrDefault(e.struct, 0) + 1
                 ordinals[e.struct] = n
                 val na = ArrayList(assigns)
-                na += CHILDREN to NameRef("Nil")
+                na += CHILDREN to CallExpr(NameRef("Nil"), listOf<Expr>(), emptyMap())   // Nil() 调用——NameRef 无法解析
                 na += RECOMPOSION to NameRef(recomposionName(e.struct, n))
                 return StructCtorExpr(e.struct, na, e.pos) to true
             }

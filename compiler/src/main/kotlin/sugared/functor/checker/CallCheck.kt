@@ -25,11 +25,6 @@ internal fun Checker.checkStructCtor(e: StructCtorExpr, f: Frame, pure: Boolean)
     val st = syms.structs[e.struct] ?: run {
         d.error("E-UNBOUND-NAME", e.pos, "构造未定义结构体 ${e.struct}"); return syntheticT("构造${e.struct}")
     }
-    // 安卓视图结构体（android doc/安卓标准库.md §视图结构体）：children: List[Any] 与
-    // recomposion: (Any)=>Null 是编译器注入的属性（@view 注解处理器），含 Any 属设计必然，豁免。
-    val isViewStruct = "view" in st.annotations
-    if (st.fields.any { it.type.containsAny() } && uncheckedDepth == 0 && !isViewStruct)
-        d.error("E-ANY-STRUCT", e.pos, "结构体 ${e.struct} 含有 Any 类型的成员，必须用 unchecked 关键字才能创建。更好的做法：给该成员标注具体类型")
     // HKT-2（《高阶类型.md》§7.2）：命名字段构造同样反推类型实参（Pair(first = 1, second = "a") → Pair[Nat, Str]）
     val tps = st.theory.filterIsInstance<TypeParam>().map { it.name }
     val inferred = LinkedHashMap<String, Type>()
@@ -656,12 +651,9 @@ internal fun Checker.checkCtorCall(ci: CtorInfo, name: String, c: CallExpr, argT
     return namedT(ci.enum.name, tps.map { inferred[it] ?: syntheticT("类型参数$it") })
 }
 
-/** 结构体构造调用公共段（决策 59/69，O3）：Any 准入、位置式缺省尾部规则不变；限定/普通共用。 */
+/** 结构体构造调用公共段（决策 69，O3）：位置式缺省尾部规则不变；限定/普通共用。 */
 internal fun Checker.checkStructCall(st: StructDecl, name: String, c: CallExpr, argTypes: List<Type>, modPath: String, f: Frame): Type {
     moduleHits[c.callee] = moduleJsName(modPath, name)
-    // 决策 59：含 Any 成员的结构体禁止直接创建（unchecked 逃逸）
-    if (st.fields.any { it.type.containsAny() } && uncheckedDepth == 0)
-        d.error("E-ANY-STRUCT", c.pos, "结构体 `$name` 含有 Any 类型的成员，必须用 unchecked 关键字才能创建。更好的做法：给该成员标注具体类型")
     // HKT-2（《高阶类型.md》§7.2）：struct 泛型实参推断——与 enum 构造同逻辑（字段实参反推类型参数，
     // 如 Pair(1, "a") → Pair[Nat, Str]），HKT 构造子应用（Bifunctor for Pair[a,b]）依赖它拿到命名类型
     val tps = st.theory.filterIsInstance<TypeParam>().map { it.name }
@@ -749,12 +741,6 @@ internal fun Checker.checkFnCall(
     }
 
     // 修复（#3）：@theorem 定理函数解封——值级调用正常（此处不警告；后件事实照常注入，运行时擦除为 null）
-
-    // 决策 59：Any 严苛准入——实参含 Any 则调用受限
-    if (fn.params.any { syms.expand(it.type).containsAny() } && effTypes.any { it.containsAny() }) {
-        d.error("E-ANY-CALL", c.pos, "函数 `$name` 的调用推导不出具体类型。手写类型标注或用具体类型实参")
-        return syntheticT("Any调用$name")
-    }
     // P9（决策 44，用户授权 Max 倾向：报错 + 判定含 when 解构变量）：纯函数自递归要求**至少一个**实参是某形参的语法子项。
     // 多参数递归（map(f, t)）允许透传参数（f 原样）——停止性由递减者（t）保证；全参数都不递减才算违规。
     // unchecked 放行；@impure 不受约束；方法路径（字典分发）暂不查。
