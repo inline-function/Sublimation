@@ -168,6 +168,18 @@ class LspAnalysisTest {
             assertTrue(sig.label.contains("print"), "签名应含 print，实际: " + sig.label)
         }
     }
+    @Test fun `onTypeFormatting 大括号后回车自动补闭合括号`() {
+        // fun f() { 之后按 Enter：新行缩进，下一行补 }
+        val a = opened("fun f(): Null {\n}")
+        // 光标在行 0 的 { 后，回车后目标行是新的空行（行 1）
+        val edits = a.onTypeFormattingEdits("file:///t.subl", Position(1, 0), "\n")
+        // 这里构造的是「上一行以 { 结尾、目标行为空」的形态：先直接喂整段源码
+        val a2 = opened("fun f(): Null {\n\n}")
+        val edits2 = a2.onTypeFormattingEdits("file:///t.subl", Position(1, 0), "\n")
+        assertTrue(edits2.isNotEmpty(), "行 1 为空且上一行以 { 结尾时应产生编辑")
+        val nt = edits2[0].newText
+        assertTrue(nt.contains("\n}"), "新文本应以 换行+} 收尾，实际: " + nt)
+    }
     @Test fun `typeDefinition 跳到类型声明`() {
         val src = "struct User(name: Str)\nfun main() { var x: User = User(\"a\") }"
         val a = opened(src)
@@ -955,18 +967,18 @@ class LspAnalysisTest {
     // ───────── onTypeFormatting：按 Enter 智能缩进 ─────────
 
     @Test fun `onTypeFormatting if 块后换行缩进一级`() {
-        val src = "if (x > 0) {\n"   // 用户刚在 { 后按了 Enter
+        val src = "if (x > 0) {\n"   // 用户刚在 { 后按了 Enter：缩进本级，下一行补 }
         val a = opened(src)
         val edits = a.onTypeFormattingEdits("file:///t.subl", Position(1, 0), "\n")
         assertEquals(1, edits.size, "应返回一个编辑: " + edits)
-        assertEquals("    ", edits[0].newText)
+        assertEquals("    \n}", edits[0].newText)
     }
 
     @Test fun `onTypeFormatting 嵌套块缩进两级`() {
         val src = "fun main() {\n    if (x) {\n"
         val a = opened(src)
         val edits = a.onTypeFormattingEdits("file:///t.subl", Position(2, 0), "\n")
-        assertEquals("        ", edits[0].newText)   // 8 空格 = 2 级
+        assertEquals("        \n    }", edits[0].newText)   // 8 空格缩进 + 下一行 } 少一级
     }
 
     @Test fun `onTypeFormatting 大括号之间换行右括号下移`() {
@@ -1012,7 +1024,7 @@ class LspAnalysisTest {
         val src = "if (x > 0) {\n"
         val a = openedSubs(src)
         val edits = a.onTypeFormattingEdits("file:///t.subs", Position(1, 0), "\n")
-        assertEquals("    ", edits[0].newText)
+        assertEquals("    \n}", edits[0].newText)
     }
 
     @Test fun `onTypeFormatting 非换行触发字符返回空`() {

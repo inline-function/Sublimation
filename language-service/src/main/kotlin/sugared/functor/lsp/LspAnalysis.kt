@@ -1053,6 +1053,15 @@ class LspAnalysis {
             val newText = "    ".repeat(n) + "\n" + "    ".repeat(closeN) + "}"
             return listOf(TextEdit(Range(Position(line, 0), Position(line, firstNonWs + 1)), newText))
         }
+                // 情况 3：上一行以 { 结尾、本行为空（用户刚打 { 就回车，还没有配对的 }）：
+        // 本行加本级缩进，下一行补 } 并少一级 —— 编辑器 auto-close 的大括号版
+        val prevLine = lineTextOf(src, line - 1)
+        if (prevLine != null && prevLine.trimEnd().endsWith("{") && firstNonWs < 0) {
+            val n3 = indentLevelForLine(src, line).coerceAtLeast(1)
+            val closeN3 = (n3 - 1).coerceAtLeast(0)
+            val newText3 = "    ".repeat(n3) + "\n" + "    ".repeat(closeN3) + "}"
+            return listOf(TextEdit(Range(Position(line, 0), Position(line, 0)), newText3))
+        }
         // 情况 2：普通换行——行首插入缩进；已有前导空白则替换为正确缩进
         val n = indentLevelForLine(src, line)
         if (n <= 0) return emptyList()
