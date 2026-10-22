@@ -98,7 +98,21 @@ class LspAnalysis {
         }
 
         // 可选 core 标准库文件（包目录，递归收集；core 统一标准库位于仓库根 core/）：解析后灌入顶层声明签名
+        // stdlib 函数签名索引（签名提示兜底）：解析每个 .subl 的顶层 fun / impl / class 方法
         if (stdlibDir != null && stdlibDir.isDirectory) {
+            stdlibFuns.clear()
+            for (f in stdlibDir.walkTopDown().filter { it.isFile && it.name.endsWith(".subl") }) {
+                val src = runCatching { f.readText() }.getOrNull() ?: continue
+                val ast = runCatching { parseSourceWithNotes(src, f.name).ast }.getOrNull() ?: continue
+                for (entry in ast.entries) if (entry is sugared.functor.ast.DeclEntry) {
+                    when (val d = entry.decl) {
+                        is sugared.functor.ast.FunDecl -> stdlibFuns[d.name] = d
+                        is sugared.functor.ast.ImplDecl -> for (m in d.members) stdlibFuns[m.name] = m
+                        is sugared.functor.ast.ClassDecl -> for (m in d.members) stdlibFuns[m.name] = m
+                        else -> {}
+                    }
+                }
+            }
             for (f in stdlibDir.walkTopDown().filter { it.isFile && it.name.endsWith(".subl") }.sortedBy { it.path }) {
                 try {
                     val src = f.readText()
@@ -121,6 +135,8 @@ class LspAnalysis {
      * 留着会与调用撞 E-DUP-DECL）；解析失败记录 stderr 不中断。
      */
     /** 标准库符号索引（名字 → 文件 URI + pos + 源码）：转到定义的兜底，让 stdlib/core 函数也能跳 */
+    /** stdlib 源码里的函数声明（容器方法/工具函数）：签名提示的兜底来源 */
+    private val stdlibFuns = HashMap<String, sugared.functor.ast.FunDecl>()
     private var stdlibIndexCache: Map<String, Triple<String, String, String>>? = null
     private fun stdlibSymbolIndex(): Map<String, Triple<String, String, String>> {
         stdlibIndexCache?.let { return it }
@@ -766,7 +782,7 @@ class LspAnalysis {
                 }
             }
         }
-        return null
+        return stdlibFuns[name]
     }
 
     private fun countTopLevelCommas(source: String, parenStart: Int, cursor: Int): Int {

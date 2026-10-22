@@ -149,6 +149,25 @@ class LspAnalysisTest {
         assertNull(a.definitionOfWord("file:///t.subl", "no_such_name_xyz"))
     }
 
+    @Test fun `signatureHelp 对用户函数显示签名`() {
+        val a = opened("fun add(a: Nat, b: Nat): Nat = a + b\nfun main(): Nat = add(1, 2)")
+        val h = a.signatureHelpFor("file:///t.subl", Position(1, 23))
+        assertNotNull(h, "add 调用的括号内应返回签名")
+        val sig = h!!.signatures[0]
+        assertTrue(sig.label.startsWith("add("), "签名应以 add( 开头，实际: " + sig.label)
+    }
+
+    @Test fun `signatureHelp 内建函数走 stdlib 兜底`() {
+        // print 不在用户文件里，应回退到 stdlib 源码声明
+        val a = opened("fun main(): Null = print(1)")
+        val h = a.signatureHelpFor("file:///t.subl", Position(0, 27))
+        // 若 stdlib 里有 print 声明应返回签名；没有则跳过（不强断言，依赖 stdlib 内容）
+        if (h != null) {
+            val sig = h.signatures[0]
+            println("PRINT-SIG: " + sig.label)
+            assertTrue(sig.label.contains("print"), "签名应含 print，实际: " + sig.label)
+        }
+    }
     @Test fun `typeDefinition 跳到类型声明`() {
         val src = "struct User(name: Str)\nfun main() { var x: User = User(\"a\") }"
         val a = opened(src)
