@@ -149,11 +149,13 @@ object ProcessorApi {
         interp.register(
             "buildAndroidApk",
             "appDir" to ScriptType.Str, "jsPath" to ScriptType.Str, "outDir" to ScriptType.Str,
+            "sdkDir" to ScriptType.Str,
             retType = ScriptType.Str,
         ) { args ->
             val appDir = java.io.File(args[0] as String)
             val jsPath = java.io.File(args[1] as String)
             val outDir = java.io.File(args[2] as String)
+            val sdkDir = args.getOrNull(3) as? String ?: ""
             try {
                 // 1) JS 产物拷进 app 的 assets（WebView 加载 app.js）
                 val assets = java.io.File(appDir, "app/src/main/assets")
@@ -163,6 +165,14 @@ object ProcessorApi {
                 val boot = "try{__dshBoot();}catch(e){}\n"
                 val tail = "\ntry{ if (typeof main === 'function') main(); }catch(e){ if(__dshAndroid) __dshAndroid('log',[String(e),3]); }\n"
                 target.writeText(boot + js + tail, kotlin.text.Charsets.UTF_8)
+                // 1b) 安卓工具路径（-A sdkDir=…）：写进工程的 local.properties，AGP 由此定位 SDK/构建工具
+                if (sdkDir.isNotEmpty()) {
+                    val lp = java.io.File(appDir, "local.properties")
+                    val base = if (lp.exists()) lp.readText(kotlin.text.Charsets.UTF_8)
+                        .lineSequence().filter { !it.startsWith("sdk.dir") && !it.startsWith("sdk.dir=") }.joinToString("\n") else ""
+                    lp.writeText(base + (if (base.isNotEmpty() && !base.endsWith("\n")) "\n" else "") +
+                        "sdk.dir=" + sdkDir.replace("\\", "/") + "\n", kotlin.text.Charsets.UTF_8)
+                }
                 // 2) gradlew assembleDebug
                 val isWin = System.getProperty("os.name").startsWith("Windows")
                 val cmd = if (isWin) "cmd /c gradlew.bat :app:assembleDebug --console=plain"

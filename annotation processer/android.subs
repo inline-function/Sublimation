@@ -73,12 +73,13 @@ fun isAndroidBuiltin(fn: Str): Bool =
 fun build(): Null {
     var appDir: Str = optionOr("appDir", "")
     var jsPath: Str = optionOr("jsPath", "")
+    var sdkDir: Str = optionOr("sdkDir", "")
     var outDir: Str = optionOr("outDir", appDir + "\\build\\apk")
     if (appDir == "") processorInfo("apk 构建：未给 appDir，跳过")
     else if (jsPath == "") processorInfo("apk 构建：未给 jsPath，跳过")
     else {
         processorInfo("安卓 APK 构建开始：" + appDir)
-        var res: Str = buildAndroidApk(appDir, jsPath, outDir)
+        var res: Str = buildAndroidApk(appDir, jsPath, outDir, sdkDir)
         reportApkResult(res)
         null
     }

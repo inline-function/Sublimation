@@ -5,8 +5,9 @@ plugins {
 
 application {
     mainClass.set("sugared.functor.MainKt")
+    // 注解处理器（.subs 脚本经 Evaluator 递归执行）偶发深帧 StackOverflow：放宽线程栈。
+    applicationDefaultJvmArgs = listOf("-Xss16m")
 }
-
 kotlin {
     jvmToolchain(17)
 }
