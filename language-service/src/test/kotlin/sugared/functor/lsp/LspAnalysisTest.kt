@@ -179,6 +179,12 @@ class LspAnalysisTest {
 
     // ───────── documentSymbol ─────────
 
+    @Test fun `documentSymbol 工程模式 fun main 含函数体应有符号`() {
+        val a = opened("fun main(): Null {\n    print(add(1, 2))\n}\n\nfun add(a: Nat, b: Nat): Nat = a + b\n")
+        val syms = a.documentSymbols("file:///t.subl")
+        assertTrue(syms.size >= 1, "至少应有 main，实际: " + syms.map { it.name })
+    }
+
     @Test fun `documentSymbol 返回声明`() {
         val a = opened("fun add(a: Nat, b: Nat): Nat = a + b\nstruct User(name: Str)")
         val syms = a.documentSymbols("file:///t.subl")
