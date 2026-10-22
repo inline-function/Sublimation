@@ -454,6 +454,10 @@ private fun stmtHasViewMutation(s: Stmt): Boolean = when (s) {
 
 private fun stmtHasViewMutation(e: Expr): Boolean = when (e) {
     is BlockExpr -> e.stmts.any { stmtHasViewMutation(it) }
+    // 变异可藏在 lambda 体 / 调用实参（含命名实参）/ 结构体构造字段里——逐层递归（Button(onClick = { v.f = … })）
+    is LambdaExpr -> stmtHasViewMutation(e.body)
+    is CallExpr -> e.args.any { stmtHasViewMutation(it) } || e.namedArgs.values.any { stmtHasViewMutation(it) }
+    is StructCtorExpr -> e.assigns.any { stmtHasViewMutation(it.second) }
     else -> false
 }
 
