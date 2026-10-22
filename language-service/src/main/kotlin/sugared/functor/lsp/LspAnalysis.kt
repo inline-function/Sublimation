@@ -85,7 +85,7 @@ class LspAnalysis {
         for (t in BASE_TYPES.sorted()) add(t, "struct", t, "内建类型 " + t)
 
         // stdlib 容器/代数数据类型（core 统一标准库 core/collection/*.subl）
-        for (t in STDLIB_TYPES.sorted()) add(t, "struct", t, "标准库类型 " + t)
+        for (t in STDLIB_TYPES.sorted()) add(t, "struct", t, STDLIB_TYPE_DOCS[t] ?: ("标准库类型 " + t))
 
         // 构造子（enum / 容器）
         for (c in STDLIB_CTORS.sorted()) add(c, "ctor", c, "构造子 " + c)
@@ -2468,6 +2468,15 @@ class LspAnalysis {
 
         /** stdlib 容器 / 代数数据类型名（不含 BASE_TYPES 已含的） */
         val STDLIB_TYPES: List<String> = listOf("List", "Optional", "Result", "Set", "Tuple")
+
+        /** stdlib 容器类型的悬停文档（查看文档/转定义兜底时给说明，不再只给光秃秃的类型名） */
+        val STDLIB_TYPE_DOCS: Map<String, String> = mapOf(
+            "List" to "标准库链表，Nil()/Cons(h, t) 构造，实现 Functor/Foldable/Monad。\n脚本模式下表示为数组；编译模式 codegen 特判为数组化。\n例：List.fromArray([1, 2, 3])、[1, 2, 3].map(x => x + 1)",
+            "Optional" to "标准库可选类型：Some(x) 与 None。用于可能失败的计算，替代裸 Null 判断。\n例：Optional.of(1)、opt.match(x => x, 0)",
+            "Result" to "标准库结果类型：Ok(x) 与 Err(e)。规范「成功/失败」两种出口的返回值。\n例：Result.ok(1)、r.match(x => x, e => -1)",
+            "Set" to "标准库集合（去重容器）。\n例：Set.fromList([1, 1, 2])、s.contains(1)",
+            "Tuple" to "标准库元组：Tuple(a, b) 等价 (a, b)。固定长度异构组合。\n例：val p = (1, \"x\")、p._0",
+        )
 
         /** 枚举 / 容器构造子名 */
         val STDLIB_CTORS: List<String> = listOf(
