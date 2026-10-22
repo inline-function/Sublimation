@@ -1,0 +1,27 @@
+// ============================================================
+// 特性：空安全（Optional[T] / Some / None / when 解构 / elvis）
+// 预期输出（每行一个）：5 / 7 / sam / 1 / 0
+// ============================================================
+
+struct Point(x: Nat, y: Nat)
+
+// 泛型空替代（elvis）：Optional[T] 显式可空
+fun elvis[T](o: Optional[T], d: T): T = when(o) {
+    is Some(v) -> v
+    None -> d
+}
+
+// when 解构提取 Optional 内数值
+fun pointX(o: Optional[Point]): Nat = when (o) {
+    is Some(p) -> p.x
+    None -> 0
+}
+
+@impure
+fun main() {
+    unchecked print(elvis(Some(5), 7))          // 5
+    unchecked print(elvis(None(), 7))           // 7
+    unchecked print(elvis(Some("sam"), "?"))    // sam
+    unchecked print(pointX(Some(Point(1, 2))))  // 1
+    unchecked print(pointX(None()))             // 0
+}

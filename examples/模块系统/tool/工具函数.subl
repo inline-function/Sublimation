@@ -1,0 +1,4 @@
+// 子模块 tool：根模块（父）→ 子可见；子→父不可见
+// 注：标识符目前仅支持 ASCII，故模块路径/函数名用英文，文件名可用中文
+fun triple(x: Nat): Nat = x * 3
+fun square(x: Nat): Nat = x * x

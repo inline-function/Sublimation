@@ -1,0 +1,11 @@
+// ============================================================
+// 特性：模块系统（目录即模块 / 父→子可见 / 跨模块限定调用）
+// 结构：根模块（本文件）→ 子模块 tool/（工具函数.subl）
+// 运行：java -jar build/libs/sublimation.jar compile examples/模块系统 -o out.js && node out.js
+// 预期输出（每行一个）：12 / 9
+// ============================================================
+
+fun main() {
+    unchecked print(tool.triple(4))   // 12：跨模块限定调用 tool.triple
+    unchecked print(tool.square(3))   // 9
+}

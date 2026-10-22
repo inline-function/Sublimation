@@ -72,6 +72,8 @@ class JsCodeGen {
     private var dictMethod = false
     /** 结构体字段名索引（从 AST 声明收集，codegen 不读符号表；P0：同名跨模块取最后者，见《模块系统.md》限制） */
     private val structFields = HashMap<String, List<String>>()
+    // V2 安卓视图：视图 struct 的字段声明类型（判断函数型字段——onClick 这类回调字段）
+    private val viewFieldTypes = HashMap<String, Map<String, Type>>()
     /** 安卓视图结构体（@view）名 → 字段名（android doc：mutation → 副本 → recomposion 用）。 */
     private val viewFieldsByStruct = HashMap<String, List<String>>()
 private var viewFnCounter = 0
@@ -202,13 +204,17 @@ private var viewFnCounter = 0
         currentPrefix = ""
         structFields.clear()
         viewFieldsByStruct.clear()
+        viewFieldTypes.clear()
         overloadsByUnit.clear()
         for ((_, fa) in units) for (e in fa.entries) if (e is DeclEntry) {
             // 仅带体的函数算「用户定义」接管名字；无体声明（@android/@root 内建占位）不算——
             // 否则 androidRecompose 的桥接会被误判为用户函数（回归：合成函数里直接调到未定义符号）
             (e.decl as? FunDecl)?.takeIf { it.body != null }?.let { userFns += it.name }
             val s = e.decl as? StructDecl ?: continue
-            if ("view" in s.annotations) viewFieldsByStruct[s.name] = s.fields.map { it.name }
+            if ("view" in s.annotations) {
+                viewFieldsByStruct[s.name] = s.fields.map { it.name }
+                viewFieldTypes[s.name] = s.fields.associate { it.name to it.type }
+            }
             structFields[s.name] = s.fields.map { it.name }
         }
         // HKT（《高阶类型.md》HKT-D2）：收集 kind 类型类名（theory 含 arity>0 形参）——genDict 按此决定
@@ -290,10 +296,13 @@ private var viewFnCounter = 0
                 // 安卓桥接兜底（android doc/安卓标准库.md）：仅在用到 @android 内建时注入。
         // node/桌面：log 打到 console，其余空操作；webview 内由原生注入的 __dshAndroid 接管。
         if (androidUsed) {
-            line("const __dshAndroid = (kind, args) => {")
-            line("  if (kind === \"log\") console.log(...args);")
-            line("  return null;")
-            line("};")
+            // webview/宿主已注入全局 __dshAndroid 时让位（宿主桥为准）；否则兜底（node/桌面）。
+            line("const __dshAndroid = (typeof globalThis.__dshAndroid === 'function')")
+            line("  ? globalThis.__dshAndroid")
+            line("  : (kind, args) => {")
+            line("      if (kind === \"log\") console.log(...args);")
+            line("      return null;")
+            line("    };")
         }
         // root doc《副作用与可变性控制》85-144：可变视图深拷贝助手——绑定/赋值触发 __dc(value)。
         // 仅在源码用到可变视图拷贝时注入（编译器按 binderNeedsCopy 留痕 deepCopyHits）。
@@ -1395,10 +1404,14 @@ private fun needEqPreScan(file: FileAst): Boolean {
         // 注册为 globalThis.__dshFn_<key>，字段值换成 key 字符串：JS 树经 JSON.stringify 传到
         // KT 端后，KT 端按 key 回调 JS 闭包（按钮点击的 JS-KT 双向通道）。
         val isView = e.struct in viewFieldsByStruct
+        val ftypes = viewFieldTypes[e.struct] ?: emptyMap()
         val given = LinkedHashMap<String, String>()
         for ((n, v) in e.assigns) {
             var js = expr(v)
-            if (isView && (v is LambdaExpr || v is FunRefExpr) && n != "body" && n != "recomposion") {
+            // 字段声明为函数型（onClick 这类回调）：无论实参是 lambda 还是裸函数名，都注册进
+            // globalThis.__dshFn_<key> 并把字段值换成 key——JSON.stringify 带不过函数。
+            val isFnField = ftypes[n] is FunType && n != "body" && n != "recomposion"
+            if (isView && isFnField) {
                 viewFnCounter++
                 val key = moduleJsName(currentPrefix, e.struct) + "_" + n + "_" + viewFnCounter
                 js = "(globalThis.__dshFn_" + key + " = (" + js + "), \"" + key + "\")"
