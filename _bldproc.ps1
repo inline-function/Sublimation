@@ -1,0 +1,1 @@
+.\gradlew.bat :annotationproc:test :cli:installDist --console=plain 2>&1 | Select-String -Pattern "e: file|FAILED|BUILD " | ForEach-Object { $_.Line } | Select-Object -First 4

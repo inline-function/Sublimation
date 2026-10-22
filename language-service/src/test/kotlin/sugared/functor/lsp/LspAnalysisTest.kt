@@ -127,6 +127,28 @@ class LspAnalysisTest {
 
     // ───────── typeDefinition ─────────
 
+    @Test fun `definitionOfWord 按名字跳转（补全长按的路径）`() {
+        val a = opened("fun main(): Null = print(0)")
+        val loc = a.definitionOfWord("file:///t.subl", "main")
+        assertNotNull(loc, "按名字应能跳到本文件 main")
+        assertEquals("file:///t.subl", loc?.uri)
+    }
+
+    @Test fun `definitionOfWord 定位 stdlib 符号`() {
+        val a = opened("def main(): Null {\n    print(List)\n}")
+        val loc = a.definitionOfWord("file:///t.subl", "List")
+        assertNotNull(loc, "List 应定位到 core 标准库文件")
+        val u = loc?.uri ?: ""
+        assertTrue(u.startsWith("file:"), "stdlib 定位应是 file URI，实际: " + u)
+        assertTrue(u.endsWith(".subl"), "应指向 .subl 文件，实际: " + u)
+        assertTrue(u.contains("list"), "List 应定义在 list 相关文件，实际: " + u)
+    }
+
+    @Test fun `definitionOfWord 找不到时返回 null`() {
+        val a = opened("def main(): Null {}")
+        assertNull(a.definitionOfWord("file:///t.subl", "no_such_name_xyz"))
+    }
+
     @Test fun `typeDefinition 跳到类型声明`() {
         val src = "struct User(name: Str)\nfun main() { var x: User = User(\"a\") }"
         val a = opened(src)

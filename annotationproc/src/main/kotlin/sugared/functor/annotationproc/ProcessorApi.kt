@@ -165,29 +165,23 @@ object ProcessorApi {
                 val boot = "try{__dshBoot();}catch(e){}\n"
                 val tail = "\ntry{ if (typeof main === 'function') main(); }catch(e){ if(__dshAndroid) __dshAndroid('log',[String(e),3]); }\n"
                 target.writeText(boot + js + tail, kotlin.text.Charsets.UTF_8)
-                // 1b) 安卓工具路径（-A sdkDir=…）：写进工程的 local.properties，AGP 由此定位 SDK/构建工具
-                if (sdkDir.isNotEmpty()) {
-                    val lp = java.io.File(appDir, "local.properties")
-                    val base = if (lp.exists()) lp.readText(kotlin.text.Charsets.UTF_8)
-                        .lineSequence().filter { !it.startsWith("sdk.dir") && !it.startsWith("sdk.dir=") }.joinToString("\n") else ""
-                    lp.writeText(base + (if (base.isNotEmpty() && !base.endsWith("\n")) "\n" else "") +
-                        "sdk.dir=" + sdkDir.replace("\\", "/") + "\n", kotlin.text.Charsets.UTF_8)
-                }
-                // 2) gradlew assembleDebug
+                // 2) 无 Gradle 构建：sdkDir 指向 sdk-lite 解压目录（含 build/build-apk.* 脚本）
                 val isWin = System.getProperty("os.name").startsWith("Windows")
-                val cmd = if (isWin) "cmd /c gradlew.bat :app:assembleDebug --console=plain"
-                    else "./gradlew :app:assembleDebug --console=plain"
-                val proc = ProcessBuilder(*cmd.split(" ").toTypedArray())
-                    .directory(appDir).redirectErrorStream(true).start()
+                val script = java.io.File(java.io.File(sdkDir), if (isWin) "build/build-apk.ps1" else "build/build-apk.sh")
+                if (!script.exists()) return@register "error|构建脚本不存在：" + script.path + "（sdkDir 应指向 sdk-lite 解压目录）"
+                // 工程布局兼容：appDir 可以是 gradle 工程根（含 app/ 模块）或模块本身
+                val module = java.io.File(appDir, "app")
+                val src = if (java.io.File(module, "src/main/AndroidManifest.xml").exists()) module else appDir
+                outDir.mkdirs()
+                val apk = java.io.File(outDir, "app-debug.apk")
+                val cmd = if (isWin) listOf("powershell", "-ExecutionPolicy", "Bypass", "-File", script.path,
+                    "-Project", src.path, "-Out", apk.path)
+                  else listOf("sh", script.path, "-p", src.path, "-o", apk.path)
+                val proc = ProcessBuilder(cmd).directory(appDir).redirectErrorStream(true).start()
                 val out = proc.inputStream.bufferedReader().use { it.readText() }
                 val code = proc.waitFor()
                 if (code != 0) return@register "error|build failed: " + out.take(2000)
-                // 3) APK 拷到 outDir
-                val apk = java.io.File(appDir, "app/build/outputs/apk/debug/app-debug.apk")
-                outDir.mkdirs()
-                val dest = java.io.File(outDir, apk.name)
-                apk.copyTo(dest, overwrite = true)
-                "ok|" + dest.path
+                "ok|" + apk.path
             } catch (ex: Exception) {
                 "error|" + (ex.message ?: ex.toString())
             }

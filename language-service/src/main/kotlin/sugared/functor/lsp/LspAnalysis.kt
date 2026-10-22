@@ -664,9 +664,18 @@ class LspAnalysis {
         val source = state.source
         val offset = positionToOffset(source, position, state.lineStarts) ?: return null
         val word = wordAtOffset(source, offset) ?: return null
+        return definitionOfWord(uri, word)
+    }
 
+    /**
+     * 已知名字的定义查询（IDE 补全长按转定义用）：本文件符号 → stdlib 兜底。
+     * 与 definitionFor 同一套定位逻辑，只是免去「按光标位置取词」这一步
+     * （补全弹窗里点的是完整符号名，光标却停在前缀中间）。
+     */
+    fun definitionOfWord(uri: String, word: String): Location? {
+        val source = docs[uri]?.source
         val symbol = collectSymbols(uri).find { it.name == word }
-        if (symbol != null) return Location(uri, diagPosToRange(symbol.pos, source))
+        if (symbol != null && source != null) return Location(uri, diagPosToRange(symbol.pos, source))
         // 兜底：用户文件没有的名字去 core 标准库找（stdlib 函数/类型也能转到定义）
         val std = stdlibSymbolIndex()[word] ?: return null
         return Location(std.first, diagPosToRange(std.second, std.third))

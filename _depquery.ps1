@@ -1,0 +1,2 @@
+.\gradlew.bat -p "F:/SublimationProject/sublimation for android/android-app" :app:dependencies --configuration debugRuntimeClasspath --console=plain 2>&1 | Out-File -FilePath "F:/KotlinProject/sublimation/_deps.txt" -Encoding utf8
+Write-Host done

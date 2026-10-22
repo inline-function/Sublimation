@@ -1,0 +1,2 @@
+$cli = "F:/KotlinProject/sublimation/cli/build/install/cli/bin/cli.bat"
+& $cli compile "F:/SublimationProject/sublimation for android/app" -o "F:/SublimationProject/sublimation for android/app/out.js" -p "F:/SublimationProject/sublimation for android/annotation processer" -A "appDir=F:/SublimationProject/sublimation for android/android-app" -A "jsPath=F:/SublimationProject/sublimation for android/app/out.js" -A "outDir=F:/SublimationProject/sublimation for android/sdk-lite/out" -A "sdkDir=F:/SublimationProject/sublimation for android/sdk-lite" 2>&1
