@@ -228,11 +228,18 @@ internal fun Checker.checkDeclTypes(decl: Decl) {
                     d.error("E-TYPE-MISMATCH", dv.pos, "字段 ${fp.name} 的默认值 ${vt.render()} 与 ${want.render()} 不符")
             }
         }
-        // O3（决策 69）：默认值只属于 struct 字段——函数形参（含类/impl 成员）带默认值报错
+        // O3（决策 69）扩展：函数形参允许默认值（尾部连续，Kotlin 规则）；类型类成员/impl 方法仍禁止
         is FunDecl -> {
-            decl.params.forEach { p ->
-                if (p.default != null) d.error("E-DEFAULT-PARAM", decl.pos, "函数形参 ${p.name} 不允许默认值。只有 struct 字段支持默认值")
-            }
+            // 函数默认值规则（决策 69 扩展）：尾部连续（首个默认值之后必须全有默认值）；默认值类型与形参一致
+            val firstDef = decl.params.indexOfFirst { it.default != null }
+            if (firstDef >= 0 && decl.params.drop(firstDef + 1).any { it.default == null })
+                d.error("E-DEFAULT-PARAM", decl.pos, "函数 ${decl.name} 形参 ${decl.params[firstDef].name} 有默认值，其后必须全部有默认值")
+            decl.params.forEach { p -> p.default?.let { dv ->
+                val vt = checkExpr(dv, Frame(null), pure = true)
+                val want = syms.expand(p.type)
+                if (!vt.isSynthetic() && want.isNominal() && want.name != "Any" && !typeLooseEq(want, vt))
+                    d.error("E-TYPE-MISMATCH", dv.pos, "形参 ${p.name} 的默认值 ${vt.render()} 与 ${want.render()} 不符")
+            } }
             // O4（决策 70）：main 作为自动入口必须 0 形参 0 类型参（重复声明由 E-DUP-DECL 兜底）
             if (decl.name == "main" && (decl.params.isNotEmpty() || decl.theory.isNotEmpty()))
                 d.error("E-MAIN-PARAMS", decl.pos, "入口函数 main 不能有形参或类型参数。写成 `fun main() { … }`")

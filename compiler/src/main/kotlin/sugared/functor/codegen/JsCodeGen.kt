@@ -74,6 +74,8 @@ class JsCodeGen {
     private val structFields = HashMap<String, List<String>>()
     // V2 安卓视图：视图 struct 的字段声明类型（判断函数型字段——onClick 这类回调字段）
     private val viewFieldTypes = HashMap<String, Map<String, Type>>()
+    // 决策 69 扩展：@android 无体内建按名登记（桥调用点补默认值）
+    private val androidBuiltins = HashMap<String, FunDecl>()
     /** 安卓视图结构体（@view）名 → 字段名（android doc：mutation → 副本 → recomposion 用）。 */
     private val viewFieldsByStruct = HashMap<String, List<String>>()
 private var viewFnCounter = 0
@@ -205,12 +207,19 @@ private var viewFnCounter = 0
         structFields.clear()
         viewFieldsByStruct.clear()
         viewFieldTypes.clear()
+        androidBuiltins.clear()
         overloadsByUnit.clear()
         for ((_, fa) in units) for (e in fa.entries) if (e is DeclEntry) {
             // 仅带体的函数算「用户定义」接管名字；无体声明（@android/@root 内建占位）不算——
             // 否则 androidRecompose 的桥接会被误判为用户函数（回归：合成函数里直接调到未定义符号）
             (e.decl as? FunDecl)?.takeIf { it.body != null }?.let { userFns += it.name }
-            val s = e.decl as? StructDecl ?: continue
+            val s = e.decl as? StructDecl
+            if (s == null) {
+                // 决策 69 扩展：@android 无体内建声明——桥调用点按声明默认值补齐实参（KT 按位置读 args）
+                val fd = e.decl as? FunDecl
+                if (fd != null && "android" in fd.annotations && fd.body == null) androidBuiltins[fd.name] = fd
+                continue
+            }
             if ("view" in s.annotations) {
                 viewFieldsByStruct[s.name] = s.fields.map { it.name }
                 viewFieldTypes[s.name] = s.fields.associate { it.name to it.type }
@@ -681,7 +690,11 @@ private fun needEqPreScan(file: FileAst): Boolean {
         val slots = fn.theory.filterIsInstance<TypeParam>().filter { it.constraint != null && it.constraint != "Any" }   // v2.1：Any 零字典不设槽
             .map { "d_${it.constraint}_${it.name}" }
         // P4（v2.1）：解构参数的 JS 形参用合成名 __dtN，函数体开头 const 拆解分量
-        val ps = (slots + fn.params.mapIndexed { i, p -> if (p.destruct != null) "__dt$i" else mangle(p.name) }).joinToString(", ")
+        // 决策 69 扩展：带默认值的形参生成 JS 默认值（调用侧省略尾部时由 JS 原生默认兜底）
+        val ps = (slots + fn.params.mapIndexed { i, p ->
+            val nm = if (p.destruct != null) "__dt$i" else mangle(p.name)
+            if (p.default != null) "$nm = ${expr(p.default!!)}" else nm
+        }).joinToString(", ")
         // v2.0 重载：本模块内同名 >1 的函数按首参标签唯一化（`core_collection__map$List`），与 Checker 侧 moduleHits 同名规则一致
         val base = moduleJsName(currentPrefix, fn.name)
         val jsName = if (overloadsByUnit[currentPrefix]?.contains(fn.name) == true) "$base\$${fnTag(fn)}" else base
@@ -1051,7 +1064,7 @@ private fun needEqPreScan(file: FileAst): Boolean {
         if (name != null && name in ANDROID_LIFECYCLE && e.args.size == 1 && name !in userFns) {
             androidUsed = true
             val body = expr(e.args[0])
-            return "(__dshLifecycle_" + name + " = (" + body + "), __dshAndroid(\"registerLifecycle\", [\"" + name + "\"]))"
+            return "(globalThis.__dshLifecycle_" + name + " = (" + body + "), __dshAndroid(\"registerLifecycle\", [\"" + name + "\"]))"
         }
         if (name == "layout" && e.args.size == 1 && name !in userFns) {
             androidUsed = true
@@ -1069,7 +1082,11 @@ private fun needEqPreScan(file: FileAst): Boolean {
         // "@impure fun log(x: Nat)" 是用户函数，不得编成 __dshAndroid("log", ...)）。
         if (name != null && name in ANDROID_CALL_SPECIAL && name !in userFns) {
             androidUsed = true
-            val a = e.args.joinToString(", ") { expr(it) }
+            // 决策 69 扩展：省略的尾部默认参数按声明默认值补齐（无体内建无 JS 函数体，JS 原生默认不可用）
+            val decl = androidBuiltins[name]
+            val filled = if (decl != null && e.args.size < decl.params.size)
+                e.args + decl.params.drop(e.args.size).mapNotNull { it.default } else e.args
+            val a = filled.joinToString(", ") { expr(it) }
             return "__dshAndroid(\"" + name + "\", [" + a + "])"
         }
         if (name == "println" || name == "print") {

@@ -731,11 +731,11 @@ internal fun Checker.checkFnCall(
                 if (taken[i]) d.error("E-NAMED-ARG", c.pos, "函数 $name 的参数 ${p.name} 已被位置实参占用")
                 merged[i] = nv; mergedT[i] = checkExpr(nv, f, pure); taken[i] = true
             }
-            val missing = fn.params.indices.filter { !taken[it] && it != listIdx }
+            val missing = fn.params.indices.filter { !taken[it] && it != listIdx && fn.params[it].default == null }
             if (missing.isNotEmpty())
                 d.error("E-TYPE-MISMATCH", c.pos, "函数 $name 缺实参：${missing.joinToString(", ") { fn.params[it].name }}")
-            effArgs = merged.map { it ?: NameRef("__missingArg") }     // 已报 E-TYPE-MISMATCH 缺实参/未知名；兜底值不参与核对
-            effTypes = mergedT.map { it ?: syntheticT("缺实参") }
+            effArgs = merged.mapIndexed { i, x -> x ?: fn.params[i].default ?: NameRef("__missingArg") }     // 默认值填空；其余缺参已报 E-TYPE-MISMATCH
+            effTypes = mergedT.mapIndexed { i, t -> t ?: fn.params[i].default?.let { checkExpr(it, f, pure) } ?: syntheticT("缺实参") }
             namedArgOrder[c] = effArgs
         }
     }
@@ -772,9 +772,14 @@ internal fun Checker.checkFnCall(
         asyncAwaitHits[c] = true   // 挂起点：codegen 生成 await
         d.supplement("D-AUTO-AWAIT", c.pos, "`$name()` 是异步调用，自动 await（无需写 await 关键字）")
     }
-    if (fn.params.size != effTypes.size && listIdx < 0) {
-        val who = if (isMethodPath) "方法 `$name`" else "函数 `$name`"
-        d.error("E-ARITY", c.pos, "$who 想要 ${fn.params.size} 个实参，但你传了 ${effTypes.size} 个（点掉多余的，或补上缺的）")
+    // 决策 69 扩展：尾部默认参数可省略——required = 首个带默认值形参的下标（无默认值则等于形参数）
+    if (listIdx < 0) {
+        val required = fn.params.indexOfFirst { it.default != null }.let { if (it < 0) fn.params.size else it }
+        if (effTypes.size < required || effTypes.size > fn.params.size) {
+            val who = if (isMethodPath) "方法 `$name`" else "函数 `$name`"
+            val hint = if (required < fn.params.size) "（尾部 ${fn.params.size - required} 个参数有默认值，可省略）" else ""
+            d.error("E-ARITY", c.pos, "$who 想要 $required~${fn.params.size} 个实参，但你传了 ${effTypes.size} 个$hint")
+        }
     }
 
     val tsub = LinkedHashMap<String, Type>()

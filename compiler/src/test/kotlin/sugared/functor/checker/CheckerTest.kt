@@ -942,8 +942,13 @@ class CheckerTest {
     }
 
     @Test
-    fun `O3 函数形参默认值禁令`() {
-        assertTrue(errs("fun f(x: Nat = 1): Nat = x").contains("E-DEFAULT-PARAM"))
+    fun `O3 函数形参默认值允许（尾部连续规则）`() {
+        // 允许：声明合法、调用可省略尾部默认参数
+        assertFalse(errs("fun f(x: Nat, y: Nat = 1): Nat = x + y\nfun main() { f(2) }").any { it.contains("E-DEFAULT-PARAM") || it.contains("E-ARITY") })
+        // 禁止：首个默认值之后出现无默认值形参
+        assertTrue(errs("fun f(x: Nat = 1, y: Nat): Nat = x + y").contains("E-DEFAULT-PARAM"))
+        // 禁止：默认值类型与形参不符
+        assertTrue(errs("fun f(x: Nat = \"a\"): Nat = x").contains("E-TYPE-MISMATCH"))
     }
 
     @Test

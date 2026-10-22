@@ -173,8 +173,8 @@ class DiagCoverageTest {
     @Test fun `E-UNBOUND-NAME 未知字段`() =
         assertTrue(has("struct A(name: Str)\nfun main() { var a = A(nickname = \"x\") }", "E-UNBOUND-NAME"))
 
-    @Test fun `E-DEFAULT-PARAM`() =
-        assertTrue(has("fun f(x: Nat = 1): Nat = x", "E-DEFAULT-PARAM"))
+    @Test fun `E-DEFAULT-PARAM 默认值后必须全部有默认值`() =
+        assertTrue(has("fun f(x: Nat = 1, y: Nat): Nat = x + y", "E-DEFAULT-PARAM"))
 
     @Test fun `E-MAIN-PARAMS`() =
         assertTrue(has("fun main(a: Nat) {}", "E-MAIN-PARAMS"))
