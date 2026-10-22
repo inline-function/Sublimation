@@ -155,6 +155,7 @@ private fun rewriteExpr(
                 val newAssigns = ArrayList(ctor.assigns)
                 if (kids.isNotEmpty()) newAssigns += CHILDREN to makeListOf(kids)
                 newAssigns += RECOMPOSION to NameRef(recomposionName(ctor.struct, n))
+                newAssigns += ORD to IntLit(n.toString())
                 return StructCtorExpr(ctor.struct, newAssigns, ctor.pos) to true
             }
             var ch = false
@@ -182,12 +183,13 @@ private fun rewriteExpr(
             val assigns = e.assigns.map { p -> p.first to applyTo(p.second, viewNames, ordinals) { ch = true } }
             // 叶子视图构造（无 body）：补上 children = Nil 与 recomposion = recomposion$X$N。
             // 已补全的构造点（children/recomposion 已在 assigns 中）不再匹配 → 幂等。
-            if (e.struct in viewNames && assigns.none { it.first == CHILDREN || it.first == RECOMPOSION }) {
+            if (e.struct in viewNames && assigns.none { it.first == CHILDREN || it.first == RECOMPOSION || it.first == ORD }) {
                 val n = ordinals.getOrDefault(e.struct, 0) + 1
                 ordinals[e.struct] = n
                 val na = ArrayList(assigns)
                 na += CHILDREN to CallExpr(NameRef("Nil"), listOf<Expr>(), emptyMap())   // Nil() 调用——NameRef 无法解析
                 na += RECOMPOSION to NameRef(recomposionName(e.struct, n))
+                na += ORD to IntLit(n.toString())
                 return StructCtorExpr(e.struct, na, e.pos) to true
             }
             return (if (ch) StructCtorExpr(e.struct, assigns, e.pos) else e) to ch
@@ -254,6 +256,7 @@ private fun makeListOf(items: List<Expr>): Expr = CallExpr(NameRef("listOf"), it
 
 internal const val CHILDREN = "children"
 internal const val RECOMPOSION = "recomposion"
+internal const val ORD = "__ord"
 
 
 /** 视图结构体字段注入（android doc/安卓标准库.md §视图结构体）：
@@ -263,7 +266,7 @@ internal const val RECOMPOSION = "recomposion"
  * @return 变换后的声明；若已是目标形态（无需变动）返回原声明（引用不变 → 引擎判定无变化停机）
 */
 internal fun injectViewFields(decl: StructDecl): StructDecl {
-    val kept = decl.fields.filterNot { it.name == CHILDREN || it.name == RECOMPOSION }
+    val kept = decl.fields.filterNot { it.name == CHILDREN || it.name == RECOMPOSION || it.name == ORD }
     // children 字段用 Any（自动类型类）而非 List[Any]：List 不变（invariant），异构子视图
     // listOf(Button(), Text()) 会推成联合 List 与 List[Any] 不符；Any 接受任意具体类型
     // （List[Button] 本身即一具体类型），JS 侧 children 仍是数组。
@@ -279,7 +282,10 @@ internal fun injectViewFields(decl: StructDecl): StructDecl {
     val mutKept = kept.map { if ("mut" in it.annotations) it else it.copy(annotations = it.annotations + "mut") }
     val newFields = mutKept +
         Param(CHILDREN, childrenT, annotations = listOf("mut"), default = emptyChildren) +
-        Param(RECOMPOSION, recomT, annotations = listOf("mut"), default = noOpRecompose)
+        Param(RECOMPOSION, recomT, annotations = listOf("mut"), default = noOpRecompose) +
+        // __ord: Nat = 0——构造点编号（与 recomposion$X$N 的 N 同源），序列化进 JSON 后
+        // 供 KT 端 androidRecompose 按 (tag, __ord) 精确定位节点（源码序≠树 DFS 序，见 doc）。
+        Param(ORD, NamedType("Nat", emptyList()), annotations = listOf("mut"), default = IntLit("0"))
     return if (newFields == decl.fields) decl else decl.copy(fields = newFields)
 }
 internal fun recomposionName(viewName: String, ordinal: Int): String =

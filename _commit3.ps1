@@ -1,0 +1,10 @@
+function DoCommit($dir, $b64, $pat) {
+  Set-Location $dir
+  $msg = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($b64))
+  git add -A 2>&1 | Out-Null
+  git -c user.name="inline-function" -c user.email="inline-function@users.noreply.github.com" commit -m $msg -q
+  Write-Host ($pat + " " + (git log --oneline -1))
+  git push origin main 2>&1 | Select-String "main ->" | ForEach-Object { "PUSH " + $_.Line.Trim() }
+}
+DoCommit "F:\KotlinProject\sublimation" "6YeN57uE5a6a5L2N5Y2P6K6u77ya6KeG5Zu+5p6E6YCg54K55rOo5YWlIF9fb3JkCgpKUyDnq6/nmoTmnoTpgKDluo/lj7fvvIhyZWNvbXBvc2lvbiRYJE4g55qEIE7vvIzmjInmupDnoIHluo/liIbphY3vvInkuI4gS1Qg56uv5Y6f5a6a55qEIERGUyDmoJHluo/kuI0K5LiA6Ie077yM5aSa6KeG5Zu+5pe2IHJlY29tcG9zZSDkvJrmjaLplJnoioLngrnvvIhsYWJlbCDkuI7pnZnmgIHmlofmnKzlkIwgdGFnIOaXtuWumuS9jemioOWAku+8ieOAgueOsOWcqOavj+S4qgrop4blm77mnoTpgKDngrnlnKggSlNPTiDoioLngrnph4zluKYgX19vcmQ6IE5hdO+8iGluamVjdFZpZXdGaWVsZHMg5rOo5YWl5a2X5q6144CBcmV3cml0ZVZpZXdDdG9ycwrmjInlkIzkuIAgb3JkaW5hbCDloavlgLzvvInvvIxLVCDnq68gcmVwbGFjZU5vZGUg5oyJICh0YWcsIF9fb3JkKSDnsr7noa7lrprkvY3jgIIKCumhuuW4puaBouWkjeiiq+a4heepuueahCBwbGF5Z3JvdW5kLyDmtYvor5XlpLnlhbfvvIg2IOS7veaXpeW4uOiEmuacrO+8jGludGVycHJldGVyIOa1i+ivleS+nei1lu+8ieOAgg==" "MAIN="
+DoCommit "F:\SublimationProject\sublimation for android" "5aKe6YeP6YeN57uE77ya55u4562J6KeG5Zu+5LiN6YeN5bu6CgpsYXlvdXQgLyBhbmRyb2lkUmVjb21wb3NlIOeOsOWcqOmDveWBmuaWsOaXpyBKU09OIOagkea3seavlOi+g++8mmpzb25FcXVhbHMg55+t6Lev55qE5a2Q5qCR5a6M5YWoCuS/neeVme+8iOWOn+eUn+inhuWbvuOAgeeKtuaAgeOAgeebkeWQrOWZqOmDveS4jemHjeW7uu+8ie+8jOWPquacieWPmOWMlueahOWtkOagkeWOn+S9jSByZW1vdmUrYWRk77ybQm94IOiHqui6qwrlrZfmrrXkuI3lj5jml7bnu6fnu63pgJDlrZDmoJHlop7ph4/jgILkv67mjonltYzlpZcgQm94IOm7mOiupCBNQVRDSF9QQVJFTlQg5oqK5YWE5byf6auY5bqm5Y6L5oiQIDAg55qE5riy5p+TCmJ1Z++8iFBsYWluIOm7mOiupOaUuSBXUkFQX0NPTlRFTlTvvIzmoLkgQm94IOeUseWGheWuueahhuaetui1i+S6iCBNQVRDSO+8ieOAggoK55yf5py66aqM6K+B77ya6K6h5pWw5ZmoIGRlbW8g54K55Lik5LiL77yM5pel5b+X5LuF44CM6YeN5bu6IEJ1dHRvbiDlrZDmoJHjgI14Mu+8iEJveC/pnZnmgIHmlofmnKzlhajot7Pov4fvvInvvIwKY291bnQgMOKGkjLvvJvkv67mraPph43nu4TlrprkvY3lkI7pnZnmgIHmlofmnKzkuI3lho3ooqvplJnor6/mm7/mjaLvvIxfX29yZCDlrprkvY3mraPnoa7jgII=" "NEW="

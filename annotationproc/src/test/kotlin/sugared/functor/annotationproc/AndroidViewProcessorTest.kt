@@ -78,7 +78,7 @@ class AndroidViewProcessorTest {
         val r = runView(viewSrc)
         dump("children", r)
         val box = structOf(r.ast, "Box")
-        assertEquals(listOf("modifier", "children", "recomposion"), box.fields.map { it.name })
+        assertEquals(listOf("modifier", "children", "recomposion", "__ord"), box.fields.map { it.name })
         val recom = box.fields.first { it.name == "recomposion" }
         assertTrue(recom.type is FunType, "recomposion 应是函数类型: ${recom.type.render()}")
     }
@@ -113,7 +113,7 @@ class AndroidViewProcessorTest {
         assertNotNull(body, "root 体应为 Box 构造")
         assertEquals("Box", body.struct)
         val assigns = body.assigns.map { it.first }
-        assertEquals(listOf("modifier", "children", "recomposion"), assigns)
+        assertEquals(listOf("modifier", "children", "recomposion", "__ord"), assigns)
         val recom = body.assigns.first { it.first == "recomposion" }.second as? NameRef
         assertNotNull(recom, "recomposion 位应是 NameRef")
         assertEquals("recomposion\$Box\$1", recom.name)
@@ -123,6 +123,6 @@ class AndroidViewProcessorTest {
         assertEquals(1, kids.args.size)
         val btn = kids.args[0] as? StructCtorExpr
         assertNotNull(btn, "children 首成员应为 Button 构造")
-        assertEquals(listOf("label", "children", "recomposion"), btn.assigns.map { it.first })
+        assertEquals(listOf("label", "children", "recomposion", "__ord"), btn.assigns.map { it.first })
     }
 }
