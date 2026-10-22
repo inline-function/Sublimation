@@ -74,6 +74,7 @@ class JsCodeGen {
     private val structFields = HashMap<String, List<String>>()
     /** 安卓视图结构体（@view）名 → 字段名（android doc：mutation → 副本 → recomposion 用）。 */
     private val viewFieldsByStruct = HashMap<String, List<String>>()
+private var viewFnCounter = 0
     /** 当前正在生成的函数（安卓视图可变性检测用）。 */
     private var currentFun: FunDecl? = null
     /** v2.0：重载函数名集合（同名 >1 声明）——这些名字在 JS 里需按首参标签唯一化，避免同名覆盖 */
@@ -406,6 +407,10 @@ private val ANDROID_CALL_SPECIAL: Set<String> = setOf(
     "log", "toast", "layout",
     "onCreate", "onStart", "onResume", "onPause", "onStop", "onDestroy", "onRestart",
     "androidRecompose",
+)
+/** 安卓 7 个生命周期名（android doc/安卓标准库.md §活动）：JS 端注册回调供 KT 端回调。 */
+private val ANDROID_LIFECYCLE: Set<String> = setOf(
+    "onCreate", "onStart", "onResume", "onPause", "onStop", "onDestroy", "onRestart"
 )
 
 /** 安卓桥接预扫描：源码里是否调用了 @android 内建（决定是否注入 __dshAndroid 兜底桩）。 */
@@ -1028,6 +1033,27 @@ private fun needEqPreScan(file: FileAst): Boolean {
         // v2.0 异步（root doc《异步》）：Mutex 创建 `Mutex()` → new Mutex()
         if (name == "Mutex" && e.args.isEmpty())
             return "new Mutex()"
+        // V2 安卓桥接（android doc/安卓标准库.md）：
+        //   1) 7 个生命周期：`onCreate { … }` 注册为 globalThis.__dshLifecycle_onCreate，
+        //      并经 __dshAndroid("registerLifecycle", [name]) 告知 KT 端——KT 端在事件发生时
+        //      回调 __dshLifecycle_onCreate()（JS-KT 双向通信）。逗号表达式保留调用语义。
+        //   2) layout：实参是返回视图树的函数——JS 端先求值得到视图 struct 对象，
+        //      JSON.stringify 后传 KT 端（JavascriptInterface 只认字符串）。
+        if (name != null && name in ANDROID_LIFECYCLE && e.args.size == 1 && name !in userFns) {
+            androidUsed = true
+            val body = expr(e.args[0])
+            return "(__dshLifecycle_" + name + " = (" + body + "), __dshAndroid(\"registerLifecycle\", [\"" + name + "\"]))"
+        }
+        if (name == "layout" && e.args.size == 1 && name !in userFns) {
+            androidUsed = true
+            val f = expr(e.args[0])
+            return "(function(f){ return __dshAndroid(\"layout\", [JSON.stringify(f(null))]); })(" + f + ")"
+        }
+        if (name == "androidRecompose" && e.args.size == 3 && name !in userFns) {
+            androidUsed = true
+            val a0 = expr(e.args[0]); val a1 = expr(e.args[1]); val a2 = expr(e.args[2])
+            return "__dshAndroid(\"androidRecompose\", [" + a0 + ", " + a1 + ", JSON.stringify(" + a2 + ")])"
+        }
         // 安卓内建（android doc/安卓标准库.md）：@android 无体声明的编译期 JS 桥接——
         // 桌面/node 走 __dshAndroid 兜底注入桩；webview 内由 KT 端注入实现。
         // 仅当本模块没有同名用户定义时才走安卓桥接——用户函数优先（回归 E2E v30：
@@ -1365,7 +1391,20 @@ private fun needEqPreScan(file: FileAst): Boolean {
      *  工厂名带当前模块前缀（StructCtorExpr 恒为同模块裸名引用，P0） */
     private fun structCtorJs(e: StructCtorExpr): String {
         val fields = structFields[e.struct] ?: emptyList()
-        val given = e.assigns.associate { (n, v) -> n to expr(v) }
+        // V2 安卓视图（android doc）：视图 struct 里函数型字段（onClick）无法 JSON 序列化——
+        // 注册为 globalThis.__dshFn_<key>，字段值换成 key 字符串：JS 树经 JSON.stringify 传到
+        // KT 端后，KT 端按 key 回调 JS 闭包（按钮点击的 JS-KT 双向通道）。
+        val isView = e.struct in viewFieldsByStruct
+        val given = LinkedHashMap<String, String>()
+        for ((n, v) in e.assigns) {
+            var js = expr(v)
+            if (isView && (v is LambdaExpr || v is FunRefExpr) && n != "body" && n != "recomposion") {
+                viewFnCounter++
+                val key = moduleJsName(currentPrefix, e.struct) + "_" + n + "_" + viewFnCounter
+                js = "(globalThis.__dshFn_" + key + " = (" + js + "), \"" + key + "\")"
+            }
+            given[n] = js
+        }
         val positional = fields.map { given[it] ?: "undefined" }
         return "${moduleJsName(currentPrefix, e.struct)}(${positional.joinToString(", ")})"
     }

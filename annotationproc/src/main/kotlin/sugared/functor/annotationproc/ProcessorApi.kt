@@ -144,7 +144,46 @@ object ProcessorApi {
             java.io.File(args[0] as String).exists()
         }
 
-        // ---------- 安卓视图处理器支撑（android doc/安卓标准库.md） ----------
+
+        // ---------- V2 安卓 APK 构建（宿主能力；工具路径经 options 传入） ----------
+        interp.register(
+            "buildAndroidApk",
+            "appDir" to ScriptType.Str, "jsPath" to ScriptType.Str, "outDir" to ScriptType.Str,
+            retType = ScriptType.Str,
+        ) { args ->
+            val appDir = java.io.File(args[0] as String)
+            val jsPath = java.io.File(args[1] as String)
+            val outDir = java.io.File(args[2] as String)
+            try {
+                // 1) JS 产物拷进 app 的 assets（WebView 加载 app.js）
+                val assets = java.io.File(appDir, "app/src/main/assets")
+                assets.mkdirs()
+                val target = java.io.File(assets, "app.js")
+                val js = jsPath.readText(kotlin.text.Charsets.UTF_8)
+                val boot = "try{__dshBoot();}catch(e){}\n"
+                val tail = "\ntry{ if (typeof main === 'function') main(); }catch(e){ if(__dshAndroid) __dshAndroid('log',[String(e),3]); }\n"
+                target.writeText(boot + js + tail, kotlin.text.Charsets.UTF_8)
+                // 2) gradlew assembleDebug
+                val isWin = System.getProperty("os.name").startsWith("Windows")
+                val cmd = if (isWin) "cmd /c gradlew.bat :app:assembleDebug --console=plain"
+                    else "./gradlew :app:assembleDebug --console=plain"
+                val proc = ProcessBuilder(*cmd.split(" ").toTypedArray())
+                    .directory(appDir).redirectErrorStream(true).start()
+                val out = proc.inputStream.bufferedReader().use { it.readText() }
+                val code = proc.waitFor()
+                if (code != 0) return@register "error|build failed: " + out.take(2000)
+                // 3) APK 拷到 outDir
+                val apk = java.io.File(appDir, "app/build/outputs/apk/debug/app-debug.apk")
+                outDir.mkdirs()
+                val dest = java.io.File(outDir, apk.name)
+                apk.copyTo(dest, overwrite = true)
+                "ok|" + dest.path
+            } catch (ex: Exception) {
+                "error|" + (ex.message ?: ex.toString())
+            }
+        }
+
+// ---------- 安卓视图处理器支撑（android doc/安卓标准库.md） ----------
         interp.register("fieldDeclText", "name" to ScriptType.Str, "field" to ScriptType.Str,
             retType = ScriptType.Str) { args ->
             val st = structByName(args[0] as String)

@@ -271,10 +271,15 @@ internal fun injectViewFields(decl: StructDecl): StructDecl {
     val recomT = FunType(listOf(NamedType("Any", emptyList())), NamedType("Null", emptyList()))
     // 视图结构体全部字段标 @mut（android doc/安卓标准库.md §视图结构体的可变性函数：
     //  实例不可变语义下字段可被可变性函数修改）——不然 v.modifier = x 会被 E-NOT-MUT 拦截。
+    // 注入字段带默认值：构造可省略（E-FIELD-MISSING 兜底）。
+    // children 默认空串占位（Any 自动类型类：Str 是其实例；JS 侧被子视图列表覆盖）、
+    // recomposion 默认空操作 lambda。
+    val emptyChildren = StrLit("", "0:0")
+    val noOpRecompose = LambdaExpr(listOf("_"), BlockExpr(emptyList()), "0:0")
     val mutKept = kept.map { if ("mut" in it.annotations) it else it.copy(annotations = it.annotations + "mut") }
     val newFields = mutKept +
-        Param(CHILDREN, childrenT, annotations = listOf("mut")) +
-        Param(RECOMPOSION, recomT, annotations = listOf("mut"))
+        Param(CHILDREN, childrenT, annotations = listOf("mut"), default = emptyChildren) +
+        Param(RECOMPOSION, recomT, annotations = listOf("mut"), default = noOpRecompose)
     return if (newFields == decl.fields) decl else decl.copy(fields = newFields)
 }
 internal fun recomposionName(viewName: String, ordinal: Int): String =

@@ -1769,7 +1769,7 @@ private var ifIsCond: Boolean = false
             when {
                 k == Kind.LBRACE -> depth++
                 k == Kind.RBRACE -> { depth--; if (depth == 0) return true }
-                k == Kind.ARROW || k == Kind.DARROW || k == Kind.COLON -> return false  // 显式参数带箭头→交给 braceIsLambda；`:` 是类型测/类型标注→非隐式体
+                (depth == 1 && (k == Kind.ARROW || k == Kind.DARROW || k == Kind.COLON)) -> return false  // 显式参数带箭头→交给 braceIsLambda；`:` 是类型测/类型标注→非隐式体
                 k == Kind.EOF -> return false
                 else -> {}
             }

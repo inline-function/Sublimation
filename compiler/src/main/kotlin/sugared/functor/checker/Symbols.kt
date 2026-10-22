@@ -224,7 +224,7 @@ internal fun Checker.checkDeclTypes(decl: Decl) {
             fp.default?.let { dv ->
                 val vt = checkExpr(dv, Frame(null), pure = true)
                 val want = syms.expand(fp.type)
-                if (!vt.isSynthetic() && want.isNominal() && !typeLooseEq(want, vt))
+                if (!vt.isSynthetic() && want.isNominal() && want.name != "Any" && !typeLooseEq(want, vt))
                     d.error("E-TYPE-MISMATCH", dv.pos, "字段 ${fp.name} 的默认值 ${vt.render()} 与 ${want.render()} 不符")
             }
         }
