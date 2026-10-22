@@ -1,3 +1,0 @@
-if (Test-Path "C:\Program Files\Android\Android Studio\plugins\Kotlin\kotlinc\bin\kotlinc.bat") { Write-Host "AS-KOTLINC=found" } else { Write-Host "AS-KOTLINC=none" }
-$kc = "C:\Users\ZhuanZ\.gradle\caches\modules-2\files-2.1\org.jetbrains.kotlin\kotlin-compiler-embeddable"
-if (Test-Path $kc) { Get-ChildItem $kc -Directory | Select-Object -ExpandProperty Name | ForEach-Object { "EMB " + $_ } } else { Write-Host "EMB=none" }

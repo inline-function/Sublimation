@@ -1,2 +1,0 @@
-powershell -ExecutionPolicy Bypass -File "F:/SublimationProject/sublimation for android/sdk-lite/build/build-apk.ps1" -Project "F:/SublimationProject/sublimation for android/android-app/app" -Out "F:/SublimationProject/sublimation for android/sdk-lite/out/app-debug.apk" *> "F:/KotlinProject/sublimation/_build.log"
-Write-Host done

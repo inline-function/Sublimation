@@ -1,3 +1,0 @@
-$base = "F:/SublimationProject/sublimation for android/android-app/app/build/intermediates"
-if (Test-Path ("{0}\exploded-aar" -f $base)) { Get-ChildItem ("{0}\exploded-aar" -f $base) -Directory | Select-Object -ExpandProperty Name | ForEach-Object { "A " + $_ } } else { Write-Host "NO-exploded-aar" }
-if (Test-Path ("{0}\runtime_library_classes_jar" -f $base)) { Get-ChildItem ("{0}\runtime_library_classes_jar" -f $base) -Recurse -Filter "*.jar" | Select-Object -ExpandProperty Name | ForEach-Object { "J " + $_ } | Select-Object -First 40 } else { Write-Host "NO-rlcj" }
