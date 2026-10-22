@@ -79,6 +79,8 @@ class JsCodeGen {
     /** 安卓视图结构体（@view）名 → 字段名（android doc：mutation → 副本 → recomposion 用）。 */
     private val viewFieldsByStruct = HashMap<String, List<String>>()
 private var viewFnCounter = 0
+/** 桥回调 lambda（如 pickFile 的 then）的全局键计数器——同视图回调机制。 */
+private var bridgeFnCounter = 0
     /** 当前正在生成的函数（安卓视图可变性检测用）。 */
     private var currentFun: FunDecl? = null
     /** v2.0：重载函数名集合（同名 >1 声明）——这些名字在 JS 里需按首参标签唯一化，避免同名覆盖 */
@@ -208,6 +210,7 @@ private var viewFnCounter = 0
         viewFieldsByStruct.clear()
         viewFieldTypes.clear()
         androidBuiltins.clear()
+        bridgeFnCounter = 0
         overloadsByUnit.clear()
         for ((_, fa) in units) for (e in fa.entries) if (e is DeclEntry) {
             // 仅带体的函数算「用户定义」接管名字；无体声明（@android/@root 内建占位）不算——
@@ -425,6 +428,12 @@ private val ANDROID_CALL_SPECIAL: Set<String> = setOf(
     "log", "toast", "layout",
     "onCreate", "onStart", "onResume", "onPause", "onStop", "onDestroy", "onRestart",
     "androidRecompose",
+    // 意图（intent.subl）
+    "openUrl", "shareText", "dial", "sms", "openSettings", "launchApp",
+    // 平台能力（platform.subl）
+    "clipboardSet", "clipboardGet", "storagePut", "storageGet",
+    "keepScreenOn", "vibrate", "screenWidth", "screenHeight", "screenDensity",
+    "installedApps", "pickFile",
 )
 /** 安卓 7 个生命周期名（android doc/安卓标准库.md §活动）：JS 端注册回调供 KT 端回调。 */
 private val ANDROID_LIFECYCLE: Set<String> = setOf(
@@ -1088,10 +1097,30 @@ private fun needEqPreScan(file: FileAst): Boolean {
             androidUsed = true
             // 决策 69 扩展：省略的尾部默认参数按声明默认值补齐（无体内建无 JS 函数体，JS 原生默认不可用）
             val decl = androidBuiltins[name]
+            // pickFile(mime, then)：回调型内建——lambda 注册为 __dshFn_<key>（同视图回调机制），
+            // 只把 key 串进桥参数（JSON 带不过函数）。
+            val thenLam = e.args.getOrNull(1)
+            if (name == "pickFile" && thenLam is LambdaExpr) {
+                androidUsed = true
+                bridgeFnCounter++
+                val key = "android_pickFile_" + bridgeFnCounter
+                val lamJs = expr(thenLam)
+                val mimeJs = expr(e.args[0])
+                return "(globalThis.__dshFn_" + key + " = (" + lamJs + "), __dshAndroid(\"pickFile\", [" + mimeJs + ", \"" + key + "\"]))"
+            }
             val filled = if (decl != null && e.args.size < decl.params.size)
                 e.args + decl.params.drop(e.args.size).mapNotNull { it.default } else e.args
             val a = filled.joinToString(", ") { expr(it) }
-            return "__dshAndroid(\"" + name + "\", [" + a + "])"
+            val call = "__dshAndroid(\"" + name + "\", [" + a + "])"
+            // 值返回型内建：KT 端返回 JSON 字符串（Str 型返回原文，两通道一致）——
+            // prompt 通道（端侧 JS）与 JavascriptInterface 通道都拿同一个字符串，JSON.parse 即统一。
+            val rt = (decl?.retType as? NamedType)
+            val rtName = rt?.name ?: ""
+            return when {
+                rtName == "Nat" || rtName == "Int" || rtName == "Bool" -> "JSON.parse(" + call + ")"
+                rtName == "List" || rtName == "Optional" -> "JSON.parse(" + call + ")"
+                else -> call
+            }
         }
         if (name == "println" || name == "print") {
             // 修复（#8）：print 与 toStr 统一走 __dshtoStr（列表打印为 [] 形式，无空格）

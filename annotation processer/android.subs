@@ -30,7 +30,7 @@ fun checkOne(fn: Str): Null {
 fun checkWhitelist(fn: Str): Null {
     if (startsWith(fn, "recomposion$")) null
     else if (isAndroidBuiltin(fn)) null
-    else processorError("@android 函数 " + fn + " 不是编译器支持的安卓内建。内建含 log/toast/layout/onCreate/onStart/onResume/onPause/onStop/onDestroy/onRestart/androidRecompose")
+    else processorError("@android 函数 " + fn + " 不是编译器支持的安卓内建。内建含 log/toast/layout/7 个生命周期/androidRecompose/意图 6 个（openUrl,shareText,dial,sms,openSettings,launchApp）/平台能力 11 个（clipboardSet/Get,storagePut/Get,keepScreenOn,vibrate,screenW/H/Density,installedApps,pickFile）")
 }
 
 fun checkImpure(fn: Str, anns: List[Str]): Null {
@@ -63,6 +63,25 @@ fun isAndroidBuiltin(fn: Str): Bool =
         "onDestroy" => true
         "onRestart" => true
         "androidRecompose" => true
+        // 意图（intent.subl）
+        "openUrl" => true
+        "shareText" => true
+        "dial" => true
+        "sms" => true
+        "openSettings" => true
+        "launchApp" => true
+        // 平台能力（platform.subl）
+        "clipboardSet" => true
+        "clipboardGet" => true
+        "storagePut" => true
+        "storageGet" => true
+        "keepScreenOn" => true
+        "vibrate" => true
+        "screenWidth" => true
+        "screenHeight" => true
+        "screenDensity" => true
+        "installedApps" => true
+        "pickFile" => true
         else => false
     }
 

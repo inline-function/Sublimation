@@ -1,0 +1,5 @@
+Phase 4: 编译器支持安卓标准库扩展
+
+- checker: AndroidBuiltins 白名单 +17 名（intent/platform 系），放宽变长实参为结构体类型时回退 Any
+- codegen: JsCodeGen 桥函数发射支持 pickFile trailing lambda 与值返回型 JSON 包装
+- android.subs: isAndroidBuiltin 白名单同步

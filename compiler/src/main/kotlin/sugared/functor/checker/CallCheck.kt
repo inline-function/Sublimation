@@ -845,8 +845,22 @@ internal fun Checker.checkFnCall(
                 val at = effTypesIn[j]
                 if (!at.isSynthetic() && !unifyInto(elem, at, tps.toSet(), tsub, tpArityOf(fn))) unified = false
             }
-            if (!unified)
-                d.error("E-TYPE-MISMATCH", c.pos, "@list 形参 ${p.name}：变长实参须为同一类型")
+            if (!unified) {
+                // 视图 children 场景（android doc §布局）：异构视图结构体（Text/Switch 混排）互不
+                // 子类型——当声明元素类型是未决类型参数且全部实参为命名结构体类型时，退化为 Any
+                // 组成 List[Any]（children 字段的声明类型）；标量异构（listOf(1, "x")）照常报错。
+                val theoryNames = fn.theory.filterIsInstance<sugared.functor.ast.TypeParam>().map { it.name }.toSet()
+                // 全为已声明的结构体类型（排除 Nat/Str 等内建标量——保住 listOf(1, "x") 的报错）
+                val allStruct = (i until effArgsIn.size).all { j ->
+                    val at = effTypesIn[j]
+                    !at.isSynthetic() && at is sugared.functor.ast.NamedType && at.args.isEmpty() &&
+                        at.name in syms.structs
+                }
+                if (elem is sugared.functor.ast.NamedType && elem.name in theoryNames && allStruct)
+                    tsub[elem.name] = sugared.functor.ast.NamedType("Any")
+                else
+                    d.error("E-TYPE-MISMATCH", c.pos, "@list 形参 ${p.name}：变长实参须为同一类型")
+            }
             return@forEachIndexed
         }
         if (i >= effTypes.size) return@forEachIndexed

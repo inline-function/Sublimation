@@ -22,6 +22,12 @@ val ANDROID_WHITELIST: Set<String> = setOf(
     "log", "toast", "layout",
     "onCreate", "onStart", "onResume", "onPause", "onStop", "onDestroy", "onRestart",
     "androidRecompose",
+    // 意图（intent.subl）：跳出本应用、驱动其它应用与系统页面
+    "openUrl", "shareText", "dial", "sms", "openSettings", "launchApp",
+    // 平台能力（platform.subl）：剪贴板、持久存储、屏幕参数、屏幕常亮、触感、文件选取
+    "clipboardSet", "clipboardGet", "storagePut", "storageGet",
+    "keepScreenOn", "vibrate", "screenWidth", "screenHeight", "screenDensity",
+    "installedApps", "pickFile",
 )
 
 /** 安卓内建函数签名（按名查询；impure）。 */
@@ -58,6 +64,53 @@ fun builtinAndroid(name: String): FunDecl? = when (name) {
         emptyList(), namedT("Null"), emptyList(), null)
     "androidRecompose" -> FunDecl("androidRecompose", listOf("impure", "android"), emptyList(),
         listOf(Param("view", namedT("Str")), Param("ordinal", namedT("Nat")), Param("v", namedT("Any"))),
+        emptyList(), namedT("Null"), emptyList(), null)
+    // 意图（intent.subl）
+    "openUrl" -> FunDecl("openUrl", listOf("impure", "android"), emptyList(),
+        listOf(Param("url", namedT("Str"))),
+        emptyList(), namedT("Null"), emptyList(), null)
+    "shareText" -> FunDecl("shareText", listOf("impure", "android"), emptyList(),
+        listOf(Param("text", namedT("Str"))),
+        emptyList(), namedT("Null"), emptyList(), null)
+    "dial" -> FunDecl("dial", listOf("impure", "android"), emptyList(),
+        listOf(Param("phone", namedT("Str"))),
+        emptyList(), namedT("Null"), emptyList(), null)
+    "sms" -> FunDecl("sms", listOf("impure", "android"), emptyList(),
+        listOf(Param("phone", namedT("Str"))),
+        emptyList(), namedT("Null"), emptyList(), null)
+    "openSettings" -> FunDecl("openSettings", listOf("impure", "android"), emptyList(),
+        emptyList(), emptyList(), namedT("Null"), emptyList(), null)
+    "launchApp" -> FunDecl("launchApp", listOf("impure", "android"), emptyList(),
+        listOf(Param("packageName", namedT("Str"))),
+        emptyList(), namedT("Null"), emptyList(), null)
+    // 平台能力（platform.subl）
+    "clipboardSet" -> FunDecl("clipboardSet", listOf("impure", "android"), emptyList(),
+        listOf(Param("text", namedT("Str"))),
+        emptyList(), namedT("Null"), emptyList(), null)
+    "clipboardGet" -> FunDecl("clipboardGet", listOf("impure", "android"), emptyList(),
+        emptyList(), emptyList(), namedT("Str"), emptyList(), null)
+    "storagePut" -> FunDecl("storagePut", listOf("impure", "android"), emptyList(),
+        listOf(Param("key", namedT("Str")), Param("value", namedT("Str"))),
+        emptyList(), namedT("Null"), emptyList(), null)
+    "storageGet" -> FunDecl("storageGet", listOf("impure", "android"), emptyList(),
+        listOf(Param("key", namedT("Str"))),
+        emptyList(), namedT("Str"), emptyList(), null)
+    "keepScreenOn" -> FunDecl("keepScreenOn", listOf("impure", "android"), emptyList(),
+        listOf(Param("on", namedT("Bool"))),
+        emptyList(), namedT("Null"), emptyList(), null)
+    "vibrate" -> FunDecl("vibrate", listOf("impure", "android"), emptyList(),
+        listOf(Param("ms", namedT("Nat"))),
+        emptyList(), namedT("Null"), emptyList(), null)
+    "screenWidth" -> FunDecl("screenWidth", listOf("impure", "android"), emptyList(),
+        emptyList(), emptyList(), namedT("Nat"), emptyList(), null)
+    "screenHeight" -> FunDecl("screenHeight", listOf("impure", "android"), emptyList(),
+        emptyList(), emptyList(), namedT("Nat"), emptyList(), null)
+    "screenDensity" -> FunDecl("screenDensity", listOf("impure", "android"), emptyList(),
+        emptyList(), emptyList(), namedT("Nat"), emptyList(), null)
+    "installedApps" -> FunDecl("installedApps", listOf("impure", "android"), emptyList(),
+        emptyList(), emptyList(), namedT("List", listOf(namedT("Str"))), emptyList(), null)
+    "pickFile" -> FunDecl("pickFile", listOf("impure", "android"), emptyList(),
+        listOf(Param("mime", namedT("Str")), Param("then", FunType(listOf(namedT("Str")), namedT("Null")))),
         emptyList(), namedT("Null"), emptyList(), null)
     else -> null
 }
