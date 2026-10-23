@@ -119,6 +119,9 @@ class LspAnalysisTest {
         for (view in listOf("Box", "Text", "TextField", "Button", "Chart")) {
             assertTrue(tree.contains("\"name\":\"$view\""), "布局树缺视图节点 $view")
         }
+        // @composable 调用节点（@rowsView/@chartView）也进树
+        assertTrue(tree.contains("\"name\":\"@rowsView\""), tree)
+        assertTrue(tree.contains("\"name\":\"@chartView\""), tree)
     }
 
     // ───────── hover ─────────

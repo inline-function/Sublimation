@@ -827,6 +827,7 @@ class LspAnalysis {
         val text: String = "",
         val props: Map<String, String> = emptyMap(),
         val children: List<ViewNode> = emptyList(),
+        val args: List<String> = emptyList(),
     )
 
     /** 光标所属的 @composable 函数：词名精确命中优先；nameOnly=true 时只按名命中（避免 hover 变量误触）。 */
@@ -883,6 +884,7 @@ class LspAnalysis {
         if (n.text.isNotEmpty()) sb.append(",\"text\":").append(jsonStr(n.text))
         if (n.props.isNotEmpty()) sb.append(",\"props\":{").append(n.props.entries.joinToString(",") { (k, v) -> jsonStr(k) + ":" + jsonStr(v) }).append("}")
         if (n.children.isNotEmpty()) sb.append(",\"children\":[").append(n.children.joinToString(",") { nodeJson(it) }).append("]")
+        if (n.args.isNotEmpty()) sb.append(",\"args\":[").append(n.args.joinToString(",") { jsonStr(it) }).append("]")
         return sb.append("}").toString()
     }
 
@@ -920,7 +922,11 @@ class LspAnalysis {
                 val ctor = callee as? sugared.functor.ast.StructCtorExpr
                 when {
                     // @composable 调用：展开一层子树
-                    target != null -> out += ViewNode("@" + name!!, "", emptyMap(), collectViewNodes(ast, target.body, depth + 1))
+                    target != null -> {
+                        // 捕获调用的实参摘要（简单字面量/名字可原样再生成，如 rowsView(meds)）
+                        val argSum = e.args.map { exprSummary(it) }.filter { it.isNotEmpty() }
+                        out += ViewNode("@" + name!!, "", emptyMap(), collectViewNodes(ast, target.body, depth + 1), argSum)
+                    }
                     // 视图结构体 + 尾随 lambda 体（Box(...) { 子视图 }）：尾 lambda 即 children
                     ctor != null -> {
                         val kids = mutableListOf<ViewNode>()
