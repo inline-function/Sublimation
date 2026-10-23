@@ -95,6 +95,23 @@ class LspAnalysisTest {
     }
 
     // ───────── hover ─────────
+    @Test fun `composable 函数名 hover 展示视图树`() {
+        val a = opened("""@composable
+fun card(): Box {
+    return Box(modifier = Plain()) {
+        Text(text = "hi")
+    }
+}
+""")
+        val hover = a.hoverFor("file:///t.subl", Position(1, 4))
+        assertNotNull(hover)
+        val c = hover.contents as? MarkupContent
+        assertNotNull(c)
+        assertTrue(c.value.contains("card"), "视图树预览应含函数名")
+        assertTrue(c.value.contains("Box"), "视图树应含 Box")
+        assertTrue(c.value.contains("Text"), "视图树应含 Text")
+    }
+
 
     @Test fun `hover 显示函数签名`() {
         val a = opened("fun add(a: Nat, b: Nat): Nat = a + b")

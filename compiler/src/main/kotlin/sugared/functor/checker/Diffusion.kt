@@ -404,6 +404,9 @@ private fun Expr.toStr(): String = when (this) {
 
 internal fun Checker.typeLooseEq(a0: Type, b0: Type): Boolean {
     val a = syms.expand(a0); val b = syms.expand(b0)   // 别名展开（决策 30）
+    // 泛型默认值对齐：未实例化的类型形参（emptyList[T]() 的 T）与任何实参相容——
+    // 默认值位不携带类型实参信息，严格比对会把 List[Rat] 字段写成 List[T] 误报 E-TYPE-MISMATCH
+    if (isUnboundTypeParam(a) || isUnboundTypeParam(b)) return true
     // v2.1（对齐 Rust 无限类型语义）：Nothing 是底类型——可被当成任何结构体/枚举/类型类
     if (a.isNothing() || b.isNothing()) return true
     if (a.isSynthetic() || b.isSynthetic()) return true
@@ -421,6 +424,14 @@ internal fun Checker.typeLooseEq(a0: Type, b0: Type): Boolean {
     if (b is MutType) return false
     if (a.name != b.name || a.args.size != b.args.size) return false
     return a.args.zip(b.args).all { typeLooseEq(it.first, it.second) }
+}
+
+/** 未实例化的类型形参：单字母名（T/U/V/A…）、无类型实参、既非内建类型也非用户声明类型。
+ * 仅用于默认值位的宽松比对，避免 emptyList[T]() 这类泛型零参构造误报类型不符。 */
+internal fun Checker.isUnboundTypeParam(t: Type): Boolean {
+    val n = (t as? NamedType)?.name ?: return false
+    return n.length == 1 && t.args.isEmpty() && n !in BASE_TYPES &&
+        syms.structs[n] == null && syms.enums[n] == null && syms.aliases[n] == null
 }
 
 internal fun Type.isNumeric(): Boolean = name in setOf("Nat", "Int", "Rat") && args.isEmpty()

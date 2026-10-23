@@ -28,6 +28,8 @@ val ANDROID_WHITELIST: Set<String> = setOf(
     "clipboardSet", "clipboardGet", "storagePut", "storageGet",
     "keepScreenOn", "vibrate", "screenWidth", "screenHeight", "screenDensity",
     "installedApps", "pickFile",
+    // 平台能力（platform.subl）：时间戳格式化
+    "fmtTime",
 )
 
 /** 安卓内建函数签名（按名查询；impure）。 */
@@ -112,5 +114,8 @@ fun builtinAndroid(name: String): FunDecl? = when (name) {
     "pickFile" -> FunDecl("pickFile", listOf("impure", "android"), emptyList(),
         listOf(Param("mime", namedT("Str")), Param("then", FunType(listOf(namedT("Str")), namedT("Null")))),
         emptyList(), namedT("Null"), emptyList(), null)
+    "fmtTime" -> FunDecl("fmtTime", listOf("impure", "android"), emptyList(),
+        listOf(Param("ms", namedT("Nat"))),
+        emptyList(), namedT("Str"), emptyList(), null)
     else -> null
 }

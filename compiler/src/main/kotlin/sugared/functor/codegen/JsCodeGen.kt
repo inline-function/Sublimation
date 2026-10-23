@@ -434,6 +434,8 @@ private val ANDROID_CALL_SPECIAL: Set<String> = setOf(
     "clipboardSet", "clipboardGet", "storagePut", "storageGet",
     "keepScreenOn", "vibrate", "screenWidth", "screenHeight", "screenDensity",
     "installedApps", "pickFile",
+    // s���platform.subl	��3<
+    "fmtTime",
 )
 /** 安卓 7 个生命周期名（android doc/安卓标准库.md §活动）：JS 端注册回调供 KT 端回调。 */
 private val ANDROID_LIFECYCLE: Set<String> = setOf(

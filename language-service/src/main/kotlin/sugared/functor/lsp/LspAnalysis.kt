@@ -44,6 +44,9 @@ class LspAnalysis {
     // stdlibDir 默认 File("core)，与 Interpreter(stdlibDir) 一致；loadPrelude 时同步覆盖
     private var stdlibDir: java.io.File? = java.io.File("core")
     private var scriptStdlibCache: List<Entry>? = null
+    // 安卓标准库目录（IDE 释放的 android/stdlib）：@android/@composable 声明的只读跳转目标
+    private var androidStdlibDir: java.io.File? = null
+    private var androidStdlibCache: Map<String, Triple<String, String, String>>? = null
     // 脚本模式：全局类型推导（省略标注时填充类型/可变性/效应，见 wiki/全局类型推导.md）
     private val scriptGlobalInference = true
 
@@ -65,6 +68,9 @@ class LspAnalysis {
      * 载入 prelude（幂等）：内建类型 + 内建函数 + 可选 stdlib 顶层符号。
      * 供补全与悬停使用（不参与 definition/references，避免虚假位置）。
      */
+    /** 设置安卓标准库目录（IDE 端释放的 android/stdlib），供 @android 声明的只读跳转 */
+    fun setAndroidStdlibDir(dir: java.io.File?) { androidStdlibDir = dir }
+
     fun loadPrelude(stdlibDir: java.io.File? = null) {
         if (preludeLoaded) return
         preludeLoaded = true
@@ -168,7 +174,35 @@ class LspAnalysis {
         stdlibIndexCache = out
         return out
     }
-    private fun scriptStdlib(): List<Entry> {
+/** 安卓标准库符号索引（android/stdlib）：@android 平台声明的只读跳转目标 */
+    private fun androidStdlibSymbolIndex(): Map<String, Triple<String, String, String>> {
+        androidStdlibCache?.let { return it }
+        val out = HashMap<String, Triple<String, String, String>>()
+        val dir = androidStdlibDir ?: return out
+        if (dir.isDirectory) {
+            for (f in dir.walkTopDown().filter { it.isFile && it.name.endsWith(".subl") }.sortedBy { it.path }) {
+                val text = try { f.readText() } catch (e: Exception) { continue }
+                val ast = try { parseSource(text, f.name) } catch (e: Exception) { continue }
+                for (entry in ast.entries) {
+                    val d = (entry as? DeclEntry)?.decl ?: continue
+                    when (d) {
+                        is FunDecl -> out.putIfAbsent(d.name, Triple(f.toURI().toString(), d.pos, text))
+                        is StructDecl -> out.putIfAbsent(d.name, Triple(f.toURI().toString(), d.pos, text))
+                        is EnumDecl -> out.putIfAbsent(d.name, Triple(f.toURI().toString(), d.pos, text))
+                        is ClassDecl -> {
+                            out.putIfAbsent(d.name, Triple(f.toURI().toString(), d.pos, text))
+                            for (m in d.members) out.putIfAbsent(m.name, Triple(f.toURI().toString(), m.pos, text))
+                        }
+                        else -> {}
+                    }
+                }
+            }
+        }
+        androidStdlibCache = out
+        return out
+    }
+
+        private fun scriptStdlib(): List<Entry> {
         scriptStdlibCache?.let { return it }
         val dir = stdlibDir
         val raw: List<Entry> = if (dir != null && dir.isDirectory) {
@@ -188,6 +222,39 @@ class LspAnalysis {
         }
         scriptStdlibCache = entries
         return entries
+    }
+
+    /** 将 stdlib 条目的源位置行号整体平移 base 行，使其落在用户文件行数之外。
+     * 平移只改行号不改列，诊断经 diagnosticsFor 的行号过滤剔除，不再泄漏到用户编辑器。
+     * 形如 "42:5" → "(base+42):5"；无位置或格式异常的条目原样返回。
+     * 偏移量取 base + 1_000_000 的量级，确保任何用户文件都不可能达到。
+     * 注意：只平移声明级 pos（stdlib 诊断的来源）；嵌套表达式诊断极少且同样按行号剔除。
+     */
+    private fun offsetStdlibPositions(entries: List<Entry>, base: Int): List<Entry> {
+        val shift = base + 1_000_000
+        fun shiftPos(pos: String): String {
+            val c = pos.indexOf(':')
+            if (c < 0) return pos
+            val ln0 = pos.substring(0, c).toIntOrNull() ?: return pos
+            return (ln0 + shift).toString() + pos.substring(c)
+        }
+        return entries.map { e ->
+            val d = (e as? DeclEntry)?.decl ?: return@map e
+            val np = shiftPos(d.pos)
+            if (np == d.pos) e else DeclEntry(declWithPos(d, np))
+        }
+    }
+
+    /** 声明级 pos 重写（不改嵌套体，避免递归拷贝代价） */
+    private fun declWithPos(d: Decl, pos: String): Decl = when (d) {
+        is FunDecl -> d.copy(pos = pos)
+        is StructDecl -> d.copy(pos = pos)
+        is EnumDecl -> d.copy(pos = pos)
+        is ClassDecl -> d.copy(pos = pos)
+        is ImplDecl -> d.copy(pos = pos)
+        is TypeAliasDecl -> d.copy(pos = pos)
+        is PropDefDecl -> d.copy(pos = pos)
+        else -> d
     }
 
     /** 分析单个文档：tokenize -> parse -> check（容错：任何阶段失败都回退到已有部分结果） */
@@ -247,7 +314,10 @@ class LspAnalysis {
                 // 否则工程模式编辑期会把 Ok/List 等内建构造子报成未知构造子（补全/诊断/高亮皆受影响）。
                 // 用户条目放**前面**：诊断的 line:col 相对用户源码原样，stdlib 的诊断行号超出用户文件
                 // 行数，由 diagnosticsFor 过滤掉，避免行号偏移污染与 core 自身诊断泄漏。
-                val checkedAst = FileAst(userFinal.entries + scriptStdlib())
+                // stdlib 条目位置整体平移到用户文件行数之外，确保 diagnosticsFor 的行号过滤能精确剔除
+                // stdlib 自身的诊断（平移量大于任何用户文件可能的行数；诊断行号超过用户行数即判 stdlib）
+                val userLineCount = source.split("\n").size
+                val checkedAst = FileAst(userFinal.entries + offsetStdlibPositions(scriptStdlib(), userLineCount))
                 val checker = Checker(checkedAst, scriptMode = isScript)
                 bag = checker.run()
                 syms = checker.syms
@@ -324,6 +394,7 @@ class LspAnalysis {
         val colStart: Int,        // 1-based 起始列
         val topLevel: Boolean = false,   // true = 顶层声明（大纲视图/导航用）
         val parent: String? = null,      // 所属顶层声明名（层级大纲用；顶层为 null）
+        val annotations: List<String> = emptyList(),  // 声明注解（@view/@composable 等高亮用）
     )
 
     /** AST 遍历上下文：同时采集局部声明与名字引用 */
@@ -364,11 +435,11 @@ class LspAnalysis {
         // 当前所属顶层声明名（遍历时维护；局部符号挂到它下面）
         var currentParent: String? = null
 
-        val addTop: (String, String, String, String) -> Unit = { name, variety, pos, detail ->
+        val addTop: (String, String, String, String, List<String>) -> Unit = { name, variety, pos, detail, anns ->
             val parts = pos.split(":")
             val l = parts.getOrNull(0)?.toIntOrNull() ?: 1
             val c = parts.getOrNull(1)?.toIntOrNull() ?: 1
-            walk.decls += SymbolRef(name, variety, pos, detail, l, l, c, topLevel = true, parent = null)
+            walk.decls += SymbolRef(name, variety, pos, detail, l, l, c, topLevel = true, parent = null, annotations = anns)
         }
         val add: (String, String, String, String) -> Unit = { name, variety, pos, detail ->
             val parts = pos.split(":")
@@ -383,7 +454,7 @@ class LspAnalysis {
                     val decl = e.decl
                     when (decl) {
                         is FunDecl -> {
-                            addTop(decl.name, "fun", decl.pos, "fun " + decl.name + funSignature(decl))
+                            addTop(decl.name, "fun", decl.pos, "fun " + decl.name + funSignature(decl), decl.annotations)
                             currentParent = decl.name
                             walkFunDecl(decl, walk, add)
                             currentParent = null
@@ -391,7 +462,7 @@ class LspAnalysis {
                         is StructDecl -> {
                             val sp = locate("struct " + decl.name, decl.pos)
                             addTop(decl.name, "struct", sp,
-                                "struct " + decl.name + structSignature(decl))
+                                "struct " + decl.name + structSignature(decl), decl.annotations)
                             currentParent = decl.name
                             decl.fields.forEach { p ->
                                 add(p.name, "field", sp,
@@ -402,7 +473,7 @@ class LspAnalysis {
                         is EnumDecl -> {
                             val sp = locate("enum " + decl.name, decl.pos)
                             addTop(decl.name, "enum", sp,
-                                "enum " + decl.name + enumSignature(decl))
+                                "enum " + decl.name + enumSignature(decl), emptyList())
                             currentParent = decl.name
                             decl.ctors.forEach { c ->
                                 add(c.name, "ctor", sp,
@@ -413,7 +484,7 @@ class LspAnalysis {
                         is ClassDecl -> {
                             val sp = locate("class " + decl.name, decl.pos)
                             addTop(decl.name, "class", sp,
-                                "class " + decl.name + classSignature(decl))
+                                "class " + decl.name + classSignature(decl), decl.annotations)
                             currentParent = decl.name
                             decl.members.forEach { m ->
                                 add(m.name, "fun", m.pos, "fun " + m.name + funSignature(m))
@@ -425,7 +496,7 @@ class LspAnalysis {
                             val ip = locate("impl", decl.pos)
                             val iname = implName(decl)
                             addTop(iname, "impl", ip,
-                                "impl " + (decl.trait?.render() ?: "..") + " for " + decl.self.render())
+                                "impl " + (decl.trait?.render() ?: "..") + " for " + decl.self.render(), emptyList())
                             currentParent = iname
                             decl.members.forEach { m ->
                                 add(m.name, "fun", m.pos, "fun " + m.name + funSignature(m))
@@ -434,9 +505,9 @@ class LspAnalysis {
                             currentParent = null
                         }
                         is TypeAliasDecl -> addTop(decl.name, "type", decl.pos,
-                            "type " + decl.name + " = " + decl.target.render())
+                            "type " + decl.name + " = " + decl.target.render(), emptyList())
                         is PropDefDecl -> addTop(decl.name, "prop", decl.pos,
-                            "def " + decl.name)
+                            "def " + decl.name, emptyList())
                     }
                 }
                 is StmtEntry -> walkStmt(e.stmt, walk, add)
@@ -635,6 +706,130 @@ class LspAnalysis {
         return false
     }
 
+    /** @composable 视图树预览（悬浮窗）：光标在 composable 函数名或其函数体内时，
+     * 展示该函数布局出的视图树轮廓（视图名 + 关键属性 + 子视图缩进树），便于即时把握布局结构。
+     * 命中条件：光标处的词是某 @composable 函数名，或光标落在该函数体行范围内。
+     * 树渲染忽略纯逻辑表达式，只收集视图结构体构造（含 @composable 调用展开一层）。
+     */
+    private fun composableTreeHover(state: DocState, source: String, offset: Int, word: String?): Hover? {
+        val ast = state.ast ?: return null
+        // 候选 composable 函数：名匹配或光标落在其声明行范围内
+        val cands = mutableListOf<sugared.functor.ast.FunDecl>()
+        for (entry in ast.entries) {
+            val d = (entry as? DeclEntry)?.decl ?: continue
+            val fn = d as? FunDecl ?: continue
+            if ("composable" !in fn.annotations) continue
+            if (fn.name == word) { cands.add(fn); continue }
+            // 光标在函数体行范围内：>= 声明行，且小于下一个顶层声明的起始行
+            val startLine = fn.pos.substringBefore(':').toIntOrNull() ?: continue
+            val curLine = offsetToPosition(source, offset, state.lineStarts).line + 1
+            if (curLine >= startLine && curLine < nextDeclLine(ast, fn)) cands.add(fn)
+        }
+        if (cands.isEmpty()) return null
+        // 名字命中优先，否则取行范围命中（多个时取最后一个内层函数）
+        val fn = cands.firstOrNull { it.name == word } ?: cands.last()
+        val tree = viewTreeOf(ast, fn.body, 0)
+        if (tree.isEmpty()) return null
+        val sb = StringBuilder()
+        sb.append("```\n@composable " + fn.name + " 布局预览\n")
+        tree.forEach { sb.append(it).append('\n') }
+        sb.append("```")
+        return Hover(contents = MarkupContent(kind = "markdown", value = sb.toString()))
+    }
+
+    /** 提取表达式中的视图结构体构造，渲染成缩进树（每行已含缩进）。
+     *  视图结构体构造 = StructCtorExpr（如 Box(...) {}、Text(...)）；
+     *  @composable 调用展开一层（显示函数名 + 其视图树），避免无限递归（depth 限制 3）。
+     */
+    private fun viewTreeOf(ast: FileAst, e: sugared.functor.ast.Expr?, depth: Int): List<String> {
+        if (e == null || depth > 3) return emptyList()
+        val out = mutableListOf<String>()
+        val indent = "  ".repeat(depth)
+        when (e) {
+            is sugared.functor.ast.StructCtorExpr -> {
+                // 关键属性摘要：text/placeholder/kind/orientation/contentAlignment
+                val keys = listOf("text", "placeholder", "kind", "orientation", "contentAlignment")
+                val summary = e.assigns.filter { it.first in keys }
+                    .joinToString(" ") { (k, v) -> k + "=" + exprSummary(v) }
+                out += indent + e.struct + if (summary.isEmpty()) "" else " " + summary
+                // 子视图只来自尾随 body（函数型字段如 onClick 的 lambda 不是布局子视图）
+            }
+            is sugared.functor.ast.CallExpr -> {
+                val callee = e.callee
+                // 具名函数调用：@composable 函数展开一层视图树（加 @ 前缀，表明是组合函数）
+                val name = (callee as? sugared.functor.ast.NameRef)?.name
+                val target = if (name != null) findComposable(ast, name) else null
+                if (target != null) {
+                    out += indent + "@" + name + "()"
+                    viewTreeOf(ast, target.body, depth + 1).forEach { out += it }
+                }
+                // 视图结构体 + 尾随 lambda 体（Box(...) { 子视图 }）：记视图名，再递归尾 lambda
+                val ctor = callee as? sugared.functor.ast.StructCtorExpr
+                if (ctor != null && target == null) {
+                    out += indent + ctor.struct + ctorSummary(ctor)
+                    for (a in e.args) viewTreeOf(ast, a, depth + 1).forEach { if (it !in out) out += it }
+                }
+                // 其它参数里的视图构造递归；重复行去重
+                if (ctor == null) for (a in e.args) viewTreeOf(ast, a, depth).forEach { if (it !in out) out += it }
+            }
+            is sugared.functor.ast.BlockExpr -> {
+                for (s in e.stmts) viewTreeOfStmt(ast, s, depth).forEach { out += it }
+                e.tailExpr?.let { viewTreeOf(ast, it, depth).forEach { out += it } }
+            }
+            is sugared.functor.ast.LambdaExpr -> viewTreeOf(ast, e.body, depth).forEach { out += it }
+            is sugared.functor.ast.IfExpr -> {
+                viewTreeOf(ast, e.thenBlock, depth).forEach { out += it }
+                e.elseBlock?.let { viewTreeOf(ast, it, depth).forEach { out += it } }
+            }
+            is sugared.functor.ast.NameRef -> {}
+            else -> {}
+        }
+        return out
+    }
+
+    private fun viewTreeOfStmt(ast: FileAst, s: sugared.functor.ast.Stmt, depth: Int): List<String> = when (s) {
+        is sugared.functor.ast.ExprStmt -> viewTreeOf(ast, s.expr, depth)
+        is sugared.functor.ast.VarStmt -> viewTreeOf(ast, s.value, depth)
+        is sugared.functor.ast.AssignStmt -> viewTreeOf(ast, s.value, depth)
+        is sugared.functor.ast.UncheckedStmt -> viewTreeOfStmt(ast, s.inner, depth)
+        is sugared.functor.ast.ReturnStmt -> s.expr?.let { viewTreeOf(ast, it, depth) } ?: emptyList()
+        else -> emptyList()
+    }
+
+    /** 按名查找指定 AST 里的 @composable 函数声明 */
+    private fun findComposable(ast: FileAst, name: String): FunDecl? {
+        for (entry in ast.entries) {
+            val fn = ((entry as? DeclEntry)?.decl as? FunDecl) ?: continue
+            if (fn.name == name && "composable" in fn.annotations) return fn
+        }
+        return null
+    }
+
+    /** 当前函数声明之后、下一个顶层声明的起始行（用作函数体行范围上界）；末函数用 Int.MAX_VALUE */
+    private fun nextDeclLine(ast: FileAst, fn: FunDecl): Int {
+        val myLine = fn.pos.substringBefore(':').toIntOrNull() ?: return Int.MAX_VALUE
+        var min = Int.MAX_VALUE
+        for (entry in ast.entries) {
+            val d = (entry as? DeclEntry)?.decl ?: continue
+            val l = d.pos.substringBefore(':').toIntOrNull() ?: continue
+            if (l > myLine && l < min) min = l
+        }
+        return min
+    }
+
+    /** 视图构造的关键属性摘要（text/placeholder/kind/orientation/…) */
+    private fun ctorSummary(ctor: sugared.functor.ast.StructCtorExpr): String {
+        val keys = listOf("text", "placeholder", "kind", "orientation", "contentAlignment", "color")
+        val s = ctor.assigns.filter { it.first in keys }.joinToString(" ") { (k, v) -> k + "=" + exprSummary(v) }
+        return if (s.isEmpty()) "" else " " + s
+    }
+
+    /** 表达式摘要（视图属性值）：字符串字面量去引号，其它取类名 */
+    private fun exprSummary(e: sugared.functor.ast.Expr): String {
+        val v = (e as? sugared.functor.ast.StrLit)?.value
+        return if (v != null) "\"" + v + "\"" else "…"
+    }
+
     fun hoverFor(uri: String, position: Position): Hover? {
         val state = docs[uri] ?: return null
         val source = state.source
@@ -643,6 +838,9 @@ class LspAnalysis {
 
         // 找当前位置的标识符
         val word = wordAtOffset(source, offset) ?: return null
+
+        // @composable 视图树预览：光标停在 composable 函数名/体内时，展示其布局的视图树
+        composableTreeHover(state, source, offset, word)?.let { return it }
 
         // 查符号表
         val symbols = collectSymbols(uri)
@@ -693,7 +891,7 @@ class LspAnalysis {
         val symbol = collectSymbols(uri).find { it.name == word }
         if (symbol != null && source != null) return Location(uri, diagPosToRange(symbol.pos, source))
         // 兜底：用户文件没有的名字去 core 标准库找（stdlib 函数/类型也能转到定义）
-        val std = stdlibSymbolIndex()[word] ?: return null
+        val std = stdlibSymbolIndex()[word] ?: androidStdlibSymbolIndex()[word] ?: return null
         return Location(std.first, diagPosToRange(std.second, std.third))
     }
 
@@ -950,7 +1148,12 @@ class LspAnalysis {
 
         // 符号名 → variety（IDENT 语义归类）
         val varietyByName = HashMap<String, String>()
-        for (s in collectSymbols(uri)) varietyByName[s.name] = s.variety
+        // 符号名 → 装饰注解（@view 结构体 / @compose 函数，IDE 把名字画成强调色）
+        val decoratedByName = HashMap<String, List<String>>()
+        for (s in collectSymbols(uri)) {
+            varietyByName[s.name] = s.variety
+            decoratedByName[s.name] = s.annotations
+        }
         for (name in STDLIB_TYPES) varietyByName[name] = "struct"
         for (name in BASE_TYPES) varietyByName[name] = "struct"
 
@@ -973,11 +1176,14 @@ class LspAnalysis {
                 if (before || after) continue
             }
 
+            // 装饰位 0 = decorated：@view 结构体名 / @compose 函数名（IDE 强调色）
+            val anns = decoratedByName[t.text]
+            val decorated = anns != null && ("view" in anns || "compose" in anns || "composable" in anns)
             data += line - prevLine
             data += if (line == prevLine) startCol - prevStart else startCol
             data += t.text.length
             data += typeIdx
-            data += 0
+            data += if (decorated) 1 else 0
             prevLine = line
             prevStart = startCol
         }
@@ -2488,8 +2694,10 @@ class LspAnalysis {
             "decorator",   // 13 ← 注解（@mut / @impure）
         )
 
-        /** 语义 token 修饰符 legend（当前为空） */
-        val SEMANTIC_TOKEN_MODIFIERS: List<String> = emptyList()
+        /** 语义 token 修饰符 legend */
+        val SEMANTIC_TOKEN_MODIFIERS: List<String> = listOf(
+            "decorated",    // 0 ← @view 结构体 / @compose 函数：IDE 画下划线
+        )
 
         /** stdlib 容器 / 代数数据类型名（不含 BASE_TYPES 已含的） */
         val STDLIB_TYPES: List<String> = listOf("List", "Optional", "Result", "Set", "Tuple")

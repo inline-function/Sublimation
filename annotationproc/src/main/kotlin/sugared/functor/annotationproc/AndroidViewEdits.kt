@@ -217,7 +217,7 @@ private fun rewriteStmt(
     is VarStmt -> { val p = rewriteExpr(s.value, viewNames, ordinals); if (p.second) { mark(); s.copy(value = p.first) } else s }
     is AssignStmt -> { val p1 = rewriteExpr(s.target, viewNames, ordinals); val p2 = rewriteExpr(s.value, viewNames, ordinals); if (p1.second || p2.second) { mark(); AssignStmt(p1.first, p2.first) } else s }
     is ExprStmt -> { val p = rewriteExpr(s.expr, viewNames, ordinals); if (p.second) { mark(); ExprStmt(p.first) } else s }
-    is UncheckedStmt -> { val ns = rewriteStmt(s.inner, viewNames, ordinals, mark); ns }
+    is UncheckedStmt -> { val ns = rewriteStmt(s.inner, viewNames, ordinals, mark); if (ns !== s.inner) { mark(); UncheckedStmt(ns, s.pos) } else s }
     is ReturnStmt -> s.expr?.let { ex -> val p = rewriteExpr(ex, viewNames, ordinals); if (p.second) { mark(); ReturnStmt(p.first, s.pos, s.label) } else s } ?: s
     else -> s
 }
