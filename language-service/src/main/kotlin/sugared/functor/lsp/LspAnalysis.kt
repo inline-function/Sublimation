@@ -33,6 +33,8 @@ class LspAnalysis {
         val lineStarts: IntArray = intArrayOf(),
     )
 
+    // 视图属性摘要白名单（布局预览悬浮窗显示用）
+    private val PROP_KEYS = listOf("text", "placeholder", "size", "bold", "kind", "orientation", "contentAlignment", "color")
     private val docs = mutableMapOf<String, DocState>()
 
     // prelude：内建类型/函数/stdlib 符号（跨文档共享，惰性加载）
@@ -69,7 +71,34 @@ class LspAnalysis {
      * 供补全与悬停使用（不参与 definition/references，避免虚假位置）。
      */
     /** 设置安卓标准库目录（IDE 端释放的 android/stdlib），供 @android 声明的只读跳转 */
+    /** 安卓标准库是否并入 Checker 输入：仅安卓工程（SfA 链路）开启，
+     *  否则工程模式会把 Box/Text/log 等安卓内建报成未定义；普通 JS 工程开了会与用户声明冲突 */
+    private var androidStdlibEnabled = false
+    private var androidStdlibEntriesCache: List<sugared.functor.ast.Entry>? = null
+
     fun setAndroidStdlibDir(dir: java.io.File?) { androidStdlibDir = dir }
+
+    /** 安卓工程开 / 非 LS 工程关：开的项目里 android/stdlib 的声明并入检查 */
+    fun setAndroidStdlibEnabled(enabled: Boolean) {
+        if (androidStdlibEnabled == enabled) return
+        androidStdlibEnabled = enabled
+    }
+
+    /** android/stdlib（递归 .subl）解析出的条目；缓存（目录内容不变） */
+    private fun androidStdlibEntries(): List<sugared.functor.ast.Entry> {
+        androidStdlibEntriesCache?.let { return it }
+        val out = mutableListOf<sugared.functor.ast.Entry>()
+        val dir = androidStdlibDir
+        if (dir == null || !dir.isDirectory) { androidStdlibEntriesCache = out; return out }
+        val files = dir.walkTopDown().filter { it.isFile && it.extension == "subl" }.toList()
+        for (f in files) {
+            runCatching {
+                out += parseSource(f.readText(), f.name).entries
+            }
+        }
+        androidStdlibEntriesCache = out
+        return out
+    }
 
     fun loadPrelude(stdlibDir: java.io.File? = null) {
         if (preludeLoaded) return
@@ -317,7 +346,10 @@ class LspAnalysis {
                 // stdlib 条目位置整体平移到用户文件行数之外，确保 diagnosticsFor 的行号过滤能精确剔除
                 // stdlib 自身的诊断（平移量大于任何用户文件可能的行数；诊断行号超过用户行数即判 stdlib）
                 val userLineCount = source.split("\n").size
-                val checkedAst = FileAst(userFinal.entries + offsetStdlibPositions(scriptStdlib(), userLineCount))
+                // 安卓工程时把 android/stdlib 并进来（Box/Text/log 等内建在编辑期才可见）；
+                // 与 core 一起平移行号到本文件之外
+                val stdEntries = scriptStdlib() + (if (androidStdlibEnabled) androidStdlibEntries() else emptyList())
+                val checkedAst = FileAst(userFinal.entries + offsetStdlibPositions(stdEntries, userLineCount))
                 val checker = Checker(checkedAst, scriptMode = isScript)
                 bag = checker.run()
                 syms = checker.syms
@@ -706,97 +738,154 @@ class LspAnalysis {
         return false
     }
 
-    /** @composable 视图树预览（悬浮窗）：光标在 composable 函数名或其函数体内时，
-     * 展示该函数布局出的视图树轮廓（视图名 + 关键属性 + 子视图缩进树），便于即时把握布局结构。
-     * 命中条件：光标处的词是某 @composable 函数名，或光标落在该函数体行范围内。
-     * 树渲染忽略纯逻辑表达式，只收集视图结构体构造（含 @composable 调用展开一层）。
-     */
-    private fun composableTreeHover(state: DocState, source: String, offset: Int, word: String?): Hover? {
+    // ───────── @composable 视图树（hover 预览 + 布局预览悬浮窗） ─────────
+
+    /** 视图树节点：视图结构体名/组合函数名 + 主要文案 + 关键属性 + 子节点 */
+    private data class ViewNode(
+        val name: String,
+        val text: String = "",
+        val props: Map<String, String> = emptyMap(),
+        val children: List<ViewNode> = emptyList(),
+    )
+
+    /** 光标所属的 @composable 函数：词名精确命中优先；nameOnly=true 时只按名命中（避免 hover 变量误触）。 */
+    private fun composableAt(state: DocState, offset: Int, word: String?, nameOnly: Boolean = false): FunDecl? {
         val ast = state.ast ?: return null
-        // 候选 composable 函数：名匹配或光标落在其声明行范围内
-        val cands = mutableListOf<sugared.functor.ast.FunDecl>()
+        val cands = mutableListOf<FunDecl>()
+        val curLine = runCatching { offsetToPosition(state.source, offset, state.lineStarts).line + 1 }.getOrNull() ?: return null
         for (entry in ast.entries) {
-            val d = (entry as? DeclEntry)?.decl ?: continue
-            val fn = d as? FunDecl ?: continue
+            val fn = ((entry as? DeclEntry)?.decl as? FunDecl) ?: continue
             if ("composable" !in fn.annotations) continue
             if (fn.name == word) { cands.add(fn); continue }
-            // 光标在函数体行范围内：>= 声明行，且小于下一个顶层声明的起始行
+            if (nameOnly) continue
+            // 光标在函数体行范围内（声明行 ~ 下一个顶层声明行）
             val startLine = fn.pos.substringBefore(':').toIntOrNull() ?: continue
-            val curLine = offsetToPosition(source, offset, state.lineStarts).line + 1
             if (curLine >= startLine && curLine < nextDeclLine(ast, fn)) cands.add(fn)
         }
         if (cands.isEmpty()) return null
-        // 名字命中优先，否则取行范围命中（多个时取最后一个内层函数）
-        val fn = cands.firstOrNull { it.name == word } ?: cands.last()
-        val tree = viewTreeOf(ast, fn.body, 0)
-        if (tree.isEmpty()) return null
+        return cands.firstOrNull { it.name == word } ?: cands.last()
+    }
+
+    /** @composable 视图树预览 hover：光标处的词是 composable 函数名时，展示其布局出的视图树轮廓 */
+    private fun composableTreeHover(state: DocState, source: String, offset: Int, word: String?): Hover? {
+        val fn = composableAt(state, offset, word, nameOnly = true) ?: return null
+        val nodes = collectViewNodes(state.ast ?: return null, fn.body, 0)
+        if (nodes.isEmpty()) return null
         val sb = StringBuilder()
         sb.append("```\n@composable " + fn.name + " 布局预览\n")
-        tree.forEach { sb.append(it).append('\n') }
+        renderTreeLines(nodes, "").forEach { sb.append(it).append('\n') }
         sb.append("```")
         return Hover(contents = MarkupContent(kind = "markdown", value = sb.toString()))
     }
 
-    /** 提取表达式中的视图结构体构造，渲染成缩进树（每行已含缩进）。
-     *  视图结构体构造 = StructCtorExpr（如 Box(...) {}、Text(...)）；
-     *  @composable 调用展开一层（显示函数名 + 其视图树），避免无限递归（depth 限制 3）。
-     */
-    private fun viewTreeOf(ast: FileAst, e: sugared.functor.ast.Expr?, depth: Int): List<String> {
-        if (e == null || depth > 3) return emptyList()
+    /** 结构化视图树 JSON（布局预览悬浮窗用）：{"name":..,"text":..,"props":{..},"children":[..]}
+     *  悬浮窗按需渲染：长按 @composable 函数时即时取树，编辑函数体后 1s 防抖 + 诊断无错时刷新。 */
+    fun composableTreeJson(uri: String, position: Position): String? {
+        val state = docs[uri] ?: return null
+        val source = state.source
+        val offset = positionToOffset(source, position, state.lineStarts) ?: return null
+        if (inStringOrComment(source, offset)) return null
+        val fn = composableAt(state, offset, wordAtOffset(source, offset)) ?: return null
+        val nodes = collectViewNodes(state.ast ?: return null, fn.body, 0)
+        if (nodes.isEmpty()) return null
+        val start = fn.pos.substringBefore(':').toIntOrNull() ?: 0
+        val end = nextDeclLine(state.ast!!, fn).let { if (it == Int.MAX_VALUE) start + 9999 else it - 1 }
+        // 顶层包 name/start/end（悬浮窗定位函数行范围、判断「修改无错」用）
+        return "{\"name\":" + jsonStr(fn.name) + ",\"start\":" + start + ",\"end\":" + end + 
+            ",\"children\":[" + nodes.joinToString(",") { nodeJson(it) } + "]}"
+    }
+
+    private fun jsonStr(s: String): String = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
+    private fun nodeJson(n: ViewNode): String {
+        val sb = StringBuilder("{").append("\"name\":").append(jsonStr(n.name))
+        if (n.text.isNotEmpty()) sb.append(",\"text\":").append(jsonStr(n.text))
+        if (n.props.isNotEmpty()) sb.append(",\"props\":{").append(n.props.entries.joinToString(",") { (k, v) -> jsonStr(k) + ":" + jsonStr(v) }).append("}")
+        if (n.children.isNotEmpty()) sb.append(",\"children\":[").append(n.children.joinToString(",") { nodeJson(it) }).append("]")
+        return sb.append("}").toString()
+    }
+
+    private fun renderTreeLines(nodes: List<ViewNode>, indent: String): List<String> {
         val out = mutableListOf<String>()
-        val indent = "  ".repeat(depth)
+        for (n in nodes) {
+            val parts = StringBuilder(indent + n.name)
+            if (n.text.isNotEmpty()) parts.append(" ").append(n.text)
+            if (n.props.isNotEmpty()) parts.append(" ").append(n.props.entries.joinToString(" ") { (k, v) -> k + "=" + v })
+            out += parts.toString()
+            out += renderTreeLines(n.children, indent + "  ")
+        }
+        return out
+    }
+
+    /** 提取表达式中的视图构造，组织成节点树。
+     *  视图结构体构造 = StructCtorExpr（Text(...)）；Box(...) {} 解析为 CallExpr(callee=StructCtorExpr, args=[尾 lambda])。
+     *  @composable 调用展开一层（显示 @函数名 + 其视图树），深度 ≤ 4 防无限递归。
+     */
+    private fun collectViewNodes(ast: FileAst, e: sugared.functor.ast.Expr?, depth: Int): List<ViewNode> {
+        if (e == null || depth > 4) return emptyList()
+        val out = mutableListOf<ViewNode>()
         when (e) {
             is sugared.functor.ast.StructCtorExpr -> {
-                // 关键属性摘要：text/placeholder/kind/orientation/contentAlignment
-                val keys = listOf("text", "placeholder", "kind", "orientation", "contentAlignment")
-                val summary = e.assigns.filter { it.first in keys }
-                    .joinToString(" ") { (k, v) -> k + "=" + exprSummary(v) }
-                out += indent + e.struct + if (summary.isEmpty()) "" else " " + summary
-                // 子视图只来自尾随 body（函数型字段如 onClick 的 lambda 不是布局子视图）
+                // 无尾 lambda 的视图构造（裸 Text(...) 等）
+                out += nodeOf(e.struct, e.assigns, emptyList())
             }
             is sugared.functor.ast.CallExpr -> {
                 val callee = e.callee
-                // 具名函数调用：@composable 函数展开一层视图树（加 @ 前缀，表明是组合函数）
                 val name = (callee as? sugared.functor.ast.NameRef)?.name
                 val target = if (name != null) findComposable(ast, name) else null
-                if (target != null) {
-                    out += indent + "@" + name + "()"
-                    viewTreeOf(ast, target.body, depth + 1).forEach { out += it }
-                }
-                // 视图结构体 + 尾随 lambda 体（Box(...) { 子视图 }）：记视图名，再递归尾 lambda
                 val ctor = callee as? sugared.functor.ast.StructCtorExpr
-                if (ctor != null && target == null) {
-                    out += indent + ctor.struct + ctorSummary(ctor)
-                    for (a in e.args) viewTreeOf(ast, a, depth + 1).forEach { if (it !in out) out += it }
+                when {
+                    // @composable 调用：展开一层子树
+                    target != null -> out += ViewNode("@" + name!!, "", emptyMap(), collectViewNodes(ast, target.body, depth + 1))
+                    // 视图结构体 + 尾随 lambda 体（Box(...) { 子视图 }）：尾 lambda 即 children
+                    ctor != null -> {
+                        val kids = mutableListOf<ViewNode>()
+                        for (a in e.args) if (a is sugared.functor.ast.LambdaExpr) kids += collectViewNodes(ast, a.body, depth + 1)
+                        out += nodeOf(ctor.struct, ctor.assigns, kids)
+                    }
+                    // 普通调用：参数内视图构造平铺
+                    else -> for (a in e.args) out += collectViewNodes(ast, a, depth)
                 }
-                // 其它参数里的视图构造递归；重复行去重
-                if (ctor == null) for (a in e.args) viewTreeOf(ast, a, depth).forEach { if (it !in out) out += it }
             }
             is sugared.functor.ast.BlockExpr -> {
-                for (s in e.stmts) viewTreeOfStmt(ast, s, depth).forEach { out += it }
-                e.tailExpr?.let { viewTreeOf(ast, it, depth).forEach { out += it } }
+                for (s in e.stmts) out += viewNodesOfStmt(ast, s, depth)
+                e.tailExpr?.let { out += collectViewNodes(ast, it, depth) }
             }
-            is sugared.functor.ast.LambdaExpr -> viewTreeOf(ast, e.body, depth).forEach { out += it }
+            is sugared.functor.ast.LambdaExpr -> out += collectViewNodes(ast, e.body, depth)
             is sugared.functor.ast.IfExpr -> {
-                viewTreeOf(ast, e.thenBlock, depth).forEach { out += it }
-                e.elseBlock?.let { viewTreeOf(ast, it, depth).forEach { out += it } }
+                out += collectViewNodes(ast, e.thenBlock, depth)
+                e.elseBlock?.let { out += collectViewNodes(ast, it, depth) }
             }
-            is sugared.functor.ast.NameRef -> {}
             else -> {}
         }
         return out
     }
 
-    private fun viewTreeOfStmt(ast: FileAst, s: sugared.functor.ast.Stmt, depth: Int): List<String> = when (s) {
-        is sugared.functor.ast.ExprStmt -> viewTreeOf(ast, s.expr, depth)
-        is sugared.functor.ast.VarStmt -> viewTreeOf(ast, s.value, depth)
-        is sugared.functor.ast.AssignStmt -> viewTreeOf(ast, s.value, depth)
-        is sugared.functor.ast.UncheckedStmt -> viewTreeOfStmt(ast, s.inner, depth)
-        is sugared.functor.ast.ReturnStmt -> s.expr?.let { viewTreeOf(ast, it, depth) } ?: emptyList()
+    private fun nodeOf(struct: String, assigns: List<Pair<String, sugared.functor.ast.Expr>>, kids: List<ViewNode>): ViewNode {
+        val text = exprSummary(assigns.firstOrNull { it.first == "text" || it.first == "placeholder" }?.second)
+        val props = assigns.filter { it.first in PROP_KEYS && it.first !in listOf("text", "placeholder") }
+            .mapNotNull { (k, v) -> val s = exprSummary(v); if (s.isEmpty()) null else k to s }.toMap()
+        return ViewNode(struct, text, props, kids)
+    }
+
+    private fun viewNodesOfStmt(ast: FileAst, s: sugared.functor.ast.Stmt, depth: Int): List<ViewNode> = when (s) {
+        is sugared.functor.ast.ExprStmt -> collectViewNodes(ast, s.expr, depth)
+        is sugared.functor.ast.VarStmt -> collectViewNodes(ast, s.value, depth)
+        is sugared.functor.ast.AssignStmt -> collectViewNodes(ast, s.value, depth)
+        is sugared.functor.ast.UncheckedStmt -> viewNodesOfStmt(ast, s.inner, depth)
+        is sugared.functor.ast.ReturnStmt -> s.expr?.let { collectViewNodes(ast, it, depth) } ?: emptyList()
         else -> emptyList()
     }
 
-    /** 按名查找指定 AST 里的 @composable 函数声明 */
+    /** 表达式摘要（视图属性值）：字符串字面量带引号、整数字面量原值、名字直接取，其余不要 */
+    private fun exprSummary(e: sugared.functor.ast.Expr?): String = when (e) {
+        is sugared.functor.ast.StrLit -> "\"" + e.value + "\""
+        is sugared.functor.ast.IntLit -> e.value
+        is sugared.functor.ast.NameRef -> e.name
+        else -> ""
+    }
+
+    /** 按名查找 AST 里的 @composable 函数声明 */
     private fun findComposable(ast: FileAst, name: String): FunDecl? {
         for (entry in ast.entries) {
             val fn = ((entry as? DeclEntry)?.decl as? FunDecl) ?: continue
@@ -815,19 +904,6 @@ class LspAnalysis {
             if (l > myLine && l < min) min = l
         }
         return min
-    }
-
-    /** 视图构造的关键属性摘要（text/placeholder/kind/orientation/…) */
-    private fun ctorSummary(ctor: sugared.functor.ast.StructCtorExpr): String {
-        val keys = listOf("text", "placeholder", "kind", "orientation", "contentAlignment", "color")
-        val s = ctor.assigns.filter { it.first in keys }.joinToString(" ") { (k, v) -> k + "=" + exprSummary(v) }
-        return if (s.isEmpty()) "" else " " + s
-    }
-
-    /** 表达式摘要（视图属性值）：字符串字面量去引号，其它取类名 */
-    private fun exprSummary(e: sugared.functor.ast.Expr): String {
-        val v = (e as? sugared.functor.ast.StrLit)?.value
-        return if (v != null) "\"" + v + "\"" else "…"
     }
 
     fun hoverFor(uri: String, position: Position): Hover? {

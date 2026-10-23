@@ -95,6 +95,33 @@ class LspAnalysisTest {
     }
 
     // ───────── hover ─────────
+    @Test fun `安卓工程 android stdlib 并入检查后 Box 与 log 不报未定义`() {
+        val std = java.io.File(System.getProperty("java.io.tmpdir"), "lsp-android-stdlib")
+        std.deleteRecursively(); std.mkdirs()
+        java.io.File(std, "Box.subl").writeText("@android struct Box\n")
+        java.io.File(std, "log.subl").writeText("@android @impure fun log(msg: Str, level: Int = 2): Null\n")
+        val a = LspAnalysis()
+        if (coreDir != null) a.loadPrelude(coreDir)
+        a.setAndroidStdlibDir(std)
+        a.setAndroidStdlibEnabled(true)
+        a.openDocument("file:///t.subl", "@composable\nfun card(): Box {\n  unchecked log(\"hi\")\n  return Box()\n}\n")
+        val ds = a.diagnosticsFor("file:///t.subl")
+        // log("hi") 用默认参不该报实参不足；Box 不该报未定义
+        assertTrue(ds.none { it.message.contains("实参") }, ds.joinToString("\n") { it.message })
+        assertTrue(ds.none { it.message.contains("Box") && it.message.contains("未") }, ds.joinToString("\n") { it.message })
+    }
+
+    @Test fun `stdlib 诊断行号平移后不泄漏到本文件行范围`() {
+        // 脚本模式：stdlib 与本文件合并检查；本文件诊断的行号必须落在本文件行数内，
+        // stdlib 内部诊断的行号已被平移到本文件行数之外（LspAnalysis.offsetStdlibPositions）
+        val src = "fun main() {\n  unchecked print(1)\n}\n"
+        val a = openedSubs(src)
+        val ds = a.diagnosticsFor("file:///t.subs")
+        val userLines = src.split("\n").size
+        assertTrue(ds.all { it.range.start.line < userLines && it.range.end.line < userLines },
+            "存在越界诊断：" + ds.map { it.range.start.line.toString() + ":" + it.message.take(20) })
+    }
+
     @Test fun `composable 函数名 hover 展示视图树`() {
         val a = opened("""@composable
 fun card(): Box {
