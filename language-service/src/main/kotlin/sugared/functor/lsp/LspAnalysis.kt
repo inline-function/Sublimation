@@ -78,6 +78,49 @@ class LspAnalysis {
 
     fun setAndroidStdlibDir(dir: java.io.File?) { androidStdlibDir = dir }
 
+    /** 安卓处理器脚本目录（android/procs：allMut/android/composable/view 等 .subs）；
+     *  编辑期把用户 AST 先过处理器再检查（与编译链同构，否则 @mut 字段赋值等会误报） */
+    private var androidProcsDir: java.io.File? = null
+    private var androidProcsCache: List<sugared.functor.annotationproc.AnnotationProcessor>? = null
+
+    fun setAndroidProcsDir(dir: java.io.File?) { androidProcsDir = dir }
+
+    /** 条目的声明名（用于处理器结果后把 stdl 与用户条目分回两侧） */
+    private fun entryDeclName(e: sugared.functor.ast.Entry): String? {
+        val d = (e as? sugared.functor.ast.DeclEntry)?.decl ?: return null
+        return when (d) {
+            is sugared.functor.ast.FunDecl -> d.name
+            is sugared.functor.ast.StructDecl -> d.name
+            is sugared.functor.ast.EnumDecl -> d.name
+            is sugared.functor.ast.ClassDecl -> d.name
+            is sugared.functor.ast.TypeAliasDecl -> d.name
+            is sugared.functor.ast.PropDefDecl -> d.name
+            else -> null
+        }
+    }
+
+    private fun androidProcessors(): List<sugared.functor.annotationproc.AnnotationProcessor> {
+        androidProcsCache?.let { return it }
+        val dir = androidProcsDir
+        val out = if (dir != null && dir.isDirectory)
+            dir.listFiles { f -> f.isFile && f.name.endsWith(".subs") }?.sortedBy { it.name }?.map { f ->
+                val name = f.name.removeSuffix(".subs")
+                val txt = f.readText()
+                val extra = Regex("@interested\\s+([A-Za-z0-9_, ]+)").find(txt)?.groupValues?.get(1)
+                    ?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
+                sugared.functor.annotationproc.ScriptProcessor(
+                    name = name,
+                    interestedAnnotations = setOf(name) + extra,
+                    scriptSource = txt,
+                    scriptFileName = f.path,
+                    stdlibDir = stdlibDir ?: java.io.File("core"),
+                )
+            } ?: emptyList()
+        else emptyList()
+        androidProcsCache = out
+        return out
+    }
+
     /** 安卓工程开 / 非 LS 工程关：开的项目里 android/stdlib 的声明并入检查 */
     fun setAndroidStdlibEnabled(enabled: Boolean) {
         if (androidStdlibEnabled == enabled) return
@@ -325,6 +368,11 @@ class LspAnalysis {
         // check：脚本模式注入 stdlib + 全局类型推导，Checker 走 scriptMode（允许顶层语句）
         var syms: Symbols? = null
         var inferredVars: Map<String, Type>? = null
+        // 处理器诊断（用户源码位置）：bag 建好后汇入
+        var pendingProcDiags: List<sugared.functor.checker.Diag> = emptyList()
+        // 安卓 stdl 条目（可能已被处理器注入 @mut 视图字段）：合并进 Checker 输入
+        var androidStlPart: List<sugared.functor.ast.Entry> = emptyList()
+
         if (bag == null && ast != null) {
             try {
                 // 脚本模式：全局类型推导填充省略标注（推导后 AST 也供符号收集，让 hover/补全显示推导类型）
@@ -335,7 +383,31 @@ class LspAnalysis {
                     userFinal = inferred
                     inferNotes = notes
                 } else {
-                    userFinal = ast!!
+                    // 安卓工程：用户 AST 与 android stdl 一起过注解处理器（编译链两者同模块同处理——
+                    // 视图字段 @mut 注入会改 stdl 的 @view 结构体本体），再按声明名分回两侧；
+                    // 处理器诊断（用户位置）延迟到 bag 建好后汇入
+                    var userEntries = ast!!.entries
+                    androidStlPart = if (androidStdlibEnabled) androidStdlibEntries() else emptyList()
+                    if (androidStdlibEnabled) {
+                        val procs = androidProcessors()
+                        if (procs.isNotEmpty() && androidStlPart.isNotEmpty()) runCatching {
+                            val userNames = userEntries.mapNotNull { entryDeclName(it) }.toSet()
+                            val stlNames = androidStlPart.mapNotNull { entryDeclName(it) }.toSet()
+                            val engine = sugared.functor.annotationproc.ProcessorEngine(maxRounds = 5)
+                            procs.forEach { engine.addProcessor(it) }
+                            val r = engine.run(
+                                inputAst = FileAst(userEntries + androidStlPart),
+                                symbols = null, typeOf = { null }, emit = {}, recheck = null, options = emptyMap(),
+                            )
+                            // 名字属于 stdl 且用户未声明同名 → stdl 侧（含被处理器注入 @mut 字段的视图结构体）；
+                            // 其余（用户原有 + 处理器新增的 recomposion$X$N 等）→ 用户侧
+                            userEntries = r.ast.entries.filter { e -> entryDeclName(e) !in stlNames || entryDeclName(e) in userNames }
+                            androidStlPart = r.ast.entries.filter { e -> entryDeclName(e) in stlNames && entryDeclName(e) !in userNames }
+                            // 只保留带位置（用户源码位点）的处理器诊断：无位置的处理器错误落到 0:0 会变成噪音
+                            pendingProcDiags = r.diagnostics.filter { it.pos.isNotEmpty() }
+                        }
+                    }
+                    userFinal = FileAst(userEntries)
                     inferNotes = emptyList()
                 }
                 ast = userFinal
@@ -348,10 +420,19 @@ class LspAnalysis {
                 val userLineCount = source.split("\n").size
                 // 安卓工程时把 android/stdlib 并进来（Box/Text/log 等内建在编辑期才可见）；
                 // 与 core 一起平移行号到本文件之外
-                val stdEntries = scriptStdlib() + (if (androidStdlibEnabled) androidStdlibEntries() else emptyList())
+                val stdEntries = scriptStdlib() + androidStlPart
                 val checkedAst = FileAst(userFinal.entries + offsetStdlibPositions(stdEntries, userLineCount))
                 val checker = Checker(checkedAst, scriptMode = isScript)
                 bag = checker.run()
+                // 处理器自身诊断（用户位置原样落；重查诊断不重复入袋）
+                for (d in pendingProcDiags) {
+                    when (d.severity) {
+                        sugared.functor.checker.Severity.ERROR -> bag.error(d.code, d.pos, d.message)
+                        sugared.functor.checker.Severity.WARN -> bag.warn(d.code, d.pos, d.message)
+                        sugared.functor.checker.Severity.HINT -> bag.hint(d.code, d.pos, d.message)
+                        else -> bag.supplement(d.code, d.pos, d.message)
+                    }
+                }
                 syms = checker.syms
                 inferredVars = checker.inferredVars
                 val notes = parseNotes
@@ -826,8 +907,11 @@ class LspAnalysis {
         val out = mutableListOf<ViewNode>()
         when (e) {
             is sugared.functor.ast.StructCtorExpr -> {
-                // 无尾 lambda 的视图构造（裸 Text(...) 等）
-                out += nodeOf(e.struct, e.assigns, emptyList())
+                // 无尾 lambda 的视图构造（裸 Text(...) 等）；若已过注解处理器，
+                // children = listOf(...) 承载子视图（android doc §3.2 改写后的形态）
+                val kidsAssign = e.assigns.firstOrNull { it.first == "children" }
+                val kids = if (kidsAssign != null) collectChildrenExpr(ast, kidsAssign.second, depth) else emptyList()
+                out += nodeOf(e.struct, e.assigns, kids)
             }
             is sugared.functor.ast.CallExpr -> {
                 val callee = e.callee
@@ -859,6 +943,16 @@ class LspAnalysis {
             else -> {}
         }
         return out
+    }
+
+    /** children 字段表达式（listOf(...) / Nil / 空串占位）→ 子视图节点 */
+    private fun collectChildrenExpr(ast: FileAst, e: sugared.functor.ast.Expr?, depth: Int): List<ViewNode> {
+        if (e == null) return emptyList()
+        return when (e) {
+            // listOf(...)：参数即各子视图（递归按处理后形态继续展开）
+            is sugared.functor.ast.CallExpr -> e.args.flatMap { collectViewNodes(ast, it, depth + 1) }
+            else -> collectViewNodes(ast, e, depth)
+        }
     }
 
     private fun nodeOf(struct: String, assigns: List<Pair<String, sugared.functor.ast.Expr>>, kids: List<ViewNode>): ViewNode {

@@ -94,6 +94,33 @@ class LspAnalysisTest {
         assertTrue(add.detail.contains("Nat"), "detail 应含返回类型")
     }
 
+
+    @Test fun `真实安卓 stdlib 与用药助手源码合并检查无错`() {
+        // 仅开发机执行：CandyIDE assets 里的安卓标准库
+        val androidStd = java.io.File("F:/KotlinProject/CandyIDE/app/src/main/assets/android/stdlib")
+        if (!androidStd.isDirectory) return
+        val a = LspAnalysis()
+        if (coreDir != null) a.loadPrelude(coreDir)
+        a.setAndroidStdlibDir(androidStd)
+        a.setAndroidStdlibEnabled(true)
+        a.setAndroidProcsDir(java.io.File(androidStd.parentFile, "procs"))
+        val src = "// 用药助手 —— 添加：药名 + 剂量 + 当前时间；列表展示；柱状图统计\n@impure\nfun main(): Null {\n    onCreate {\n        unchecked log(\"medready started\", 2)\n    }\n    onStart {\n        layout(content)\n    }\n}\n\n@composable\nfun content(): Box {\n    @mut var nameField = TextField(placeholder = \"药名\")\n    @mut var amountField = TextField(placeholder = \"剂量，如 1 片\")\n    @mut var status = Text(text = \"共 0 条\")\n    @mut var rows = rowsView(emptyList())\n    @mut var chart = chartView(emptyList())\n    @mut var meds: List[Str] = emptyList()\n    @mut var curTime: Str = \"\"\n    return Box(modifier = Plain()) {\n        Box(modifier = Plain()) {\n            Text(text = \"用药助手\", size = 22, bold = true)\n        }\n        Box(modifier = Plain()) { nameField }\n        Box(modifier = Plain()) { amountField }\n        Box(modifier = Plain(), orientation = \"horizontal\") {\n            Button(onClick = {\n                unchecked curTime = nowStr()\n                meds = makeDose(meds, nameField.text, amountField.text, curTime)\n                unchecked storagePut(\"meds\", joinSemicolon(meds))\n                status.text = concat(concat(\"共 \", toStr(size(meds))), \" 条\")\n                rows = rowsView(meds)\n                chart = chartView(meds)\n                nameField.text = \"\"\n                amountField.text = \"\"\n            }) {\n                Text(text = \"＋ 添加\")\n            }\n            Button(onClick = {\n                meds = emptyList()\n                unchecked storagePut(\"meds\", \"\")\n                status.text = \"共 0 条\"\n                rows = rowsView(emptyList())\n                chart = chartView(emptyList())\n            }) {\n                Text(text = \"清空\")\n            }\n        }\n        Box(modifier = Plain()) { status }\n        Box(modifier = Plain()) { rows }\n        Box(modifier = Plain()) { chart }\n    }\n}\n\n@composable fun chartView(meds: List[Str]): Chart = Chart(points = chartPoints(meds), labels = chartLabels(meds), kind = \"bar\")\n\nfun makeDose(cur: List[Str], name: Str, amount: Str, t: Str): List[Str] =\n    cons(concat(concat(concat(name, \" | \"), amount), concat(\" | \", t)), cur)\n\nfun chartPoints(meds: List[Str]): List[Rat] = map(meds) { m => 1.0 }\n\nfun chartLabels(meds: List[Str]): List[Str] = map(meds) { m =>\n    substring(m, 0, if (length(m) < 2) length(m) else 2)\n}\n\nfun joinSemicolon(xs: List[Str]): Str = when(xs) {\n    Nil => \"\"\n    is Cons(h, Nil) => h\n    is Cons(h, t) => concat(concat(h, \";\"), joinSemicolon(t))\n}\n\nfun reverse(xs: List[Str]): List[Str] = when(xs) {\n    Nil => Nil()\n    is Cons(h, t) => append(reverse(t), cons(h, Nil()))\n}\n\n@composable fun rowsView(meds: List[Str]): Box = Box(modifier = Plain()) {\n    rowsBody(reverse(meds))\n}\n\n@composable fun rowsBody(xs: List[Str]): Any = when(xs) {\n    Nil => Box(modifier = Plain()) {}\n    is Cons(m, rest) => Box(modifier = Plain(), orientation = \"vertical\") {\n        Text(text = m, size = 15)\n        rowsBody(rest)\n    }\n}\n\n@impure fun nowStr(): Str {\n    unchecked var ms = timeNow()\n    var s = fmtTime(ms)\n    return s\n}\n"
+        a.openDocument("file:///med.subl", src)
+        val ds = a.diagnosticsFor("file:///med.subl")
+        val userLines = src.split("\n").size
+        // 用药助手在真机编译链是通过的：LSP 侧也不该有错误级诊断（stdlib 行号越界的不计）
+        val errs = ds.filter { it.severity == sugared.functor.lsp.DiagnosticSeverity.Error && it.range.start.line < userLines }
+        assertTrue(errs.isEmpty(), errs.joinToString("\n") { it.range.start.line.toString() + ": " + it.message })
+        // 布局预览：content 函数的结构化视图树应解析出 Box/Text/TextField/Button/Chart 节点
+        val tree = a.composableTreeJson("file:///med.subl", sugared.functor.lsp.Position(22, 1))
+        assertNotNull(tree, "composableTreeJson 未找到 content")
+        // 轻量断言（不引 org.json）：结构化树里应含各视图节点名
+        assertTrue(tree!!.contains("\"name\":\"content\""), tree)
+        for (view in listOf("Box", "Text", "TextField", "Button", "Chart")) {
+            assertTrue(tree.contains("\"name\":\"$view\""), "布局树缺视图节点 $view")
+        }
+    }
+
     // ───────── hover ─────────
     @Test fun `安卓工程 android stdlib 并入检查后 Box 与 log 不报未定义`() {
         val std = java.io.File(System.getProperty("java.io.tmpdir"), "lsp-android-stdlib")
