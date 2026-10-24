@@ -850,11 +850,13 @@ internal fun Checker.checkFnCall(
                 // 子类型——当声明元素类型是未决类型参数且全部实参为命名结构体类型时，退化为 Any
                 // 组成 List[Any]（children 字段的声明类型）；标量异构（listOf(1, "x")）照常报错。
                 val theoryNames = fn.theory.filterIsInstance<sugared.functor.ast.TypeParam>().map { it.name }.toSet()
-                // 全为已声明的结构体类型（排除 Nat/Str 等内建标量——保住 listOf(1, "x") 的报错）
+                // 全为已声明的结构体类型，或 Any 类型（组合函数调用的返回值——android 视图 children
+                // 常混排 Text 等结构体与返回 Any 的 @composable 调用，须一并退化为 List[Any]）。
+                // Nat/Str 等内建标量既非结构体也非 Any——保住 listOf(1, "x") 的报错。
                 val allStruct = (i until effArgsIn.size).all { j ->
                     val at = effTypesIn[j]
                     !at.isSynthetic() && at is sugared.functor.ast.NamedType && at.args.isEmpty() &&
-                        at.name in syms.structs
+                        (at.name in syms.structs || at.name == "Any")
                 }
                 if (elem is sugared.functor.ast.NamedType && elem.name in theoryNames && allStruct)
                     tsub[elem.name] = sugared.functor.ast.NamedType("Any")

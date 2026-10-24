@@ -5,6 +5,7 @@ import sugared.functor.checker.Checker
 import sugared.functor.checker.MultiModule
 import sugared.functor.checker.Severity
 import sugared.functor.checker.generateSingle
+import java.nio.file.Files
 import sugared.functor.parser.parseSource
 import java.io.File
 import kotlin.test.Test
@@ -17,11 +18,11 @@ import kotlin.test.assertTrue
  * 安卓注解处理器测试（android doc/安卓标准库.md）：@view/@composable/@android 三件套。
  *
  * 覆盖：
- * - @view 结构体重组：body 擦除 → children: List[Any] + recomposion: (Any)=>Null；
- * - 构造点改写：容器 X(...) { 子视图 } → children=[...]；叶子 X(...) → children=Nil；
+ * - @view 结构体重组：body 擦除 -> children: List[Any] + recomposion: (Any)=>Null；
+ * - 构造点改写：容器 X(...) { 子视图 } -> children=[...]；叶子 X(...) -> children=Nil；
  * - 每个构造点生成单参函数 recomposion$X$N（调 @android androidRecompose 桥）；
  * - 多轮收敛（幂等）；
- * - 端到端：挂 core 标准库 → 重查通过 → codegen → node 运行。
+ * - 端到端：挂 core 标准库 -> 重查通过 -> codegen -> node 运行。
  */
 class AndroidViewProcessorTest {
 
@@ -91,7 +92,7 @@ class AndroidViewProcessorTest {
         assertTrue(r.rounds <= 2, "轮数 ${r.rounds} 过多")
     }
 
-    /** 生成函数：recomposion$Box$1(v) → androidRecompose(\"Box\", 1, v)。 */
+    /** 生成函数：recomposion$Box$1(v) -> androidRecompose("Box", 1, v)。 */
     @Test
     fun recomposion_function_generated() {
         val r = runView(viewSrc)
@@ -124,5 +125,43 @@ class AndroidViewProcessorTest {
         val btn = kids.args[0] as? StructCtorExpr
         assertNotNull(btn, "children 首成员应为 Button 构造")
         assertEquals(listOf("label", "children", "recomposion", "__ord"), btn.assigns.map { it.first })
+    }
+
+    /** 回归（旅行手记）：@list 视图 children 混排结构体与返回 Any 的 @composable 调用，
+     *  不得误报 E-TYPE-MISMATCH「变长实参须为同一类型」——children 元素类型应退化为 List[Any]。 */
+    @Test
+    fun list_fallback_accepts_any_typed_child_call() {
+        val dir = Files.createTempDirectory("subl-viewck").toFile()
+        try {
+            File(dir, "main.subl").writeText(
+                "@view struct Box(modifier: Any)\n" +
+                "@view struct Text(text: Str)\n" +
+                "@android @impure\n" +
+                "fun androidRecompose(view: Str, ordinal: Nat, v: Any): Null\n" +
+                "\n" +
+                "@composable\n" +
+                "fun rows(): Any = when (true) {\n" +
+                "    true => Box(modifier = 1) { Text(text = \"a\") }\n" +
+                "    else => Box(modifier = 1) {}\n" +
+                "}\n" +
+                "\n" +
+                "@composable\n" +
+                "fun root(): Box = Box(modifier = 1) { Text(text = \"b\"); rows() }\n"
+            )
+            // 挂 core 标准库（listOf/Nil 等由 core 提供）
+            val coreSrc = File("core")
+            val coreDst = File(dir, "core"); coreDst.mkdirs()
+            for (f in coreSrc.walkTopDown().filter { it.isFile && it.name.endsWith(".subl") }) {
+                val rel = f.relativeTo(coreSrc).path
+                File(coreDst, rel).apply { parentFile?.mkdirs() }.writeText(f.readText())
+            }
+            val mm = MultiModule(dir)
+            val procs = BuiltinProcessors.loadFrom(BuiltinProcessors.DEFAULT_DIR)
+            val pbag = mm.processModules(ProcessorPipeline.builtinModuleTransformer(
+                ProcessorLoadResult(procs, emptyList()), emptyMap()))
+            val bag = mm.checkAll()
+            bag.absorb(pbag)
+            assertFalse(bag.hasError, "混排 Any 子视图不应报错，实际:\n" + bag.report())
+        } finally { dir.deleteRecursively() }
     }
 }
