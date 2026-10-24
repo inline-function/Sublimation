@@ -637,6 +637,18 @@ class CheckerTest {
         assertTrue(ok(head + "fun main() { sum((1, 2)) }"))
     }
 
+    /** P-3 紧急修正：lambda 读取（不只是写入）捕获的外部可变变量即不纯。 */
+    @Test
+    fun `P3 - lambda 读取捕获的可变变量即不纯`() {
+        val head = "fun g(): Nat {\n    @mut var n: Nat = 1\n"
+        // 读取捕获 @mut 变量的 lambda → impure，挂纯类型变量报 E-TYPE-MISMATCH
+        assertTrue(errs(head + "    var f: (Nat) => Nat = { x => n }\n    return 0\n}").contains("E-TYPE-MISMATCH"))
+        // 写入捕获（原规则）：同样 impure
+        assertTrue(errs(head + "    var f: (Nat) => Nat = { x => n = 2; 0 }\n    return 0\n}").contains("E-TYPE-MISMATCH"))
+        // 不触可变变量的 lambda：照常纯
+        assertTrue(ok("fun g(): Nat {\n    @mut var n: Nat = 1\n    var f: (Nat) => Nat = { x => x + 1 }\n    return f(1)\n}"))
+    }
+
     @Test
     fun `v30 - @list 变长实参打包 Kotlin vararg`() {
         val head = "enum List[T] { Nil(), Cons(T, List[T]) }\nfun f[T](@list _xs: T): Nat = 0\n"

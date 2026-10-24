@@ -908,7 +908,14 @@ class Checker(
         }
         is NameRef -> {
             val vt = f.lookupVar(e.name)
-            if (vt != null) { f.markUsed(e.name); vt }
+            if (vt != null) {
+                f.markUsed(e.name)
+                // P-3（紧急修正）：lambda 体内**读取**外部捕获的可变变量，同样推导该 lambda 不纯——
+                // 可变状态读取即隐式状态依赖，与写入同等处理（原规则只覆盖赋值写入）。
+                // 判据与赋值分支一致：当前帧未声明 + isMut 沿父链成立 + 处于 lambda 体内。
+                if (lambdaDepth > 0 && !f.vars.containsKey(e.name) && f.isMut(e.name)) curLambdaImpure = true
+                vt
+            }
             else run {
                 when {
                     syms.ctors.containsKey(e.name) -> {
