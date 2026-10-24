@@ -1,6 +1,6 @@
 // ∀p 的 p 是命题变量：按命题池候选实例化（需 @classic）
 @classic
 fun propInst[r]: Null {
-  unchecked.axiom[∀p. p ∨ ¬p]
+  axiom ∀p. p ∨ ¬p
   ∴ r ∨ ¬r
 }

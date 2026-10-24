@@ -160,8 +160,8 @@ class ModuleE2ETest {
         assumeTrue(nodeAvailable())
         val main = "@impure fun main() {\n" +
             "var xs = Cons(1, Cons(2, Nil()))\n" +
-            "print(xs.map({ x -> x + 1 }).size())\n" +
-            "print(xs.map({ x -> x + 1 }).fold(0) { acc, x => acc + x })\n" +
+            "print(xs.map({ x => x + 1 }).size())\n" +
+            "print(xs.map({ x => x + 1 }).fold(0) { acc, x => acc + x })\n" +
             "}"
         assertEquals("2\n5", runTree(coreSpec() + mapOf("main.subl" to main)))
     }
@@ -171,7 +171,7 @@ class ModuleE2ETest {
         assumeTrue(nodeAvailable())
         val main = "@impure fun main() {\n" +
             "var xs = range(1, 11)\n" +
-            "print(xs.map({ x -> x * x }).fold(0) { x, acc -> acc + x })\n" +
+            "print(xs.map({ x => x * x }).fold(0) { x, acc => acc + x })\n" +
             "}"
         assertEquals("385", runTree(coreSpec() + mapOf("main.subl" to main)))
     }
@@ -202,8 +202,8 @@ class ModuleE2ETest {
         assumeTrue(nodeAvailable())
         val main = "@impure fun main() {\n" +
             "var xs = range(1, 4)\n" +
-            "print(xs.any({ x -> x > 5 }))\n" +
-            "print(xs.all({ x -> x > 0 }))\n" +
+            "print(xs.any({ x => x > 5 }))\n" +
+            "print(xs.all({ x => x > 0 }))\n" +
             "}"
         assertEquals("false\ntrue", runTree(coreSpec() + mapOf("main.subl" to main)))
     }
@@ -215,8 +215,8 @@ class ModuleE2ETest {
             "var xs = range(1, 5)\n" +
             "when(xs.indexOf(2)) { is Some(i) => print(i); None => print(\"x\") }\n" +
             "print(xs.slice(1, 3).joinToString(\",\"))\n" +
-            "print(xs.sortBy({ a, b -> a > b }).joinToString(\",\"))\n" +
-            "print(xs.sortBy({ a, b -> a < b }).joinToString(\",\"))\n" +
+            "print(xs.sortBy({ a, b => a > b }).joinToString(\",\"))\n" +
+            "print(xs.sortBy({ a, b => a < b }).joinToString(\",\"))\n" +
             "}"
         assertEquals("1\n2,3\n4,3,2,1\n1,2,3,4", runTree(coreSpec() + mapOf("main.subl" to main)))
     }
@@ -301,7 +301,7 @@ class ModuleE2ETest {
         assumeTrue(nodeAvailable())
         // mapOk 的 U 由 lambda 反推（点号方法 x.length），unwrapOr 消费——嵌套泛型调用即 §7.3 用法
         val main = "@impure fun main() {\nwriteFile(\"p5-mr.txt\", \"hello!\")\n" +
-            "var r = mapOk(readFile(\"p5-mr.txt\"), { x -> x.length })\n" +
+            "var r = mapOk(readFile(\"p5-mr.txt\"), { x => x.length })\n" +
             "print(unwrapOr(r, 0))\n}"
         try {
             assertEquals("6", runTree(coreSpec() + mapOf("main.subl" to main)))
@@ -349,12 +349,12 @@ class ModuleE2ETest {
             "print(\"listSize=\${xs.size()}\")\n" +
             "print(\"setSize=\${s.size()}\")\n" +
             "print(\"mapSize=\${m.size()}\")\n" +
-            "print(\"mapLen=\${xs.map({ x -> x * 2 }).size()}\")\n" +
+            "print(\"mapLen=\${xs.map({ x => x * 2 }).size()}\")\n" +
             "print(\"setHas=\${s.contains(3)}\")\n" +
             "print(\"listHas=\${xs.contains(2)}\")\n" +
             "var g = m.get(\"a\").getOrElse(0)\n" +
             "print(\"mapGet=\${g}\")\n" +
-            "print(\"optMap=\${Some(5).map({ x -> x + 1 }).getOrElse(0)}\")\n" +
+            "print(\"optMap=\${Some(5).map({ x => x + 1 }).getOrElse(0)}\")\n" +
             "}"
         assertEquals(
             "listSize=2\nsetSize=1\nmapSize=2\nmapLen=2\nsetHas=true\nlistHas=true\nmapGet=1\noptMap=6",
@@ -367,8 +367,8 @@ class ModuleE2ETest {
         assumeTrue(nodeAvailable())
         val main = "@impure fun main() {\n" +
             "var xs = range(1, 6)\n" +
-            "var evens = core.collection.filter(xs, { x -> x % 2 == 0 })\n" +    // filter 跨 List/Optional/Result/Set 重载——限定调用须路由到 List 版
-            "var doubled = evens.map({ x -> x * 10 })\n" +      // map 走类型类方法（Functor for List）
+            "var evens = core.collection.filter(xs, { x => x % 2 == 0 })\n" +    // filter 跨 List/Optional/Result/Set 重载——限定调用须路由到 List 版
+            "var doubled = evens.map({ x => x * 10 })\n" +      // map 走类型类方法（Functor for List）
             "var j = joinToString(doubled, \", \")\n" +
             "print(\"evens=\${j}\")\n" +
             "print(\"sum=\${sum(doubled)}\")\n" +
@@ -983,7 +983,7 @@ class ModuleE2ETest {
         // memo 验收目标：map/filter/fold 零魔法成立；多态匿名函数作实参进 List.map 的 (T)=>U 槽
         val src = "@impure fun main() {\n" +
             "  var xs = Cons(1, Cons(2, Cons(3, Cons(4, Nil()))))\n" +
-            "  var ys = xs.filter { x -> x > 2 }.map { x -> x * 2 }\n" +
+            "  var ys = xs.filter { x => x > 2 }.map { x => x * 2 }\n" +
             "  print(ys)\n" +
             "  var s = xs.fold(0) { acc, x => acc + x }\n" +
             "  print(s)\n" +
@@ -1000,7 +1000,7 @@ class ModuleE2ETest {
         val src = "@impure fun main() {\n" +
             "  var xs = Cons(1, Cons(2, Nil()))\n" +
             "  var m = xs.map\n" +
-            "  print(m({x -> x * 2}))\n" +
+            "  print(m({x => x * 2}))\n" +
             "}"
         assertEquals("[2,4]", runTree(coreSpec() + mapOf("main.subl" to src)))
     }
@@ -1041,7 +1041,7 @@ class ModuleE2ETest {
         // 重组：List/Result/Optional 并入 core.collection——三者在同一模块仍互见（方法重载按接收者路由）
         val src = "@impure fun main() {\n" +
             "  var xs = Cons(1, Cons(5, Nil()))\n" +
-            "  print(xs.map({ x -> x * 2 }))\n" +
+            "  print(xs.map({ x => x * 2 }))\n" +
             "  print(xs.size())\n" +
             "}"
         assertEquals("[2,10]\n2", runTree(coreSpec() + mapOf("main.subl" to src)))
@@ -1075,7 +1075,7 @@ class ModuleE2ETest {
             "        emit(3)\n" +
             "    }\n" +
             "    print(concat(\"flow count: \", toStr(collectCount(fl))))\n" +
-            "    print(concat(\"flow all: \", toStr(collectAll(fl, { v -> v > 0 }))))\n" +
+            "    print(concat(\"flow all: \", toStr(collectAll(fl, { v => v > 0 }))))\n" +
             "    var mu = Mutex()\n" +
             "    var c: @mut Counter = Counter(0)\n" +
             "    bumpCounter(mu, c)\n" +

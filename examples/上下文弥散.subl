@@ -6,7 +6,7 @@
 
 // test1 的下文 <p> 由体内 axiom 兑现；调用后 p 进入作用域
 fun test1(): Null <p> {
-    unchecked.axiom[p]
+    axiom p
 }
 
 // test2 的上文 <p> 由作用域中弥散的 p 自动供给
@@ -29,7 +29,7 @@ fun cmp(a: Int, b: Int) <a < b>: Bool {
 }
 
 fun main() {
-    unchecked.axiom[forall n. tagged<n>]
+    axiom forall n. tagged<n>
     test1()
     test2()
     unchecked print(get7())     // 7

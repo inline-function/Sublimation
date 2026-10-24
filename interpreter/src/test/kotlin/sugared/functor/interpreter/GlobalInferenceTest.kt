@@ -318,7 +318,7 @@ class GlobalInferenceTest {
     fun 上下文_后件交集填q() {
         val raw = parseScriptSource(
             "fun posty(c) {" + "\u000A" +
-            "  unchecked.axiom[q]" + "\u000A" +
+            "  axiom q" + "\u000A" +
             "  if (c) { return 1 } else { return 2 }" + "\u000A" +
             "}" + "\u000A", "<t>", allowUntyped = true)
         val out = GlobalInference.infer(raw, emptyList())

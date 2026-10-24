@@ -53,6 +53,9 @@ class ScriptFrame(val parent: ScriptFrame? = null) {
 
     fun localNames(): List<String> = vars.keys.toList()
 
+    /** 本帧直接声明的函数（供闭包捕获快照复制；沿父链收集由调用方完成） */
+    fun localFunctions(): List<sugared.functor.ast.FunDecl> = functions.values.flatten()
+
     fun child(): ScriptFrame = ScriptFrame(this)
 }
 

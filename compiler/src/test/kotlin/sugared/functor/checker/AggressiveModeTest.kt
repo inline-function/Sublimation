@@ -39,7 +39,7 @@ class AggressiveModeTest {
     fun `排中律_前向实例化后分情况证出`() {
         val src = "@theorem fun LEM[@p]: Null <p ∨ ¬p>\n" +
             "@classic\n" +
-            "fun lemCase[@p, @q]<p -> q, ¬p -> q>: Null {\n  ∴ q\n}\n"
+            "fun lemCase[@p, @q]<p → q, ¬p → q>: Null {\n  ∴ q\n}\n"
         assertTrue(okAgg(src), "激进模式应注入排中律并分情况证出 q")
         assertFalse(errs(src, false).isEmpty(), "普通模式无前向实例化，证不出")
     }
@@ -49,7 +49,7 @@ class AggressiveModeTest {
     /** Γ 含 ¬p->q 与 ¬p->¬q：假设 ¬p 导出矛盾（q 与 ¬q）⇒ p。 */
     @Test
     fun `反证法_经典逻辑下证出`() {
-        val src = "@classic\nfun raaCase[@p, @q]<¬p -> q, ¬p -> ¬q>: Null {\n  ∴ p\n}\n"
+        val src = "@classic\nfun raaCase[@p, @q]<¬p → q, ¬p → ¬q>: Null {\n  ∴ p\n}\n"
         assertTrue(okAgg(src), "激进模式应反证 p")
         assertFalse(errs(src, false).isEmpty(), "普通模式无反证通道")
     }
@@ -57,7 +57,7 @@ class AggressiveModeTest {
     /** 健全性看守（§3.1）：不挂 @classic 时反证**绝不**启用——直觉主义只给 ¬¬p，猜不得。 */
     @Test
     fun `反证法_未挂classic不启用`() {
-        val src = "fun raaCase[@p, @q]<¬p -> q, ¬p -> ¬q>: Null {\n  ∴ p\n}\n"
+        val src = "fun raaCase[@p, @q]<¬p → q, ¬p → ¬q>: Null {\n  ∴ p\n}\n"
         assertFalse(errs(src, true).isEmpty(), "未挂 core.classic 时反证不得启用")
     }
 
@@ -67,7 +67,7 @@ class AggressiveModeTest {
      *  普通模式的 closure 只有表达式维（PForall 无 ground 项）→ 实例化不出来。 */
     @Test
     fun `命题维_全称命题按命题池实例化`() {
-        val src = "@classic\nfun propInst[r]: Null {\n  unchecked.axiom[∀p. p ∨ ¬p]\n  ∴ r ∨ ¬r\n}\n"
+        val src = "@classic\nfun propInst[r]: Null {\n  axiom ∀p. p ∨ ¬p\n  ∴ r ∨ ¬r\n}\n"
         assertTrue(okAgg(src), "激进模式应把 ∀p 的 p 分派到命题维并实例化出 r ∨ ¬r")
         assertFalse(errs(src, false).isEmpty(), "普通模式一维池实例化不出命题变量")
     }

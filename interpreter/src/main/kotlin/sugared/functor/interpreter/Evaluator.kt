@@ -102,15 +102,21 @@ class Evaluator(
     }
 
     /**
-     * 变量绑定拷贝规则（root doc 副作用与可变性控制 §6.6——与编译模式 Checker.binderNeedsCopy 统一判据）：
-     *   目标或源任一为可变视图（@mut 声明的变量）或 @ref 引用变量 → 拷贝；仅当目标与源均 @ref 时为别名（共享）。
-     *   旧实现只看 @ref（M5 已知偏差）：普通 @mut 变量在脚本模式被别名共享而编译模式深拷贝，两模式行为分裂——
-     *   此处把 mut 维度补齐，与 Checker 对齐（审查报告 §2.4）。
+     * 变量绑定拷贝规则（root doc《副作用与可变性控制》§可变拷贝——与编译模式 Checker.binderNeedsCopy 统一判据，修正案四条款）：
+     *   ① 目标带 @mut 且源是纯 T（不可变、无引用）→ 拷贝（向纯不可变对象引入可变视图，须快照）；
+     *   ② 目标带 @mut 且不带 @ref → 拷贝（每个 @mut 绑定持独立对象）；
+     *   ③ 源带 @mut 且目标是纯 T → 拷贝（割除可变性，须快照）；
+     *   ④ 源带 @ref 且目标不带 @ref → 拷贝（冻结引用快照）。
+     *   其余（不可变值互传、把可变值绑定到 @ref 引用、引用互相别名）共享同一个对象，不拷贝。
      */
-    private fun bindCopy(src: ScriptValue, targetRef: Boolean, sourceRef: Boolean, targetMut: Boolean = false, sourceMut: Boolean = false): ScriptValue =
-        if (!(targetMut || sourceMut || targetRef || sourceRef)) src   // 双侧皆不可变视图 → 值语义天然共享即可
-        else if (targetRef && sourceRef) src                           // 双 @ref → 别名
-        else deepCopy(src)
+    private fun bindCopy(src: ScriptValue, targetRef: Boolean, sourceRef: Boolean, targetMut: Boolean = false, sourceMut: Boolean = false): ScriptValue {
+        val tgtPure = !targetRef && !targetMut
+        val srcPure = !sourceRef && !sourceMut
+        val copy = (targetMut && (!targetRef || srcPure))
+            || (sourceMut && tgtPure)
+            || (sourceRef && !targetRef)
+        return if (copy) deepCopy(src) else src
+    }
 
     private fun sourceIsRef(e: Expr, frame: ScriptFrame): Boolean =
         e is NameRef && frame.isRef(e.name)
@@ -118,6 +124,23 @@ class Evaluator(
     /** 源表达式是否为可变视图（@mut 声明的变量）——bindCopy 的 mut 维度（审查报告 §2.4） */
     private fun sourceIsMut(e: Expr, frame: ScriptFrame): Boolean =
         e is NameRef && frame.isMutable(e.name)
+
+    /** 修正案（root doc《副作用与可变性控制》）：函数深拷贝时，闭包捕获的变量一并深拷贝。
+     *  沿父链收集全部捕获变量与局部函数，逐个深拷贝后装入新帧（可变/引用标注保留）。 */
+    private fun copiedFrame(f: ScriptFrame): ScriptFrame {
+        val frames = ArrayList<ScriptFrame>()
+        var cur: ScriptFrame? = f
+        while (cur != null) { frames.add(cur); cur = cur.parent }
+        val out = ScriptFrame()
+        for (fr in frames.asReversed()) {   // 外层优先，内层同名覆盖
+            for (n in fr.localNames()) {
+                val v = f.lookupVar(n) ?: continue
+                out.declareVar(n, deepCopy(v), fr.isMutable(n), fr.isRef(n))
+            }
+            for (d in fr.localFunctions()) out.declareFunction(d)
+        }
+        return out
+    }
 
     private fun deepCopy(v: ScriptValue): ScriptValue = when (v) {
         is ScriptValue.Struct -> {
@@ -129,7 +152,8 @@ class Evaluator(
         is ScriptValue.ListV -> ScriptValue.ListV(v.items.map { deepCopy(it) }.toMutableList())
         is ScriptValue.OptionalV -> ScriptValue.OptionalV(v.value?.let { deepCopy(it) })
         is ScriptValue.ResultV -> ScriptValue.ResultV(v.isOk, v.value?.let { deepCopy(it) }, v.error?.let { deepCopy(it) })
-        // Fun：闭包捕获语义（P6）第一版不深拷贝，保持原值
+        // 修正案（root doc《副作用与可变性控制》）：函数深拷贝时一并深拷贝闭包捕获的变量
+        is ScriptValue.Fun -> if (v.fn is ClosureFun) v.fn.copyCapture() else v
         else -> v
     }
 
@@ -195,8 +219,6 @@ class Evaluator(
             is CallExpr -> evalCall(expr, frame)
             is SymbolCallExpr -> evalSymCall(expr, frame)
             is BlockExpr -> evalBlock(expr, frame)
-            // 线性作用域（第十二卷 §10.1）：版本化是编译期机制，运行时与普通块完全相同
-            is LinearBlockExpr -> evalBlock(expr.block, frame)
             is IfExpr -> evalIf(expr, frame)
             is WhenExpr -> evalWhen(expr, frame)
             is LambdaExpr -> evalLambda(expr, frame)
@@ -808,13 +830,19 @@ class Evaluator(
         }
     }
 
+    /** 修正案：闭包型函数——支持深拷贝捕获变量（deepCopy 时调用 copyCapture） */
+    private interface ClosureFun : ScriptFunction {
+        fun copyCapture(): ScriptValue.Fun
+    }
+
     private fun evalLambda(e: LambdaExpr, frame: ScriptFrame): ScriptValue {
-        val fn = object : ScriptFunction {
+        val fn = object : ScriptFunction, ClosureFun {
             override val typeParams: List<String> = emptyList()
             override val preps: List<String> = emptyList()
             override val posts: List<String> = emptyList()
             override val paramTypes: List<String> = e.params.map { "Any" }
             override val retType: String = "Any"
+            override fun copyCapture(): ScriptValue.Fun = evalLambda(e, copiedFrame(frame)) as ScriptValue.Fun
             override fun call(args: List<Any?>): Any? {
                 val child = ScriptFrame(frame)
                 bindLambdaParams(child, e.params, args)
@@ -826,12 +854,13 @@ class Evaluator(
     }
 
     private fun evalAnonFun(e: AnonFunExpr, frame: ScriptFrame): ScriptValue {
-        val fn = object : ScriptFunction {
+        val fn = object : ScriptFunction, ClosureFun {
             override val typeParams: List<String> = e.theory.filterIsInstance<TypeParam>().map { it.name }
             override val preps: List<String> = e.preps.map { it.toString() }
             override val posts: List<String> = e.posts.map { it.toString() }
             override val paramTypes: List<String> = e.params.map { it.type.render() }
             override val retType: String = e.retType?.render() ?: "Null"
+            override fun copyCapture(): ScriptValue.Fun = evalAnonFun(e, copiedFrame(frame)) as ScriptValue.Fun
             override fun call(args: List<Any?>): Any? {
                 val child = ScriptFrame(frame)
                 e.params.forEachIndexed { i, p -> child.declareVar(p.name, fromHost(args.getOrNull(i)), "mut" in p.annotations) }

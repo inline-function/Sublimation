@@ -421,7 +421,7 @@ fun card(): Box {
     }
 
     @Test fun `signatureHelp 逗号在顶层才计数`() {
-        val a = opened("fun fold(init: Nat, f: (Nat,Nat)=>Nat): Nat = f(init,init)\nfun main() { fold(0, { a, b -> a + b }) }")
+        val a = opened("fun fold(init: Nat, f: (Nat,Nat)=>Nat): Nat = f(init,init)\nfun main() { fold(0, { a, b => a + b }) }")
         // cursor at comma after 0 in fold(0, ▍{...})
         val help = a.signatureHelpFor("file:///t.subl", Position(1, 21))
         assertNotNull(help)

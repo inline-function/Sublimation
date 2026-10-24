@@ -11,11 +11,11 @@ class Show[T] { fun show(): Str }
 // impl 提供实例；方法调用按实参类型解析字典分发（dict_Show_Grade）
 impl Show for Grade {
     fun show(): Str = when(self) {
-        Excellent() -> "优秀"
-        Good() -> "良好"
-        Pass() -> "及格"
-        Fail() -> "挂科"
-        _ -> "?"
+        Excellent() => "优秀"
+        Good() => "良好"
+        Pass() => "及格"
+        Fail() => "挂科"
+        _ => "?"
     }
 }
 

@@ -103,8 +103,8 @@ class E2ETest {
         val src = "fun apply(o: Optional[Nat], f: (Optional[Nat]) => Null): Null = f(o)\n" +
             "fun main() {\n" +
             "  @mut var log = \"\"\n" +
-            "  apply(Some(6), { x -> if (x is Some(v)) { log = log + toStr(v) } else { log = log + \"none\" } })\n" +
-            "  apply(None, { x -> if (x is Some(v)) { log = log + toStr(v) } else { log = log + \"none\" } })\n" +
+            "  apply(Some(6), { x => if (x is Some(v)) { log = log + toStr(v) } else { log = log + \"none\" } })\n" +
+            "  apply(None, { x => if (x is Some(v)) { log = log + toStr(v) } else { log = log + \"none\" } })\n" +
             "  unchecked print(log)\n" +
             "}"
         assertEquals("6none", run(src))
@@ -230,7 +230,7 @@ class E2ETest {
     @Test
     fun `字符串与 lambda`() {
         assumeTrue(nodeAvailable())
-        val src = "fun main() { var id = { x -> x }\nunchecked print(id(\"hi\")) }"
+        val src = "fun main() { var id = { x => x }\nunchecked print(id(\"hi\")) }"
         assertEquals("hi", run(src))
     }
 
@@ -526,7 +526,7 @@ class E2ETest {
             "    print(id(3))\n" +
             "    print(id(\"a\"))\n" +
             "    print(id<Nat>(7))\n" +
-            "    var f = {x -> x + 1}\n" +
+            "    var f = {x => x + 1}\n" +
             "    print(f(2))\n" +
             "}"
         assertEquals("3\na\n7\n3", run(src))
@@ -586,7 +586,7 @@ class E2ETest {
         // 函数类型理论语法 `[T](T)=>T`（parsePolyFunType）；lambda 满足多态函数类型位并继承 theory →
         // 实例化调用 f(3)/f("a")（实参合一反推）
         val src = "@impure fun main() {\n" +
-            "    var f: [T](T) => T = {x -> x}\n" +
+            "    var f: [T](T) => T = {x => x}\n" +
             "    print(f(3))\n" +
             "    print(f(\"a\"))\n" +
             "}"
@@ -599,9 +599,9 @@ class E2ETest {
         // lambda 体内 impure 调用 → FunType.purity="impure"；impure 上下文调用函数值放行；纯 lambda 正常
         val src = "@impure fun log(x: Nat): Nat = x\n" +
             "@impure fun main() {\n" +
-            "    var f = {x -> log(x)}\n" +
+            "    var f = {x => log(x)}\n" +
             "    print(f(1))\n" +
-            "    var g = {x -> x + 1}\n" +
+            "    var g = {x => x + 1}\n" +
             "    print(g(2))\n" +
             "}"
         assertEquals("1\n3", run(src))
@@ -628,9 +628,9 @@ class E2ETest {
         // 闭包引用外层变量 addBase(5)
         val src = "@impure fun main() {\n" +
             "    var base = 10\n" +
-            "    var addBase = {x -> x + base}\n" +
+            "    var addBase = {x => x + base}\n" +
             "    print(addBase(5))\n" +
-            "    var fact = {n -> if (n <= 1) {1} else {n * fact(n - 1)}}\n" +
+            "    var fact = {n => if (n <= 1) {1} else {n * fact(n - 1)}}\n" +
             "    print(fact(5))\n" +
             "}"
         assertEquals("15\n120", run(src))
@@ -661,7 +661,7 @@ class E2ETest {
             "    fun(x: A): C = f(g(x))\n" +
             "@impure fun log(x: Nat): Nat = x\n" +
             "@impure fun main() {\n" +
-            "    var f1: [T](T) => T = {x -> x}\n" +
+            "    var f1: [T](T) => T = {x => x}\n" +
             "    print(f1(3))\n" +
             "    print(f1(\"a\"))\n" +
             "    var f2 = id\n" +
@@ -669,11 +669,11 @@ class E2ETest {
             "    print(f2<Str>(\"b\"))\n" +
             "    var f3 = compose(inc, inc)\n" +
             "    print(f3(5))\n" +
-            "    var fl = compose({x -> x + 3}, {x -> x * 2})\n" +
+            "    var fl = compose({x => x + 3}, {x => x * 2})\n" +
             "    print(fl(5))\n" +
-            "    var fact = {n -> if (n <= 1) {1} else {n * fact(n - 1)}}\n" +
+            "    var fact = {n => if (n <= 1) {1} else {n * fact(n - 1)}}\n" +
             "    print(fact(5))\n" +
-            "    var lg = {x -> log(x)}\n" +
+            "    var lg = {x => log(x)}\n" +
             "    print(lg(9))\n" +
             "    var gl = id<Nat>\n" +
             "    print(gl(11))\n" +
@@ -691,7 +691,7 @@ class E2ETest {
             "    print(5 in 0..3)\n" +
             "    var s = 1..4\n" +
             "    print(s.map({ x => x * x }))\n" +
-            "    print(s.fold(0, { x, acc -> acc + x }))\n" +
+            "    print(s.fold(0, { x, acc => acc + x }))\n" +
             "}"
         assertEquals("4\n[0,1,2,3]\ntrue\nfalse\n[1,4,9,16]\n10", run(src))
     }
@@ -746,15 +746,6 @@ class E2ETest {
     }
 
     @Test
-    fun `线性作用域 - 生成 JS 与普通块逐字节相同`() {
-        // 零运行时成本验收判据（形式化版 §10.1）：版本化随命题层擦除
-        assumeTrue(nodeAvailable())
-        val src = "@impure fun main() {\n" +
-            "%{ @mut var n = 0; n = 1; n = n + 10; print(toStr(n)) }\n}"
-        assertEquals("11", run(src))
-    }
-
-    @Test
     fun `rootdoc 可变视图深拷贝 - @mut结构体互拷隔离`() {
         assumeTrue(nodeAvailable())
         // 形式：@mut struct T(@mut n)。a,b 各持独立对象 → 修改互不影响
@@ -797,7 +788,7 @@ class E2ETest {
     }
 
     @Test
-    fun `rootdoc 可变视图深拷贝 - 非ref赋@ref拷贝`() {
+    fun `rootdoc 可变视图 - 非ref赋@ref是别名共享`() {
         assumeTrue(nodeAvailable())
         val src = "@mut struct T(@mut n: Nat)\n" +
             "@impure fun main() {\n" +
@@ -806,6 +797,6 @@ class E2ETest {
             "    a.n = 1\n" +
             "    print(b.n)\n" +
             "}"
-        assertEquals("0", run(src))
+        assertEquals("1", run(src))
     }
 }

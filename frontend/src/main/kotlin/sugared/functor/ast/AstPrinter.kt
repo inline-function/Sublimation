@@ -107,7 +107,6 @@ private fun Expr.toTree(): Tree = when (this) {
     is SymbolCallExpr -> Tree("sym ${op}(${args.joinToString(", ") { it.toTag() }})")
     is LambdaExpr -> Tree("lambda(${params.joinToString(", ")}) => ${body.toTag()}")
     is BlockExpr -> Tree("block", stmts.map { it.toTree() })
-    is LinearBlockExpr -> Tree("%{ block", block.stmts.map { it.toTree() })
     is IfExpr -> Tree("if", listOf(cond.toTree(), Tree("then", thenBlock.stmts.map { it.toTree() })) +
         (elseBlock?.let { listOf(Tree("else", it.stmts.map { s -> s.toTree() })) } ?: emptyList()))
     is ByExpr -> Tree("by ${target.toTag()}[${props.joinToString(", ") { it.toTag() }}]")
@@ -148,7 +147,6 @@ private fun Expr.toTag(): String = when (this) {
     is SymbolCallExpr -> "$op(${args.joinToString(", ") { it.toTag() }})"
     is LambdaExpr -> "\\(${params.joinToString(", ")}) => ${body.toTag()}"
     is BlockExpr -> "{${stmts.joinToString("; ") { it.toPlain() }}}"
-    is LinearBlockExpr -> "%{${block.stmts.joinToString("; ") { it.toPlain() }}}"
     is IfExpr -> "if ${cond.toTag()} {${thenBlock.stmts.joinToString("; ") { it.toPlain() }}}" +
         (elseBlock?.let { " else {${it.stmts.joinToString("; ") { s -> s.toPlain() }}}" } ?: "")
     is ByExpr -> "(${target.toTag()} by [${props.joinToString(", ") { it.toTag() }}])"

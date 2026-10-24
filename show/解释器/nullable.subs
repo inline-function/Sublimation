@@ -6,7 +6,7 @@ struct UserProfile(
 )
 
 fun firstInitial(name: Optional[Str]): Optional[Str] =
-    name.map { s -> substring(s, 0, 1) }
+    name.map { s => substring(s, 0, 1) }
 
 var u = UserProfile("Alice", Some("a@x.com"), None())
 when(u.email) { is Some(e) => print("邮箱=" + e); None => print("邮箱=无") }
@@ -22,11 +22,11 @@ when(x) { is Some(v) => print("解构=" + toStr(v)); None => print("解构=空")
 // 方法路径作值：xs.map 不加括号
 var xs2 = listOf(1, 2, 3)
 var m = xs2.map
-var ys = m({ x -> x + 10 })
+var ys = m({ x => x + 10 })
 print("方法路径作值=" + toStr(ys))
 
 var n: Optional[Nat] = Some(5)
-print("链路=" + toStr(n.map { v -> v * 2 }.filter { v -> v > 5 }.getOrElse(0)))
+print("链路=" + toStr(n.map { v => v * 2 }.filter { v => v > 5 }.getOrElse(0)))
 print("orElse=" + toStr(None().orElse(Some(9)).getOrElse(0)))
 
 when(Some(7).toResult("无值")) {

@@ -3,7 +3,7 @@ package sugared.functor.checker
 import sugared.functor.ast.*
 
 /**
- * 命题的规范化表示。`unchecked.axiom[∀n. valid<n>]`、上文、下文、两参解糖 `a ○ b`(=`○<a,b>`)
+ * 命题的规范化表示。`axiom ∀n. valid<n>`、上文、下文、两参解糖 `a ○ b`(=`○<a,b>`)
  * 统一归约为 Prop 树。PAtom 承载一切原子命题：0 元 (`p`)、参数化 (`valid<7>`)、
  * 比较/等式 (`$ == 7` → PAtom("==",[$,7]))。
  */

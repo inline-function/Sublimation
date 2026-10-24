@@ -14,22 +14,22 @@ class Functor[F[_]] {
 // self 用占位应用 List[a]；字典名只取构造子名 dict_Functor_List
 impl Functor for List[a] {
     fun map[A, B](f: (A) => B, fa: List[A]): List[B] = when(fa) {
-        Nil -> Nil()
-        is Cons(h, t) -> Cons(f(h), map(f, t))
+        Nil  => Nil()
+        is Cons(h, t) => Cons(f(h), map(f, t))
     }
 }
 
 fun fold[T, U](xs: List[T], init: U, f: (T, U) => U): U = when(xs) {
-    Nil -> init
-    is Cons(h, t) -> fold(t, f(h, init), f)
+    Nil  => init
+    is Cons(h, t) => fold(t, f(h, init), f)
 }
 
 fun joinToStr[T](xs: List[T], sep: Str): Str =
-    fold(xs, "", { x, acc -> if (acc == "") { toStr(x) } else { concat(acc, concat(sep, toStr(x))) } })
+    fold(xs, "", { x, acc  => if (acc == "") { toStr(x) } else { concat(acc, concat(sep, toStr(x))) } })
 
 @impure
 fun main() {
     var xs = Cons(1, Cons(2, Cons(3, Nil())))
-    var ys = map({ n -> n * 2 }, xs)        // 自由式字典分发：F:=List 由 kind 合一解出
+    var ys = map({ n  => n * 2 }, xs)        // 自由式字典分发：F:=List 由 kind 合一解出
     unchecked print(joinToStr(ys, ","))     // 2,4,6
 }

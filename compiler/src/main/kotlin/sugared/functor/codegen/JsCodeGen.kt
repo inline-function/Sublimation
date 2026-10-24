@@ -316,9 +316,11 @@ private var bridgeFnCounter = 0
             line("      return null;")
             line("    };")
         }
-        // root doc《副作用与可变性控制》85-144：可变视图深拷贝助手——绑定/赋值触发 __dc(value)。
+        // root doc《副作用与可变性控制》§可变拷贝（修正案四条款）：可变视图深拷贝助手——绑定/赋值触发 __dc(value)。
         // 仅在源码用到可变视图拷贝时注入（编译器按 binderNeedsCopy 留痕 deepCopyHits）。
         // 视图变异（@view 字段赋值）也走 __dc 深拷贝——预扫描留痕晚于注入判定，这里并判。
+        // 边界：JS 闭包不透明，函数值经 __dc 时透传（typeof function 早退）；
+        // 修正案要求的「深拷贝闭包捕获变量」由脚本模式 Evaluator.deepCopy 的 ClosureFun 分支实现，编译模式不变。
         if (deepCopyHits.isNotEmpty() || viewMutationUsed) {
             line("const __dc = (v) => {")
             line("  if (v === null || typeof v !== \"object\") return v;")
@@ -434,7 +436,7 @@ private val ANDROID_CALL_SPECIAL: Set<String> = setOf(
     "clipboardSet", "clipboardGet", "storagePut", "storageGet",
     "keepScreenOn", "vibrate", "screenWidth", "screenHeight", "screenDensity",
     "installedApps", "pickFile",
-    // s���platform.subl	��3<
+    // s���platform.subl	��3<
     "fmtTime",
 )
 /** 安卓 7 个生命周期名（android doc/安卓标准库.md §活动）：JS 端注册回调供 KT 端回调。 */
@@ -917,11 +919,8 @@ private fun needEqPreScan(file: FileAst): Boolean {
         }
         is TupleExpr -> "[" + e.items.joinToString(", ") { expr(it) } + "]"   // 元组→JS 数组（决策 61）
         is StructCtorExpr -> structCtorJs(e)   // O3（决策 69）：命名字段构造→位置实参工厂调用
-        is LinearBlockExpr -> blockIIFE(e.block)
         is BlockExpr -> blockIIFE(e)
 
-        // 线性作用域（第十二卷 §10.1 LV-ERASE-BLOCK）：`%` 是纯编译期分析标记，生成代码与普通块逐字节相同
-        is LinearBlockExpr -> expr(e.block)
         is IfExpr -> ifExpr(e)
         is WhenExpr -> whenExpr(e)
         is QuantExpr -> expr(e.body)    // 量词命题擦除
@@ -956,7 +955,7 @@ private fun needEqPreScan(file: FileAst): Boolean {
             "!", "¬" -> "!"
             "&", "∧" -> "&&"
             "|", "∨" -> "||"
-            "=", ":", "->", "→", "<->", "↔" -> return "true"  // 纯命题，擦除
+            "=", ":", "→", "<->", "↔" -> return "true"  // 纯命题，擦除
             else -> return "true"   // 自定义符号中缀（两参解糖）：命题，擦除
         }
         return "(${expr(e.left)} $op ${expr(e.right)})"

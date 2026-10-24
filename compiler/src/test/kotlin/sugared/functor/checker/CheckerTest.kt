@@ -21,7 +21,7 @@ class CheckerTest {
 
     @Test
     fun `弥散通过 - 最初例子做对了的样子`() {
-        assertTrue(ok("fun test1(): Null <p> { unchecked.axiom[p] }\nfun test2()<p>: Null {}\nfun main() { test1()\ntest2() }"))
+        assertTrue(ok("fun test1(): Null <p> { axiom p }\nfun test2()<p>: Null {}\nfun main() { test1()\ntest2() }"))
     }
 
 
@@ -58,19 +58,19 @@ class CheckerTest {
 
     @Test
     fun `全称合一特化供给`() {
-        val src = "fun need7()<valid<7>>: Null {}\nfun main() { unchecked.axiom[forall n. valid<n>]\nneed7() }"
+        val src = "fun need7()<valid<7>>: Null {}\nfun main() { axiom forall n. valid<n>\nneed7() }"
         assertTrue(ok(src))
     }
 
     @Test
     fun `modus ponens 自动证明`() {
-        val src = "fun useQ()<q>: Null {}\nfun main() { unchecked.axiom[p]\nunchecked.axiom[p -> q]\nuseQ() }"
+        val src = "fun useQ()<q>: Null {}\nfun main() { axiom p\naxiom p → q\nuseQ() }"
         assertTrue(ok(src))
     }
 
     @Test
     fun `命题参数自动供给`() {
-        val src = "fun witness[@q]<q>: Null {}\nfun main() { unchecked.axiom[torch]\nwitness() }"
+        val src = "fun witness[@q]<q>: Null {}\nfun main() { axiom torch\nwitness() }"
         assertTrue(ok(src))
     }
 
@@ -315,7 +315,7 @@ class CheckerTest {
     fun `v30 完美函数类型 - 多态函数类型位与元组回退`() {
         // v3.0：函数类型理论语法 `[T](T)=>T`（绑定者可解析）；元组带理论前缀不合法应回退为元组
         val src = "fun main() {\n" +
-            "    var f: [T](T) => T = {x -> x}\n" +
+            "    var f: [T](T) => T = {x => x}\n" +
             "    var u = f(3)\n" +
             "}"
         assertTrue(ok(src), "多态函数类型位应通过（lambda 继承 theory，实例化调用）")
@@ -336,7 +336,7 @@ class CheckerTest {
     fun `v30 完美函数类型 - 纯上下文调用 impure 函数值报错`() {
         // lambda 构造（体含 impure 调用）与函数值调用都在纯上下文 → 双重 E-IMPURE-CALL
         val src = "@impure fun log(x: Nat): Nat = x\n" +
-            "fun main() { var f = {x -> log(x)}\nvar g = f(1) }"
+            "fun main() { var f = {x => log(x)}\nvar g = f(1) }"
         assertTrue(errs(src).contains("E-IMPURE-CALL"), "纯上下文调用非纯函数值应报 E-IMPURE-CALL")
     }
 
@@ -348,7 +348,7 @@ class CheckerTest {
 
     @Test
     fun `命题算符中缀与归约 Unicode版`() {
-        val src = "fun needQ()<q>: Null {}\nfun main() { unchecked.axiom[p]\nunchecked.axiom[p → q]\nneedQ() }"
+        val src = "fun needQ()<q>: Null {}\nfun main() { axiom p\naxiom p → q\nneedQ() }"
         assertTrue(ok(src))
     }
 
@@ -421,7 +421,7 @@ class CheckerTest {
     @Test
     fun `决策54 pure命题驱动纯度`() {
         assertTrue(errs("@impure fun side(): Null {}\nfun main() { side() }").contains("E-IMPURE-CALL"))
-        assertTrue(ok("@impure fun side(): Null {}\nfun main() { unchecked.axiom[pure<side>]\nside() }"))
+        assertTrue(ok("@impure fun side(): Null {}\nfun main() { axiom pure<side>\nside() }"))
     }
 
     @Test
@@ -528,18 +528,18 @@ class CheckerTest {
 
     @Test
     fun `T2 lambda 双向推导`() {
-        assertTrue(ok("fun apply(f: (Nat)=>Nat, x: Nat): Nat = f(x)\nfun main() { apply({ n -> n + 1 }, 2) }"))
+        assertTrue(ok("fun apply(f: (Nat)=>Nat, x: Nat): Nat = f(x)\nfun main() { apply({ n => n + 1 }, 2) }"))
     }
 
     @Test
     fun `T2 lambda 参数个数不符报错`() {
-        val src = "fun apply(f: (Nat,Nat)=>Nat): Nat = f(1,2)\nfun main() { apply({ n -> n }) }"
+        val src = "fun apply(f: (Nat,Nat)=>Nat): Nat = f(1,2)\nfun main() { apply({ n => n }) }"
         assertTrue(errs(src).contains("E-TYPE-MISMATCH"))
     }
 
     @Test
     fun `T2 零参函数类型`() {
-        assertTrue(ok("fun call0(f: ()=>Nat): Nat = f()\nfun main() { call0({ -> 7 }) }"))
+        assertTrue(ok("fun call0(f: ()=>Nat): Nat = f()\nfun main() { call0({ => 7 }) }"))
     }
 
     @Test
@@ -597,17 +597,17 @@ class CheckerTest {
 
     @Test
     fun `多层泛型 lambda 反推 compose 通过`() {
-        assertTrue(ok("fun compose[A, B, C](f: (B) => C, g: (A) => B, x: A): C = f(g(x))\nfun main() { compose({ n -> n * 2 }, { m -> m + 1 }, 20) }"))
+        assertTrue(ok("fun compose[A, B, C](f: (B) => C, g: (A) => B, x: A): C = f(g(x))\nfun main() { compose({ n => n * 2 }, { m => m + 1 }, 20) }"))
     }
 
     @Test
     fun `链式泛型 lambda 返回类型解出`() {
-        assertTrue(ok("fun compose[A, B, C](f: (B) => C, g: (A) => B, x: A): C = f(g(x))\nfun main() { var r = compose({ n -> n * 2 }, { m -> m + 1 }, 20)\nvar s: Nat = r\ns }"))
+        assertTrue(ok("fun compose[A, B, C](f: (B) => C, g: (A) => B, x: A): C = f(g(x))\nfun main() { var r = compose({ n => n * 2 }, { m => m + 1 }, 20)\nvar s: Nat = r\ns }"))
     }
 
     @Test
     fun `多参 lambda 泛型 A B C 反推`() {
-        assertTrue(ok("fun zipWith[A, B, C](f: (A, B) => C, a: A, b: B): C = f(a, b)\nfun main() { var r = zipWith({ a, b -> a + b }, 20, 22)\nvar s: Str = zipWith({ a, b -> toStr(a) + b }, 7, \"x\")\nr }"))
+        assertTrue(ok("fun zipWith[A, B, C](f: (A, B) => C, a: A, b: B): C = f(a, b)\nfun main() { var r = zipWith({ a, b => a + b }, 20, 22)\nvar s: Str = zipWith({ a, b => toStr(a) + b }, 7, \"x\")\nr }"))
     }
 
     @Test
@@ -709,7 +709,7 @@ class CheckerTest {
     fun `HKT §7 自由式 map 字典分发通过`() {
         assertTrue(ok(hktEnv + "fun main() {\n" +
             "  var xs = Cons(1, Cons(2, Nil()))\n" +
-            "  var ys = map({ n -> n * 2 }, xs)\n" +
+            "  var ys = map({ n => n * 2 }, xs)\n" +
             "}"))
     }
 
@@ -840,7 +840,7 @@ class CheckerTest {
         // f: @impure (Nat)=>Null 是本函数声明的形参 → 体内调用放行（形参即显式效应能力；
         // 能构造 impure lambda 的调用方本身必非纯，纯洁性不被破坏）。
         assertTrue(ok("fun forEach(f: @impure (Nat) => Null): Null = f(1)\n" +
-            "@impure fun go(): Null = forEach({ x -> null })"))
+            "@impure fun go(): Null = forEach({ x => null })"))
     }
 
     // ============ HKT-2：多参构造子（《高阶类型.md》§7.2 Bifunctor[F[_,_]]） ============
@@ -862,7 +862,7 @@ class CheckerTest {
             "}\n" +
             "fun main() {\n" +
             "  var p = Pair(1, \"a\")\n" +
-            "  var q = bimap({ x -> x + 1 }, { s -> s + \"!\" }, p)\n" +
+            "  var q = bimap({ x => x + 1 }, { s => s + \"!\" }, p)\n" +
             "}"))
     }
 
@@ -912,7 +912,7 @@ class CheckerTest {
 
     @Test
     fun `O2 点号字段优先于同名方法`() {
-        val src = "struct P(m: (Nat) => Nat)\nfun main() { unchecked print(P({ x -> x }).m(3)) }"
+        val src = "struct P(m: (Nat) => Nat)\nfun main() { unchecked print(P({ x => x }).m(3)) }"
         assertTrue(ok(src))
     }
 
@@ -1319,7 +1319,7 @@ class CheckerTest {
     @Test
     fun `和类型 when else 分支反收窄`() {
         // else 分支联合主题排除已测 is 变体：o 收窄为 Nat，数值运算通过
-        val src = "@impure\nfun probe2(o: Str | Nat): Nat =\n    when(o) {\n        is Str => 0\n        else   => o + 1\n    }"
+        val src = "@impure\nfun probe2(o: Str | Nat): Nat =\n    when(o) {\n        is Str => 0\n        else => o + 1\n    }"
         assertTrue(ok(src), "else 分支应反收窄为剩余变体 Nat")
     }
 
@@ -1425,13 +1425,13 @@ class CheckerTest {
     }
     @Test
     fun `@theorem 标注+擦除+证明位特性五`() {
-        val src = "@theorem fun Triv[p]: Null <p> { unchecked.axiom[p] }\n@impure fun main() { ∴ p }"
+        val src = "@theorem fun Triv[p]: Null <p> { axiom p }\n@impure fun main() { ∴ p }"
         assertTrue(ok(src), "@theorem 显式标注登记定理；∴ 榜前/合一应证明")
     }
 
     @Test
     fun `@theorem 值级调用解封不再警告`() {
-        val src = "@theorem fun Triv[p]: Null <p> { unchecked.axiom[p] }\n@impure fun main() { Triv() }"
+        val src = "@theorem fun Triv[p]: Null <p> { axiom p }\n@impure fun main() { Triv() }"
         assertFalse(warns(src).contains("E-THEOREM-VALUE-CALL"), "解封(#3)：值级调用不再降级为警告")
         assertTrue(ok(src), "解封(#3)：定理函数值级调用正常")
     }
@@ -1513,7 +1513,7 @@ class CheckerTest {
         val src = "struct A(x: Nat)\n" +
             "class F { fun f(): Null }\n" +
             "impl F for A {\n" +
-            "    fun f(): Null <self.x = 7> { unchecked.axiom[self.x = 7]\n return null }\n" +
+            "    fun f(): Null <self.x = 7> { axiom self.x = 7\n return null }\n" +
             "}\n" +
             "fun getX(a: A)<a.x = 7>: Null { return null }\n" +
             "@impure fun main() {\n" +
@@ -1561,13 +1561,13 @@ class CheckerTest {
 
     @Test
     fun `自动证明 04-蕴含传播MP`() {
-        val src = "@impure fun main() { unchecked.axiom[(1 < 2) → (2 < 3)]\nunchecked.axiom[1 < 2]\n∴ 2 < 3 }"
+        val src = "@impure fun main() { axiom (1 < 2) → (2 < 3)\naxiom 1 < 2\n∴ 2 < 3 }"
         assertTrue(ok(src), "MP：p 与 p→q 推出 q")
     }
 
     @Test
     fun `自动证明 05-全称实例化`() {
-        val src = "@impure fun main() { unchecked.axiom[∀ n. n = n]\n∴ 7 = 7 }"
+        val src = "@impure fun main() { axiom ∀ n. n = n\n∴ 7 = 7 }"
         assertTrue(ok(src), "∀n.n=n 实例化 n=7 应可证")
     }
 
@@ -1579,13 +1579,13 @@ class CheckerTest {
 
     @Test
     fun `自动证明 07-构造子同余`() {
-        val src = "@impure fun main() { var x = 3\nvar y = 3\nunchecked.axiom[x = y]\n∴ Some(x) = Some(y) }"
+        val src = "@impure fun main() { var x = 3\nvar y = 3\naxiom x = y\n∴ Some(x) = Some(y) }"
         assertTrue(ok(src), "构造子同余：x=y → Some(x)=Some(y)")
     }
 
     @Test
     fun `自动证明 08-矛盾爆炸`() {
-        val src = "@impure fun main() { unchecked.axiom[1 = 1]\nunchecked.axiom[¬<1 = 1>]\n∴ x = 2 }"
+        val src = "@impure fun main() { axiom 1 = 1\naxiom ¬<1 = 1>\n∴ x = 2 }"
         assertTrue(ok(src), "p ∧ ¬p → ⊥，矛盾通过爆炸证出 x = 2")
     }
 
@@ -1632,7 +1632,7 @@ class CheckerTest {
 
     @Test
     fun typeQuant() {
-        val src = "@impure fun main() { unchecked.axiom[\u2200#T. \u22a4] }"
+        val src = "@impure fun main() { axiom \u2200#T. \u22a4 }"
         assertTrue(ok(src), "\u2200#T \u5168\u79f0\u7c7b\u578b\u91cf\u5316\u89e3\u6790\u65e0\u9519")
     }
 
@@ -1645,14 +1645,14 @@ class CheckerTest {
     @Test
     fun substSingleTerm() {
         // x=y 且 p<y> 在 \u0393，@subst[p<x>] \u5e94\u901a\u8fc7
-        val src = "@impure fun main() { var x = 3\n var y = 3\n \u2234 x = y\n unchecked.axiom[p<y>]\n @subst[p<x>] }"
+        val src = "@impure fun main() { var x = 3\n var y = 3\n \u2234 x = y\n axiom p<y>\n @subst[p<x>] }"
         assertTrue(ok(src), "@subst: x=y, p<y> \u2192 p<x> \u4ee3\u6362\u901a\u8fc7")
     }
 
     @Test
     fun substPropIff() {
         // p \u2194 q \u5728 \u0393\uff0c@subst[\u00acp] \u5e94\u8bc1\u51fa \u00acq
-        val src = "@impure fun main() { unchecked.axiom[p \u2194 q]\n unchecked.axiom[\u00acq]\n @subst[\u00acp] }"
+        val src = "@impure fun main() { axiom p \u2194 q\n axiom \u00acq\n @subst[\u00acp] }"
         assertTrue(ok(src), "@subst: p\u2194q, \u00acq \u2192 \u00acp \u4ee3\u6362\u901a\u8fc7")
     }
 
@@ -1661,7 +1661,7 @@ class CheckerTest {
 
     @Test
     fun `自动证明 09-forall链式MP`() {
-        val src = "@theorem fun ax(): <∀ e . valid<e> → valid2<e>>\nfun has2()<valid2<7>>: Null { }\n@impure fun main() { unchecked.axiom[valid<7>]\nax()\nhas2() }"
+        val src = "@theorem fun ax(): <∀ e . valid<e> → valid2<e>>\nfun has2()<valid2<7>>: Null { }\n@impure fun main() { axiom valid<7>\nax()\nhas2() }"
         assertTrue(ok(src), "∀e.(valid<e>→valid2<e>) + valid<7> → valid2<7>（MP + 全称实例化）")
     }
 
@@ -1687,7 +1687,7 @@ class CheckerTest {
             "fun needNotZero(n: Nat)<n ≠ 0> { }\n" +
             "@impure fun main() {\n" +
             "    var xs = Cons(1, Cons(2, Nil()))\n" +
-            "    unchecked.axiom[∀ e. e ∈ xs → (e ≠ 0)]\n" +
+            "    axiom ∀ e. e ∈ xs → (e ≠ 0)\n" +
             "    xs.forEach { _.needNotZero() }\n" +
             "}"
         assertTrue(ok(src), "函数类型上下文：forEach 的 f: (T)<\$1 ∈ xs> => Null，lambda 应能证 \$1≠0")

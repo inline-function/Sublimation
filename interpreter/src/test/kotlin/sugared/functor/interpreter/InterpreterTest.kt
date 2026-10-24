@@ -199,7 +199,7 @@ class InterpreterTest {
             fun square(n: Nat): Nat = n * n
             fun add(a: Nat, b: Nat): Nat = a + b
             var xs = range(1, 6)
-            capture(xs.map { n -> square(n) })
+            capture(xs.map { n => square(n) })
             capture(filter(xs, isEven))
             capture(xs.fold(0) { acc, x => add(acc, x) })
         """.trimIndent()) }

@@ -3,6 +3,6 @@
 fun LEM[p]: Null <p ∨ ¬p>
 
 @classic
-fun lemCase[p, q]<p -> q, ¬p -> q>: Null {
+fun lemCase[p, q]<p → q, ¬p → q>: Null {
   ∴ q
 }

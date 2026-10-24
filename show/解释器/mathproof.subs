@@ -20,7 +20,7 @@ fun gradeChar(n: Nat)<n ≤ 100>: Str =
     }
 
 @theorem
-fun identity[p]: Null <p -> p>
+fun identity[p]: Null <p → p>
 
 print("C(5,2)=" + toStr(choose(5, 2)))
 print("幂(2,10)=" + toStr(power(2, 10)))

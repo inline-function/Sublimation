@@ -114,7 +114,7 @@ class TypeInferTest {
     fun `builtinOp 数值算符返回数值 join`() {
         assertTrue(TypeInfer.builtinOp("+", listOf(namedT("Nat"), namedT("Rat")))?.render()?.startsWith("Rat") == true)
         assertEquals("Bool", TypeInfer.builtinOp("=", listOf(namedT("Nat"), namedT("Nat")))?.render())
-        assertEquals("Bool", TypeInfer.builtinOp("->", emptyList())?.render())
+        assertEquals("Bool", TypeInfer.builtinOp("→", emptyList())?.render())
         assertEquals(null, TypeInfer.builtinOp("+", listOf(namedT("Str"), namedT("Nat"))))
     }
 

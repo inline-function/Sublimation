@@ -42,7 +42,7 @@ class DiagCoverageTest {
         assertTrue(has("fun w[@q]<q>: Null {}\nfun main() { w() }", "E-PROP-UNBOUND"))
 
     @Test fun `E-PROP-AMBIGUOUS`() =
-        assertTrue(has("fun w[@q]<q>: Null {}\nfun main() { unchecked.axiom[alpha]\nunchecked.axiom[beta]\nw() }", "E-PROP-AMBIGUOUS"))
+        assertTrue(has("fun w[@q]<q>: Null {}\nfun main() { axiom alpha\naxiom beta\nw() }", "E-PROP-AMBIGUOUS"))
 
     // prove 对 PImp 目标逐层 d+1 递归；→ 左结合会一次下钻就转查原子目标，
     // 需右嵌套括号把深度堆过 maxDepth 才触发耗尽

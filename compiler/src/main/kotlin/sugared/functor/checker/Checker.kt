@@ -151,10 +151,6 @@ class Checker(
     internal var bodyHasReturn = false
     /** v1.1：lambda 返回类型栈——非空即"当前在 lambda 体内"（lambda 内 return 合法，返回该 lambda） */
     internal val lambdaRetTypes = ArrayList<Type>()
-    /** 线性作用域（第十二卷）：当前处于的线性域族栈——栈顶即最内层 %{ } 的家族状态；
-     *  空栈表示不在任何线性域内（普通作用域语义完全不变，不变量 I-3/I-7）。 */
-    internal val linearFamilies = ArrayDeque<LinearFamily>()
-    internal val linearFamily: LinearFamily? get() = linearFamilies.lastOrNull()
 
     /** P6（决策 82）：类型名在可见模块中可解析（跨模块类型引用——裸名 `List`/`Result` 在类型位置可用，
  *  不只是 `core.collection.List` 限定形态）。P5 只补了 when 模式的构造子/枚举，这里补类型位置本身。 */
@@ -513,61 +509,7 @@ class Checker(
     // ============ 语句 ============
 
     /** 返回该语句的"值类型"，供块体做 Nothing 不可达追踪（A5）。flow=语句流（return 合法区）。 */
-    /** 线性作用域检查（第十二卷 §11.1 检查流程）：
-     *  1. 预扫描收集候选 @mut 实体并执行逃逸判定（lambda 修改性捕获 / @ref → E-LINEAR-ESCAPE / E-LINEAR-ALIAS）
-     *  2. 压入线性域族（嵌套则复用外层计数器：版本序号在整个域族内连续递增）
-     *  3. 逐语句检查——声明/赋值的版本化事实注入由 checkStmt 内的 LV-DECL / LV-ASSIGN 钩完成
-     *  4. 域出口（§5.7 LV-EXIT / LV-SPILL）：版本化事实（名字含 `#`）不回溢父帧；不含版本名的普通事实照常回溢
-     *  5. 返回尾表达式类型（§6.1 LV-BLOCK-TYPE；无尾表达式为 Null）
-     *  版本化事实是流敏感的——出了域「第 k 次赋值」的语境消失，故不回溢（§9.1）。 */
-    private fun checkLinearBlock(e: LinearBlockExpr, f: Frame, pure: Boolean, flow: Boolean): Type {
-        val stmts = e.block.stmts
-        val nf = Frame(f)
-        // ---- 1. 预扫描（§11.2：必须先于逐语句检查——逃逸结果决定 Lin 集合，影响版本化范围） ----
-        val candidates = collectLinearCandidates(stmts)
-        val escaped = lambdaAssignCaptured(stmts, candidates)
-        for (n in escaped)
-            d.error("E-LINEAR-ESCAPE", e.pos, "线性作用域内不能让 lambda 捕获并修改 @mut 变量 `$n`（唯一所有权被破坏）。把 lambda 提到域外，或改写为顺序代码")
-        for ((n, p) in refDeclarations(stmts))
-            d.error("E-LINEAR-ALIAS", p, "线性作用域内不能声明 @ref 变量 `$n`（@ref 是别名语义，与唯一所有权冲突）")
-        // 域内带 @ref 的候选不进入 Lin
-        candidates.removeAll(refDeclarations(stmts).map { it.first })
-        candidates.removeAll(escaped)
-        // ---- 2. 进入线性域 ----
-        val parent = linearFamilies.lastOrNull()
-        val fam = if (parent != null) parent else LinearFamily()   // 嵌套域共享版本计数器（§5.7/§11.3）
-        fam.linVars.addAll(candidates)
-        linearFamilies.addLast(fam)
-        return try {
-            val tail = stmts.lastOrNull() as? ExprStmt
-            val tailFlow = flow && tail != null && diverges(tail.expr)
-            var dead = false
-            for (s in stmts) {
-                if (s === tail) continue
-                if (dead) d.warn("W-UNREACHABLE", s.pos, "Nothing/return 之后的语句不可达")
-                // LV-NO-RETURN（§6.2）：带值的提前返回禁止；域末尾的裸 return / return null 允许（LV-RETURN-OK）
-                if (s is ReturnStmt && s.expr != null && s !== stmts.lastOrNull())
-                    d.error("E-LINEAR-RETURN", s.pos, "线性作用域内不能带值提前返回（版本化收尾在域出口）。把返回值改成尾表达式，或用普通作用域")
-                checkStmt(s, nf, if (uncheckedDepth > 0) false else pure, flow)
-                if (checkStmtTypeIsNothing(s)) dead = true
-            }
-            val tailT: Type = tail?.let {
-                checkExpr(it.expr, nf, if (uncheckedDepth > 0) false else pure, flow = tailFlow)
-            } ?: namedT("Null", emptyList())
-            if (dead && tail == null) namedT("Null", emptyList())
-            else if (tail != null && diverges(tail.expr)) namedT("Nothing", emptyList())
-            else tailT
-        } finally {
-            linearFamilies.removeLast()
-            // ---- 4. 域出口 LV-SPILL：只回溢不含版本名的事实 ----
-            for (p in nf.facts)
-                if (!propHasVersionName(p)) f.inject(p)
-        }
-    }
 
-    /** 语句是否返回 Nothing（return 分支标记，与 BlockExpr 分支的 dead 判定对齐） */
-    private fun checkStmtTypeIsNothing(s: Stmt): Boolean =
-        (s is ReturnStmt) || (s is ExprStmt && diverges(s.expr)) || (s is UncheckedStmt && checkStmtTypeIsNothing(s.inner))
     internal fun checkStmt(s: Stmt, f: Frame, pure: Boolean, flow: Boolean = false): Type {
         return when (s) {
             is VarStmt -> {
@@ -659,20 +601,6 @@ class Checker(
                 if (syms.expand(t).name == "Nat") {
                     f.inject(PAtom(">=", listOf(NameRef(s.name), IntLit("0", s.pos))))
                     d.supplement("D-NAT-PROP", s.pos, "注入自然命题：`${s.name} ≥ 0`（Nat 变量自动成立）") }
-                // 线性作用域（第十二卷 §5.3 LV-DECL）：@mut 实体在域内也注入等式——但是版本化的。
-                // 版本名 name#k 不与用户标识符冲突（# 非合法标识符字符）；k 由域族共享计数器分配。
-                val lf0 = linearFamily
-                if (mut && lf0 != null && s.name in lf0.linVars && "ref" !in s.annotations) {
-                    val vr = lf0.versionize(s.value)   // 先改写 RHS：此时 omega 尚未含本名（新声明），RHS 中的同名引用指向外层
-                    val k = lf0.fresh()
-                    lf0.omega[s.name] = k
-                    val vn = lf0.vname(s.name, k)
-                    f.inject(PAtom(":", listOf(NameRef(vn), typeToExpr(t))))
-                    if (isPureValue(s.value)) {
-                        f.inject(PAtom("=", listOf(NameRef(vn), vr)))
-                        d.supplement("D-LINEAR-VERSION", s.pos, "线性作用域：@mut 变量 `${s.name}` 第 $k 版，等式事实进入 Γ")
-                    }
-                }
                 if (s.type == null) d.supplement("D-TYPE-INFERRED", s.pos, "var ${s.name} 推导为 ${t.render()}")
                 t   // 声明即表达式：var 的值是初值（A3）
             }
@@ -698,32 +626,12 @@ class Checker(
                     if (binderNeedsCopy(lt, vt, f.isRef(lhs), f.isRef((s.value as NameRef).name), f.isMut(lhs), f.isMut((s.value as NameRef).name))) {
                         deepCopyHits[s] = true
                         d.supplement("D-DEEP-COPY", s.pos, "赋值涉及 @mut/@ref 类型，发生深拷贝：`$lhs` 是独立副本") }
-                    // 线性作用域（第十二卷 §5.2 LV-ASSIGN）：对线性实体赋值 → 前进版本、注入版本化等式。
-                    // 旧版本事实保留在 Γ（§5.2 要点）：n#1 = 1 与 n#2 = n#1 + 10 联合可推出 n#2 = 11。
-                    val lfA = linearFamily
-                    if (lfA != null && lhs in lfA.linVars) {
-                        val vr = lfA.versionize(s.value)   // 用赋值前的 omega 改写 RHS：n = n + 10 的右 n 解析为旧版本
-                        val k = lfA.fresh()
-                        lfA.omega[lhs] = k
-                        val vn = lfA.vname(lhs, k)
-                        val lt0 = f.lookupVar(lhs)
-                        if (lt0 != null) f.inject(PAtom(":", listOf(NameRef(vn), typeToExpr(lt0))))
-                        if (isPureValue(s.value) && lhs !in lfA.invalidated) {
-                            f.inject(PAtom("=", listOf(NameRef(vn), vr)))
-                            d.supplement("D-LINEAR-VERSION", s.pos, "线性作用域：赋值使 `$lhs` 前进到第 $k 版，等式事实进入 Γ")
-                        }
-                    }
                 }
                 vt
             }
             // ---------- 根文档《手动证明》：因为-所以语句 ∵ form, p₁, p₂ ∴ conclusion ----------
             is BTSStmt -> {
-                // 线性作用域（第十二卷 §7.1 LV-OBLIGATION）：义务提出时刻先经 versionize 改写——
-                // 用户写 ∴ n = 1，证明器看到 ∴ n#k = 1（k 为当前版本）。纯语法替换（§4.4），不改变逻辑结构。
-                val lfB = linearFamily
-                val premEs = if (lfB != null) s.premises.map { lfB.versionize(it) } else s.premises
-                val concE = if (lfB != null) lfB.versionize(s.conclusion) else s.conclusion
-                val premises = premEs.map { PropLogic.fromExpr(it) }
+                val premises = s.premises.map { PropLogic.fromExpr(it) }
                 // 前提自动证明验证（文档：编译器帮你自动证明前提是否成立）
                 var premisesOk = true
                 for (pm in premises) {
@@ -733,7 +641,7 @@ class Checker(
                             "因为-所以的前提 " + PropLogic.render(pm) + " 没证出。当前已知事实 Γ：" + f.allFacts().joinToString("； ") { PropLogic.render(it) })
                     }
                 }
-                val conclusion = PropLogic.fromExpr(concE)
+                val conclusion = PropLogic.fromExpr(s.conclusion)
                 // 结论由定理空间（含 form 匹配）+ 前提推出
                 if (premisesOk && (proveOrDeep(f.allFacts() + premises, conclusion) || searchTheorems(conclusion, 0, f.localTheorems))) {
                     f.inject(conclusion)
@@ -920,13 +828,21 @@ class Checker(
     /** root doc《副作用与可变性控制》第 9 行配套：表达式是否引用 @mut 变量。
      *  不可变变量以 @mut 变量为初值时，绑定等式不可靠（初值会变）——不注入相等命题。 */
     /** M-2（root doc 可变视图）：@mut T 与 T 兼容——@mut 视图可隐式转不可变视图（转换点=拷贝点，codegen 落地）。 */
-    /** root doc《副作用与可变性控制》85-144：可变视图绑定触发深拷贝。
-     *  目标或源任一为可变视图（@mut 声明）或 @ref 引用变量 → 拷贝；仅当目标与源均 @ref 时为别名（共享同一对象）。
-     *  与脚本模式 Evaluator.bindCopy 同一判据（审查报告 §2.4 曾两处偏差：编译侧漏 @mut 注解维度、
-     *  脚本侧只看 @ref）——两侧以注解维度统一，类型参数 tgt/src 保留供未来 MutType 类型化使用。 */
+    /** root doc《副作用与可变性控制》§可变拷贝（修正案四条款）：
+     *  ① 目标含 @mut 视图且源是纯 T（不可变、无引用）→ 拷贝（向纯不可变对象引入可变视图，须快照）；
+     *  ② 目标带 @mut 且不带 @ref → 拷贝（每个 @mut 绑定持独立对象）；
+     *  ③ 源含 @mut 视图且目标是纯 T → 拷贝（割除可变性，须快照）；
+     *  ④ 源带 @ref 且目标不带 @ref → 拷贝（冻结引用快照）。
+     *  其余（不可变值互传、把可变值绑定到 @ref 引用、引用互相别名）共享同一个对象，不拷贝。
+     *  与脚本模式 Evaluator.bindCopy 同一判据。 */
     private fun binderNeedsCopy(tgt: Type, src: Type, tgtRef: Boolean, srcRef: Boolean, tgtMut: Boolean = false, srcMut: Boolean = false): Boolean {
-        if (!(tgt is MutType || src is MutType || tgtMut || srcMut || tgtRef || srcRef)) return false
-        return !(tgtRef && srcRef)
+        val tgtHasMut = tgt is MutType || tgtMut
+        val srcHasMut = src is MutType || srcMut
+        val tgtPure = !tgtRef && !tgtHasMut
+        val srcPure = !srcRef && !srcHasMut
+        return (tgtHasMut && (!tgtRef || srcPure))
+            || (srcHasMut && tgtPure)
+            || (srcRef && !tgtRef)
     }
 
     private fun compatibleView(got: Type, want: Type): Boolean {
@@ -1220,7 +1136,6 @@ class Checker(
             if (ft != null) FunType(ft.params, bt, purity = purity, theory = ft.theory, context = ft.context)
             else FunType(e.params.map { syntheticT("参数") }, bt, purity = purity)
         }
-        is LinearBlockExpr -> checkLinearBlock(e, f, pure, flow)
         is BlockExpr -> {
             val nf = Frame(f)
             // 决策 75（flow 传播）：本块的语句继承进入时的 flow；块尾表达式是值位（flow=false）。

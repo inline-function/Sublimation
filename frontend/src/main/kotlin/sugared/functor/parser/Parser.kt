@@ -14,7 +14,7 @@ class ParseFailure(val fileName: String, val tok: Token, message: String) :
  *  - 紧贴前 token 的 `<` = 实例化（命题项 p<v> / 显式供给），postfix 消化；
  *  - 带空格的 `<` = 比较中缀函数。
  * 声明结构位（形参表后、返回类型后）的 `<...>` 按位置识别为上文/下文。
- * 等式用 `==`；单 `=` 只作赋值。`unchecked.axiom[q]` 为命题逃逸。
+ * 等式用 `==`；单 `=` 只作赋值。`axiom q` 为命题逃逸（公理语句）。
  */
 class Parser(
     private val toks: List<Token>,
@@ -49,14 +49,14 @@ private var ifIsCond: Boolean = false
         // v1.1 Kotlin 化：EQ/NEQ 允许中缀（a == b / a != b，值相等），前缀 ==(a,b) 仍保留。
         val binops = setOf(
             Kind.PLUS, Kind.MINUS, Kind.STAR, Kind.SLASH, Kind.PERCENT, Kind.POW, Kind.ASSIGN, Kind.COLON,
-            Kind.LE, Kind.GE, Kind.AMP, Kind.PIPE, Kind.ARROW, Kind.IFF,
+            Kind.LE, Kind.GE, Kind.AMP, Kind.PIPE, Kind.IFF,
             Kind.EQ, Kind.NEQ,
             Kind.LAND, Kind.LOR, Kind.IMPLIES, Kind.EQUIV,
         )
         // P0 补全（决策 88）：可作函数名前缀调用的运算符 token（`+(1,2)` 形态）。
         // 不含 MINUS（一元负优先）、symbolCallStart（`==(...)` 等已走 SymbolCallExpr 内建符号路径）。
         private val opPrefixKinds = setOf(
-            Kind.PLUS, Kind.STAR, Kind.SLASH, Kind.PERCENT, Kind.AMP, Kind.PIPE, Kind.ARROW, Kind.IFF,
+            Kind.PLUS, Kind.STAR, Kind.SLASH, Kind.PERCENT, Kind.AMP, Kind.PIPE, Kind.IFF,
         )
         private val symbolCallStart = setOf(Kind.LT, Kind.GT, Kind.EQ, Kind.NEQ, Kind.LE, Kind.GE)
         private val asciiQuant = mapOf("forall" to "∀", "exists" to "∃", "exists1" to "∃!")
@@ -65,7 +65,7 @@ private var ifIsCond: Boolean = false
             Kind.IDENT, Kind.SYMBOL, Kind.ASSIGN, Kind.IN,
             Kind.PLUS, Kind.MINUS, Kind.STAR, Kind.SLASH, Kind.PERCENT,
             Kind.EQ, Kind.NEQ, Kind.LE, Kind.GE, Kind.AMP, Kind.PIPE,
-            Kind.ARROW, Kind.IFF, Kind.LT, Kind.GT,
+            Kind.IFF, Kind.LT, Kind.GT,
         )
     }
 
@@ -85,7 +85,7 @@ private var ifIsCond: Boolean = false
             Kind.IDENT, Kind.SYMBOL,
             Kind.PLUS, Kind.MINUS, Kind.STAR, Kind.SLASH, Kind.PERCENT,
             Kind.EQ, Kind.NEQ, Kind.LE, Kind.GE, Kind.AMP, Kind.PIPE,
-            Kind.ARROW, Kind.IFF, Kind.LT, Kind.GT,
+            Kind.IFF, Kind.LT, Kind.GT,
             -> next().text
             else -> throw ParseFailure(fileName, t, "标识符")
         }
@@ -204,7 +204,8 @@ private var ifIsCond: Boolean = false
                 else -> if (scriptMode) { pos = save; StmtEntry(parseStmt()) } else { pos = save; throw noTopLevel() }
             }
         }
-        else -> if (scriptMode) StmtEntry(parseStmt()) else throw noTopLevel()
+        // 修正案：公理语句可写在顶层（是声明性命题注入，非执行代码）
+        else -> if (scriptMode || (cur().kind == Kind.IDENT && cur().text == "axiom")) StmtEntry(parseStmt()) else throw noTopLevel()
     }
 
     private fun noTopLevel(): ParseFailure =
@@ -627,24 +628,7 @@ private var ifIsCond: Boolean = false
         return BlockExpr(stmts)
     }
 
-    /** 线性作用域（第十二卷 §3.1 产生式 LinearBlock → '%' BlockExpr）。
-     *  词法已把 `%{` 归并为 LIN_LBRACE（§3.2 规则 L-LINBLOCK：紧贴无空白）；
-     *  域体与普通块同文法，`%` 标记是纯编译期分析标记（§10.1 LV-ERASE-BLOCK：擦除后产物与普通块逐字节相同）。 */
-    private fun parseLinearBlock(): LinearBlockExpr {
-        val t = at(Kind.LIN_LBRACE)
-        val stmts = ArrayList<Stmt>()
-        while (!peek(Kind.RBRACE)) {
-            skipSemis()
-            if (peek(Kind.RBRACE)) break
-            stmts += parseStmt()
-        }
-        at(Kind.RBRACE)
-        return LinearBlockExpr(BlockExpr(stmts), "${t.line}:${t.col}")
-    }
-
     private fun parseStmt(): Stmt {
-        // 线性作用域（第十二卷 §3.1）：语句位的 `%{ … }` 是 ExprStmt(LinearBlock)
-        if (peek(Kind.LIN_LBRACE)) return ExprStmt(parseLinearBlock())
         // v3.0 特性 7：`∃ x = t . P`（引入）与 `∃ x . P { }`（消去）——EXISTS 后跟名字再消歧
         if (peek(Kind.EXISTS)) return parseExistsStmt()
         // v3.0 特性 7：块内局部函数定义（∀ 引入）
@@ -659,6 +643,8 @@ private var ifIsCond: Boolean = false
             val t = next(); val q = parseExpr(angle = false)
             return BTSStmt(TopExpr, emptyList(), q, "${t.line}:${t.col}")
         }
+        // 根文档《手动证明》修正案：公理语句 `axiom p₁, p₂`（顶层与函数内通用；旧的 unchecked.axiom[p] 已废除）
+        if (peek(Kind.IDENT) && cur().text == "axiom" && canStartAxiomProp()) return parseAxiomStmt()
         // 根文档《手动证明》：因为-所以语句 ∵ form, p₁, p₂ ∴ conclusion
         if (peek(Kind.BECAUSE)) return parseBTS()
         if (peek(Kind.UNCHECKED)) return parseUnchecked()
@@ -711,7 +697,26 @@ private var ifIsCond: Boolean = false
         return BTSStmt(form, premises, conclusion, "${t.line}:${t.col}")
     }
 
-    /** 根文档《手动证明》：`when[p ∨ q] { p -> {…} q -> {…} }` —— 分类讨论语句 */
+    /** 根文档《手动证明》修正案：公理语句 `axiom p₁, p₂`——直接把命题注入 Γ，不经证明器检验。 */
+    private fun canStartAxiomProp(): Boolean {
+        val nx = toks.getOrNull(pos + 1) ?: return false
+        return nx.kind in setOf(Kind.IDENT, Kind.SYMBOL, Kind.INT, Kind.FLOAT, Kind.STR, Kind.LPAREN, Kind.LNOT, Kind.BANG, Kind.TOP, Kind.BOT, Kind.MINUS, Kind.FORALL, Kind.EXISTS, Kind.EXISTS1)
+    }
+
+    private fun parseAxiomStmt(): Stmt {
+        val t = next()   // axiom（词法层是 IDENT，语句位置按文本识别）
+        val props = ArrayList<Expr>()
+        props += parseExpr(angle = false)
+        while (peek(Kind.COMMA)) {
+            pos++
+            val nx = cur()
+            if (nx.kind == Kind.RBRACE || nx.kind == Kind.SEMI || nx.kind == Kind.EOF) break   // 尾随逗号
+            props += parseExpr(angle = false)
+        }
+        return AxiomStmt(props, "${t.line}:${t.col}")
+    }
+
+    /** 根文档《手动证明》：`when[p ∨ q] { p => {…} q => {…} }` —— 分类讨论语句 */
     private fun parseWhenProp(): Stmt {
         val t = next()   // when
         at(Kind.LBRACKET)
@@ -789,29 +794,10 @@ private var ifIsCond: Boolean = false
     }
 
     private fun parseUnchecked(): Stmt {
-        val save = pos
-        pos++
-        if (peek(Kind.DOT)) {
-            pos++
-            val kw = at(Kind.IDENT)
-            if (kw.text == "axiom") {
-                at(Kind.LBRACKET)
-                val props = ArrayList<Expr>()
-                while (true) {
-                    props += parseExpr(angle = false)
-                    if (peek(Kind.COMMA)) {
-                    pos++
-                    if (peek(Kind.RPAREN) || peek(Kind.RBRACKET) || peek(Kind.RBRACE)) break   // v3.0：尾随逗号
-                    continue
-                }
-                    break
-                }
-                at(Kind.RBRACKET)
-                return AxiomStmt(props)
-            }
-            throw ParseFailure(fileName, kw, "axiom")
-        }
-        pos = save
+        // 修正案：unchecked.axiom[p] 已废除——公理语句改写为独立的 axiom 语句
+        if (peek(Kind.DOT) && toks.getOrNull(pos + 1)?.kind == Kind.IDENT && toks.getOrNull(pos + 1)?.text == "axiom")
+            throw ParseFailure(fileName, cur(), "axiom（公理请直接写 `axiom <命题>` 语句）")
+        if (peek(Kind.DOT)) throw ParseFailure(fileName, cur(), "语句")
         pos++ // unchecked
         return UncheckedStmt(parseStmt())
     }
@@ -1352,7 +1338,6 @@ private var ifIsCond: Boolean = false
                     TupleExpr(items, "${t.line}:${t.col}")
                 } else { at(Kind.RPAREN); first }
             }
-            t.kind == Kind.LIN_LBRACE -> parseLinearBlock()
             t.kind == Kind.LBRACE && (braceIsLambda(pos) || braceHasImplicitBody(pos)) -> parseBraceLambda()
             t.kind == Kind.VAR -> parseVarExpr(emptyList())
             t.kind == Kind.AT -> { val a = parseAnnotations(); if (peek(Kind.VAR)) parseVarExpr(a) else throw ParseFailure(fileName, cur(), "var") }
@@ -1702,14 +1687,14 @@ private var ifIsCond: Boolean = false
         val ps = ArrayList<String>()
         var hasArrow = false
         if (braceIsLambda(start)) {
-            // 显式参数带箭头（`{ a, b -> … }` / `{ -> 7 }`）：读参数表直到箭头
-            while (!peek(Kind.DARROW) && !peek(Kind.ARROW)) {
+            // 显式参数带箭头（`{ a, b => … }` / `{ => 7 }`）：读参数表直到箭头（修正案：箭头统一为 =>，`->` 非法）
+            while (!peek(Kind.DARROW)) {
                 // P4（v2.1）：`{(a, b) => …}` 单个元组参数解构——编码分量名为 (a,b) 特殊参数名
                 ps += if (peek(Kind.LPAREN)) parseLambdaDestructName() else nameToken()
                 if (peek(Kind.COMMA)) pos++
             }
             hasArrow = true
-            at(if (peek(Kind.DARROW)) Kind.DARROW else Kind.ARROW)
+            at(Kind.DARROW)
         }
         // 否则（braceHasImplicitBody 触达）：隐式单参，体里的 `_` 引用单参（语法糖）
         val body = parseLambdaBody()
@@ -1744,7 +1729,7 @@ private var ifIsCond: Boolean = false
                 k == Kind.LBRACE -> depth++
                 k == Kind.RBRACE -> { depth--; if (depth == 0) return false }
                 // 遇箭头：depth 1 且参数表仅由名字/逗号组成（可为空 → 零参 lambda `{ -> 7 }`）
-                k == Kind.DARROW || k == Kind.ARROW -> return if (depth == 1) !sawBad else false
+                k == Kind.DARROW -> return if (depth == 1) !sawBad else false
                 k == Kind.EOF -> return false
                 depth == 1 && k == Kind.LPAREN -> pd++
                 depth == 1 && k == Kind.RPAREN -> { if (pd > 0) pd-- else sawBad = true }
@@ -1769,7 +1754,7 @@ private var ifIsCond: Boolean = false
             when {
                 k == Kind.LBRACE -> depth++
                 k == Kind.RBRACE -> { depth--; if (depth == 0) return true }
-                (depth == 1 && (k == Kind.ARROW || k == Kind.DARROW || k == Kind.COLON)) -> return false  // 显式参数带箭头→交给 braceIsLambda；`:` 是类型测/类型标注→非隐式体
+                (depth == 1 && (k == Kind.DARROW || k == Kind.COLON)) -> return false  // 显式参数带箭头→交给 braceIsLambda；`:` 是类型测/类型标注→非隐式体
                 k == Kind.EOF -> return false
                 else -> {}
             }

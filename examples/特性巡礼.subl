@@ -90,7 +90,7 @@ impl Named for User {
 
 // ---------- 上下文弥散：下文 <answered> 兑现后弥散进作用域，<answered> 上文自动消费 ----------
 fun fact(): Null <answered> {
-    unchecked.axiom[answered]
+    axiom answered
 }
 fun usesFact()<answered>: Null {}
 
@@ -111,8 +111,8 @@ fun pureCaller()<pure<side>>: Null {
 fun main() {
     var u1 = User("alice", 30)          // 位置式构造
     var u2 = User(name = "bob")         // 命名字段构造，age 取默认值 0
-    unchecked.axiom[forall n. tagged<n>]
-    unchecked.axiom[pure<side>]          // @impure 函数不自动注册 pure，前件需显式供给
+    axiom forall n. tagged<n>
+    axiom pure<side>          // @impure 函数不自动注册 pure，前件需显式供给
 
     unchecked print(u1.name)                    // alice
     unchecked print(u2.age)                     // 0

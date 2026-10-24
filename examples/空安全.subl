@@ -7,14 +7,14 @@ struct Point(x: Nat, y: Nat)
 
 // 泛型空替代（elvis）：Optional[T] 显式可空
 fun elvis[T](o: Optional[T], d: T): T = when(o) {
-    is Some(v) -> v
-    None -> d
+    is Some(v) => v
+    None => d
 }
 
 // when 解构提取 Optional 内数值
 fun pointX(o: Optional[Point]): Nat = when (o) {
-    is Some(p) -> p.x
-    None -> 0
+    is Some(p) => p.x
+    None => 0
 }
 
 @impure

@@ -140,7 +140,7 @@ object TypeInfer {
             "/" -> if (ts.size == argTypes.size && ts.all { it.isNumeric() }) namedT("Rat", emptyList()) else null
             "=", "==", "!=", "<", ">", "<=", ">=" -> if (ts.size == 2) namedT("Bool", emptyList()) else null
             "!", "¬" -> namedT("Bool", emptyList())
-            "&", "|", "->", "<->", "∧", "∨", "→", "↔" -> namedT("Bool", emptyList())
+            "&", "|", "<->", "∧", "∨", "→", "↔" -> namedT("Bool", emptyList())
             else -> null
         }
     }

@@ -20,7 +20,7 @@ class ParserTest {
     @Test
     fun `上下文弥散声明`() {
         val f = parseSource(
-            "fun test1(): None <p> { unchecked.axiom[p] }\nfun test2()<p>: None {}",
+            "fun test1(): None <p> { axiom p }\nfun test2()<p>: None {}",
             "t",
         )
         val d1 = (f.entries[0] as DeclEntry).decl as FunDecl
@@ -45,7 +45,7 @@ class ParserTest {
         // 用户拍板（v1.1）：`:` 前是上文（前置）、后是下文（后置）。
         // `: <p>` 无返回类型的后置上下文；`<p>` 前置上下文可省略 () 与返回类型。
         val f = parseSource(
-            "fun giveP: <p> { unchecked.axiom[p] }\nfun takeP<p> {}",
+            "fun giveP: <p> { axiom p }\nfun takeP<p> {}",
             "t",
         )
         val d1 = (f.entries[0] as DeclEntry).decl as FunDecl
@@ -77,7 +77,7 @@ class ParserTest {
 
     @Test
     fun `全称量词与紧贴实例化`() {
-        val ax = stmtsOf("unchecked.axiom[forall n. valid<n>]")[0] as AxiomStmt
+        val ax = stmtsOf("axiom forall n. valid<n>")[0] as AxiomStmt
         val q = ax.props[0] as QuantExpr
         assertEquals("∀", q.q)
         val body = q.body as InstExpr
@@ -120,7 +120,7 @@ class ParserTest {
 
     @Test
     fun `符号中缀两参解糖`() {
-        val ax = stmtsOf("unchecked.axiom[q ○ p]")[0] as AxiomStmt
+        val ax = stmtsOf("axiom q ○ p")[0] as AxiomStmt
         assertEquals("○", (ax.props[0] as BinExpr).op)
     }
 
@@ -139,7 +139,7 @@ class ParserTest {
 
     @Test
     fun `lambda 大括号两形态`() {
-        val st = stmtsOf("var f1 = { x -> x }\nvar f2 = { y => y }")
+        val st = stmtsOf("var f1 = { x => x }\nvar f2 = { y => y }")
         assertTrue((st[0] as VarStmt).value is LambdaExpr)
         assertTrue((st[1] as VarStmt).value is LambdaExpr)
     }

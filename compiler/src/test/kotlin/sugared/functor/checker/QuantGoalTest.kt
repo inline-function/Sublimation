@@ -14,7 +14,7 @@ class QuantGoalTest {
     // #1：when[p ∨ q] { p => … q => … } —— 分类讨论语句解析与命题检查（每支体 ∴ 该支前提）
     @Test
     fun a_whenProp分类讨论() {
-        val src = "fun f(): Null {\n  unchecked.axiom[p ∨ q]\n  when[p ∨ q] { p => { ∴ p } q => { ∴ q } }\n}"
+        val src = "fun f(): Null {\n  axiom p ∨ q\n  when[p ∨ q] { p => { ∴ p } q => { ∴ q } }\n}"
         assertEquals(emptyList(), errs(src), "when[p ∨ q] 分类讨论应可解析且两支皆可证")
     }
 
@@ -22,7 +22,7 @@ class QuantGoalTest {
     fun b_whenProp析取反例() {
         // 只供给 q：支体 ∴ p 无 p 支撑应报 E-CANNOT-PROVE ——
         // 确认语句真的进了命题检查，不是静默吞掉（D-BTS 留痕 + 诊断码）
-        val bag = checkFile(parseSource("fun f(): Null {\n  unchecked.axiom[q]\n  when[p ∨ q] { p => { ∴ p } q => { ∴ q } }\n}", "t"))
+        val bag = checkFile(parseSource("fun f(): Null {\n  axiom q\n  when[p ∨ q] { p => { ∴ p } q => { ∴ q } }\n}", "t"))
         val codes = bag.diags.map { it.code }
         val msgs = bag.diags.joinToString(" | ") { it.code + " " + it.message.take(70) }
         assertTrue(codes.contains("E-CANNOT-PROVE") || codes.contains("W-PROP-UNBOUND") || codes.contains("E-PROP-UNBOUND"),

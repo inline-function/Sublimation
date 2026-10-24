@@ -248,7 +248,7 @@ data class VarStmt(
 
 data class AssignStmt(val target: Expr, val value: Expr, override val pos: String = "") : Stmt
 
-/** `unchecked.axiom[q]` —— 命题逃逸（直接公理注入 Γ） */
+/** `axiom q` —— 命题逃逸（公理语句：直接公理注入 Γ） */
 data class AxiomStmt(val props: List<Expr>, override val pos: String = "") : Stmt
 
 /**
@@ -461,13 +461,6 @@ data class AnonFunExpr(
 
 data class BlockExpr(val stmts: List<Stmt>, override val pos: String = "") : Expr {
     val tailExpr: Expr? get() = (stmts.lastOrNull() as? ExprStmt)?.expr
-}
-
-/** 线性作用域 `%{ … }`（boring doc《线性作用域 · 形式化版》第十二卷 §3.1 产生式 LinearBlock → '%' BlockExpr）。
- *  语义：域内 @mut 实体的等式事实按版本化注入 Γ（LV-DECL/LV-ASSIGN），使可变变量可证明；
- *  `%` 是纯编译期分析标记，代码生成时擦除（§10.1 LV-ERASE-BLOCK：产物与普通块逐字节相同）。 */
-data class LinearBlockExpr(val block: BlockExpr, override val pos: String = "") : Expr {
-    val tailExpr: Expr? get() = block.tailExpr
 }
 
 data class IfExpr(

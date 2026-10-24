@@ -24,8 +24,8 @@ impl Geom for Shape {
 }
 
 var shapes = listOf(Circle(1.0), Rect(2.0, 3.0), Triangle(4.0, 5.0))
-shapes.forEach { s -> print(s.describe() + " 面积=" + toStr(s.area())) }
-var total = shapes.map { s -> s.area() }.fold(0.0, { x, acc -> acc + x })
+shapes.forEach { s => print(s.describe() + " 面积=" + toStr(s.area())) }
+var total = shapes.map { s => s.area() }.fold(0.0, { x, acc => acc + x })
 print("总面积=" + toStr(total))
 print("形状数=" + toStr(shapes.size()))
-print("最大面积=" + toStr(shapes.map { s -> s.area() }.sortBy { a, b -> a > b }.head().getOrElse(0.0)))
+print("最大面积=" + toStr(shapes.map { s => s.area() }.sortBy { a, b => a > b }.head().getOrElse(0.0)))
