@@ -1,0 +1,30 @@
+// ============================================================
+// 特性：命题基础（原子命题 / 蕴含与等价 / 量词 ∀ / 上文下文）
+// 预期输出（每行一个）：atom / implication / mp / diffuse / all / equiv / done
+// 注：axiom 语句在函数体内注入 Γ；顶层声明不自动流入函数证明上下文
+// ============================================================
+
+// 上文 <p>：由调用点供给（下文弥散，不用全局 axiom 直供）
+fun produceP(): Null <p> {
+    axiom p
+}
+fun consumeP()<p>: Null {}
+
+@impure fun main() {
+    axiom p
+    axiom p → q            // 分离前提：MP 闭包自动产出 q
+    axiom a ↔ b             // 等价 <->（↔ 同义）
+    axiom forall n. tagged<n>
+
+    produceP()
+    consumeP()
+    ∵ p ∴ q                 // q 已在 Γ（MP 闭包产出），证明义务直通
+
+    print("atom")
+    print("implication")
+    print("mp")
+    print("diffuse")
+    print("all")
+    print("equiv")
+    print("done")
+}

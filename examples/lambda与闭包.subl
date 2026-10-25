@@ -1,0 +1,25 @@
+// ============================================================
+// 特性：lambda 与闭包（五形态 / 闭包捕获：直播 vs 深拷快照 / 两端差异）
+// 预期输出见行尾注释
+// ============================================================
+
+@mut struct Cell(@mut v: Nat)
+
+fun apply(f: (Nat) => Nat, x: Nat): Nat = f(x)
+fun applyZero(f: () => Nat): Nat = f()
+
+@impure fun main() {
+    print(apply({ x => x + 1 }, 1))         // 2（单参 lambda）
+    print(applyZero({ => 7 }))              // 7（零参 lambda）
+    print(apply({ _ * 3 }, 4))             // 12（隐式单参：_ 引用形参）
+    print(apply({ x => x + 1 }, 20))     // 21（lambda 在首位不能尾随）
+
+    // 闭包捕获：纯绑定直播共享；@mut 绑定命中拷贝判据 → 创建时快照
+    @mut var n = 5
+    var live = { => n }                    // 纯目标：直播捕获
+    @mut var snap = { => n }               // @mut 目标：函数值被深拷 → 捕获快照
+    n = 9
+    print(live())                          // 9
+    print(snap())                          // 9（JS 端 __dc 函数透传 ⇒ 同直播；解释器端此行为 5：深拷快照）
+    print("done")
+}

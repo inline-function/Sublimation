@@ -1,0 +1,53 @@
+// 函数与调用形式.subl
+// 覆盖：fun 定义 / 默认参 / 括号调用（含命名参数）/ 中缀糖 a f b（同行、函数名前后均有空格）/ 符号前缀调用 ==(!=,<=,>=,>) / 运算符前缀调用 +(1,2) / 尾随 lambda
+// 预期 stdout（compile + node，逐行）：5 / Hello sub / Hi sub / Hi sub / 6 / 15 / 5 / true / true / true / true / true / true / 9 / 42 / 7 / 45
+
+// ---- 名字位：ASCII 标识符、符号名、运算符符号（仿 Scala：`fun +(a, b)`）----
+fun plus(a: Nat, b: Nat): Nat = a + b
+fun +(a: Nat, b: Nat): Nat = a + b      // 运算符前缀调用按普通函数名解析，需用户定义 fun +
+fun *(a: Nat, b: Nat): Nat = a * b
+
+// ---- 默认参：形参带 = 初值；调用方可省略或按名覆盖 ----
+fun greet(name: Str, prefix: Str = "Hello"): Str = concat(prefix, concat(" ", name))
+fun inc(n: Nat, step: Nat = 1): Nat = n + step
+
+// ---- 高阶函数：lambda 作末位形参，可尾随 ----
+fun twice(n: Nat, f: (Nat) => Nat): Nat = f(f(n))
+
+@impure
+fun main() {
+    // ---- 括号调用 ----
+    // 陷阱（跨端差异，注释演示）：默认参由 JS 生成端完整支持（实参缺失时填初值）；解释器端调用用户函数时不求值默认参（缺失实参进来是 null，concat 会抛类型转换错），
+    //   所以本例的可运行演示走 compile + node。
+    unchecked print(plus(2, 3))                          // 5
+    unchecked print(greet("sub"))                        // Hello sub（默认参）
+    unchecked print(greet("sub", "Hi"))                  // Hi sub（位置实参覆盖默认参）
+    unchecked print(greet(name = "sub", prefix = "Hi"))  // Hi sub（命名参数）
+    unchecked print(inc(5))                              // 6（Nat 默认参）
+    unchecked print(inc(5, 10))                          // 15
+
+    // ---- 中缀糖 D-5：`a f b` ⇔ f(a, b)；要求 f 前后均有空格、且与 b 同一行 ----
+    unchecked print(2 plus 3)                            // 5
+    // （跨行的 2 plus↵3 不是中缀糖；想分行请退回括号调用 plus(2, 3)）
+
+    // ---- 符号前缀调用：比较符号当函数（== != <= >= >，只取位置实参）----
+    unchecked print(==(2, 2))                            // true
+    unchecked print(!=(2, 3))                            // true
+    unchecked print(<=(2, 2))                            // true
+    unchecked print(>=(3, 2))                            // true
+    unchecked print(>(3, 2))                             // true
+    unchecked print(1 < 2)                               // true（小于：中缀形态）
+    // 陷阱（注释演示，不引入真实错误）：`<(1, 2)` 单独写并不能解析——
+    //   一元位的 `<` 会先被命题尖括号规则截获（parseUnary → parseAngleList，Parser.kt:1161），
+    //   要求以 `>` 收尾而报「期望GT」；parsePrimary 里的符号前缀分支（Parser.kt:1353）到不了。
+    //   小于比较请像上面那样写中缀 1 < 2。
+
+    // ---- 运算符前缀调用：+(a, b) / *(a, b) —— 当作普通函数名调用（内置四则不在此列，须自定义）----
+    unchecked print(+(4, 5))                             // 9
+    unchecked print(*(6, 7))                             // 42
+
+    // ---- 尾随 lambda：最后一个实参是 lambda 时可写在括号外 ----
+    unchecked print(twice(5) { x => x + 1 })             // 7（显式参数）
+    unchecked print(twice(5) { _ * 3 })                  // 45（隐式单参：体里 _ 引用形参）
+    // 等价写法：把 lambda 放进括号——twice(5, { x => x + 1 })
+}

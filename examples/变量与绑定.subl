@@ -1,0 +1,68 @@
+// 变量与绑定.subl
+// 覆盖：var 声明（默认不可变）/ var 声明即表达式（var m = var k = 0）/ 元组解构 var (a, b) = … / @mut 才可再赋值（E-IMMUT-ASSIGN 以注释演示，不引入真实错误）/ 字符串插值 / 独立 axiom 与上文供给（修正案后文法：程序位 =>、命题位 →、禁 -> 与 unchecked.axiom[p]）
+// 预期 stdout（compile + node，逐行）：5 / 7 / 0 / 7 / 1 / 2 / 17 / 42 / hi sub / n=6 double=12 / started ok
+
+// ---------- 命题位的修正案后写法：独立 axiom（unchecked.axiom[p] 已废除） ----------
+// 函数内用 `axiom started` 兑现下文 <started>，调用方先 startEngine() 再 usesStarted()。
+fun startEngine(): Null <started> {
+    axiom started
+}
+fun usesStarted()<started>: Null {}
+
+// 命题蕴含一律 Unicode →（程序位的 => 是 lambda / when 分支 / 函数类型）——此处作文法演示，不被调用。
+fun mp[p, q]: Null <(p & (p → q)) → q> {}
+
+@impure
+fun main() {
+    // ---------- 1 普通绑定：var 名 = 初值（不可变默认） ----------
+    var a = 5                          // 类型可省略（此处推断 Nat）
+    var b: Nat = 7                     // 也可显式标注
+    unchecked print(a)                 // 5
+    unchecked print(b)                 // 7
+
+    // ---------- 2 var 声明即表达式（决策 A3）：值为初值，支持嵌套 ----------
+    var m = var k = 0                  // 内层先绑定 k = 0，外层 m 取「初值」= 0
+    unchecked print(m)                 // 0
+    var s = var t = 3 + 4              // 初值本身可以是表达式
+    unchecked print(s)                 // 7
+    // 陷阱（跨端差异，注释演示）：
+    //   解释器里内层 var 在当前帧声明，k / t 之后仍可读写；
+    //   JS 生成端把内层 var 表达式包进立即执行函数（() => { const k = 0; return k; }）()，
+    //   k / t 出不了那个小作用域，之后再引用会在 node 抛 ReferenceError。
+    //   可移植写法：只读外层变量（本例的 m / s），或把内层拆成独立声明。
+
+    // ---------- 3 元组解构：var 后紧跟 (名, 名) ----------
+    // 陷阱（跨端差异，注释演示）：`var (x, y) = …` 由 JS 生成端完整支持（const [x, y] = …）；
+    //   解释器端的 VarStmt 只声明解构列表的首名（忽略 destruct 列表），x 会得到整个元组、y 未定义，
+    //   所以本例的可运行演示走 compile + node。
+    var (x, y) = (1, 2)
+    unchecked print(x)                 // 1
+    unchecked print(y)                 // 2
+    var (u, v) = (9, 8)
+    unchecked print(u + v)             // 17
+
+    // ---------- 4 不可变默认：赋值闸门 ----------
+    // 陷阱（有意只写注释，避免真的引入错误）：
+    //   var locked = 1
+    //   locked = 2
+    //   ↑ [错误] E-IMMUT-ASSIGN: `locked` 是不可变的，不能赋值。
+    //        要改它？声明时写成 `var locked : @mut Nat`
+    //   闸门仅在 uncheckedDepth == 0 时生效；想局部豁免用 `unchecked <语句>`（见 副作用与unchecked.subl）。
+
+    // ---------- 5 @mut：唯一可再赋值的形态 ----------
+    @mut var c = 0
+    c = c + 1
+    c = c + 41
+    unchecked print(c)                 // 42
+
+    // ---------- 6 绑定值的消费：字符串插值 ----------
+    var name = "sub"
+    unchecked print("hi $name")        // hi sub（$name 式插值）
+    var n = 6
+    unchecked print("n=${n} double=${n * 2}")   // n=6 double=12（${expr} 式插值）
+
+    // ---------- 命题演示：startEngine 兑现下文后 usesStarted 才合法 ----------
+    startEngine()
+    usesStarted()
+    unchecked print("started ok")      // started ok
+}

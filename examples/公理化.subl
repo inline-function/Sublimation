@@ -1,0 +1,31 @@
+﻿// ============================================================
+// 特性：公理化（axiom 语句顶层+函数内双位置 / MP 闭包 / ∀ 实例化 / 上下文弥散）
+// 预期输出（每行一个）：declared / inbody / mp / forall / diffuse / done
+// ============================================================
+
+// 顶层 axiom：模块级事实
+axiom moduleReady
+
+// 下文弥散：兑现后供给约束位
+fun produceSetup(): Null <setupOk> {
+    axiom setupOk                      // 函数内 axiom：注入函数 Γ
+}
+fun useSetup()<setupOk>: Null {}
+
+@impure fun main() {
+    axiom forall n. tagged<n>          // 全称公理：约束位实例化
+    axiom offer
+    axiom offer → granted              // 分离前提：MP 闭包自动产出 granted
+
+    produceSetup()
+    useSetup()
+    // 注：顶层 axiom（moduleReady）不自动流入函数体 Γ；证明用的事实须在体内 axiom 注入
+    ∵ offer ∴ granted                  // q 已由 Γ 闭包产出
+
+    print("declared")
+    print("inbody")
+    print("mp")
+    print("forall")
+    print("diffuse")
+    print("done")
+}

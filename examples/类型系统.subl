@@ -1,0 +1,31 @@
+// ============================================================
+// 特性：类型系统（类型别名 / @mut @ref 拷贝矩阵 / 联合视角）
+// 预期输出见行尾注释
+// ============================================================
+
+type Age = Nat
+
+@mut struct Box(@mut n: Nat)
+
+@impure fun main() {
+    var age : Age = 18
+    print(age)                            // 18（别名互通）
+
+    // 拷贝矩阵：@ref 目标共享；@mut 目标深拷；@ref @mut 目标对 @mut 源别名
+    var s : Box = Box(1)
+    @mut var t : Box = s                  // @mut 目标 ← 纯源：深拷
+    t.n = 2
+    print(s.n)                            // 1
+    print(t.n)                            // 2
+
+    @mut var o : Box = Box(3)
+    @ref var view : Box = o               // @ref 目标：共享只读视图
+    o.n = 4
+    print(view.n)                         // 4
+
+    @mut var p : Box = Box(5)
+    @ref var q : @mut Box = p             // @ref @mut ← @mut：别名共享
+    p.n = 6
+    print(q.n)                            // 6
+    print("done")
+}

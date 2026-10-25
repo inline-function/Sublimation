@@ -1,0 +1,30 @@
+// ============================================================
+// 特性：自动证明（算术通道：≤ 差分图传递 / = 等式链 / ∀ 实例化 / MP 闭包）
+// 预期输出（每行一个）：le-trans / eq-chain / folding / forall / done
+// ============================================================
+
+@impure fun main() {
+    // 算术通道：差分边传递
+    axiom a ≤ b
+    axiom b ≤ c
+    ∵ a ≤ b, b ≤ c ∴ a ≤ c
+
+    // 等式链：双向边 + 传递
+    axiom x = y
+    axiom y = 7
+    ∵ x = y, y = 7 ∴ x = 7
+
+    // 常量折叠
+    axiom (1 + 1) = 2
+    ∵ (1 + 1) = 2 ∴ 2 = 2
+
+    // 全称实例化
+    axiom forall n. tagged<n>
+    ∵ forall m. tagged<m> ∴ tagged<9>
+
+    print("le-trans")
+    print("eq-chain")
+    print("folding")
+    print("forall")
+    print("done")
+}

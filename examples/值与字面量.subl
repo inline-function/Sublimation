@@ -1,0 +1,57 @@
+// 值与字面量.subl
+// 覆盖：数值塔 Nat/Int/Rat / Str 转义（\\ \" \n \t）与插值（$name / ${expr}）/ 布尔 ⊤⊥ / 元组字面量（陷阱一律入注释：解释器端 ⊤ 求值 null 等跨端差异）
+// 预期 stdout（compile + node，逐行）：42 / -7 / 3.14 / 3.5 / 2.5 / 2.5 / 5 / \ / hello 世界 / 3 次：35 / true / true / 1a / 9
+
+fun half(n: Rat): Rat = n / 2
+
+@impure
+fun main() {
+    // ---------- 数值塔：Nat ⊂ Int ⊂ Rat，混算时取较宽端 ----------
+    var n: Nat = 42
+    var i: Int = -7
+    var r: Rat = 3.14
+    unchecked print(n)                 // 42
+    unchecked print(i)                 // -7
+    unchecked print(r)                 // 3.14
+    unchecked print(1 + 2.5)           // 3.5（Nat 与 Rat 混算 → Rat）
+    unchecked print(half(5.0))         // 2.5（Rat 形参）
+    // 陷阱（跨端差异，注释演示）：`/` 的结果恒为 Rat，但两端渲染不同——
+    //   print(4 / 2) 在 node 输出 2，在解释器输出 2.0（ScriptValue.Real 按 Kotlin Double 渲染）。
+    //   要跨端一致就保证结果带小数位：
+    unchecked print(5.0 / 2.0)         // 2.5
+
+    // ---------- Str：转义 + 插值 ----------
+    var esc = "a\\b\tc"                // 字符依次是 a \ b<TAB>c
+    unchecked print(length(esc))       // 5
+    unchecked print(charAt(esc, 1))    // \
+    var who = "世界"
+    var times = 3
+    unchecked print("hello $who")      // hello 世界
+    unchecked print("${times} 次：${n + i}")   // 3 次：35（Nat 42 + Int -7 → 35）
+
+    // ---------- 布尔：⊤ / ⊥ 是 Bool 仅有的两个字面量 ----------
+    var _top: Bool = ⊤                 // 静态类型 Bool
+    var _bot: Bool = ⊥
+    unchecked print(2 < 3)             // true（比较产生运行时布尔）
+    unchecked print(==(3, 3))          // true（符号前缀调用产生运行时布尔）
+    // 陷阱（跨端差异，注释演示）：⊤/⊥ 静态类型是 Bool，但运行时取值两端不同——
+    //   解释器把 ⊤/⊥ 一律求值为 ScriptValue.Null（Evaluator.kt:270），
+    //   JS 生成端分别发出 true / false（JsCodeGen.kt:867-868）。于是：
+    //     print(⊤)   → node 输出 true，解释器输出 null
+    //     if (⊤) {…} → node 进分支，解释器因 Null 是 falsy 而跳过
+    //   需要可移植的运行时布尔，请用比较表达式（n == 0、a < b），别依赖 ⊤/⊥ 的运行时取值。
+
+    // ---------- 元组字面量：逗号是判据（(e) 仍是括号表达式） ----------
+    var pair = (1, "a")
+    when(pair) {
+        (k, s) => { unchecked print(concat(toStr(k), s)) }   // 1a
+        else => { unchecked print("no") }
+    }
+    var tri = (2, 3, 4)
+    when(tri) {
+        (p, q, r2) => { unchecked print(p + q + r2) }        // 9
+        else => { unchecked print("no") }
+    }
+    // 陷阱（跨端差异，注释演示）：直接 print 元组两边格式不同——
+    //   node 输出 [2,3]，解释器输出 [2, 3]，所以这里改用 when 解构后打印分量。
+}

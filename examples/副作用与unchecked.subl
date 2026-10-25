@@ -1,0 +1,32 @@
+// ============================================================
+// 特性：副作用与 unchecked（@impure / @root 副作用闸 / unchecked 单语句豁免 / 参数位不深拷）
+// 预期输出见行尾注释
+// ============================================================
+
+@mut struct Counter(@mut v: Nat)
+
+@impure fun impureBump(c: @mut Counter): Null {
+    c.v = c.v + 1
+}
+
+@root fun rootZero(): Null {
+    unchecked print("root")    // @root 让纯侧可调本函数；体内 print 仍单独走 unchecked
+}
+
+@impure fun impureZero(): Null {
+    print("impure")
+}
+
+fun pureWrap(): Null {
+    unchecked impureZero()      // unchecked 前缀：单语句局部豁免 E-IMPURE-CALL
+}
+
+@impure fun main() {
+    @mut var ct = Counter(0)
+    impureBump(ct)              // impure 直接调（参数位不深拷 ⇒ ct 被改穿）
+    impureBump(ct)
+    print(ct.v)                 // 2
+    rootZero()                  // @root 闸口
+    pureWrap()                  // unchecked 豁免
+    print("done")
+}
