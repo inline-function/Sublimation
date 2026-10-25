@@ -1,55 +1,62 @@
-# Sublimation for Android
+# Sublimation
 
-Sublimation 语言（声明式、受 Rust/Kotlin 启发的设计验证语言）的安卓目标工程。
-本仓库把安卓相关的注解处理器、安卓标准库（`stdlib/android`）与安卓壳工程（`android-app`）集中在一处：
-用 Sublimation 写应用 → 编译器经 WebView 桥把 JS 产物跑在安卓壳里，KT 端用**普通 MD 视图**
-（MaterialButton/TextView/LinearLayout，不使用 Compose）动态构建界面。
+声明式设计验证语言（受 Rust / Kotlin 启发）：**写程序 = 写命题 + 写实现**，编译器验证两者一致。
+
+- 程序位 `=>`（lambda / when 分支 / 函数类型 / 零参 lambda）与命题位 `→`（蕴含）双通道
+- 独立 `axiom p1, p2, …` 语句（顶层与函数内通用）、`∵ … ∴ q` 手动证明链、Γ 自动闭包与算术通道
+- 可变拷贝 **4 条规则**：`@mut` / `@ref` 两注解决定深拷 vs 共享；闭包捕获在创建时深拷
+- `unchecked <语句>`：局部检查豁免（机制全栈穿透，行为有据可查）
+- 目录即模块；脚本模式（`.subs`）与工程模式（`.subl`）两套执行形态
+
+## 快速开始
+
+```text
+./gradlew build                       # 构建（frontend/compiler/interpreter/cli/language-service/annotationproc）
+sublimationc check examples/          # 一个目录 = 一个模块，单次全树语义检查
+sublimationc run examples/特性巡礼.subl
+sublimationc run-script core/logic/list.subl
+sublimationc compile core/logic -o logic.js
+sublimationc explain E-IMMUT-ASSIGN    # 诊断码含义与修复建议
+```
+
+命令全表与处理器流水线见 [`docs/构建与工具链.md`](docs/构建与工具链.md)。
+
+## 文档地图（按深度排序）
+
+| 层 | 目录 | 角色 |
+| --- | --- | --- |
+| 语言手册 | [`root doc/`](root%20doc/) | 面向语言使用者的 8 篇主题手册 |
+| 百科条目 | [`wiki/`](wiki/) | 每个概念一页：**语法 / 语义 / 示例 / 陷阱** 四节固定 |
+| 工程文档 | [`docs/`](docs/) | 面向维护者：构建工具链、模块布局、贡献指南、诊断码、安卓标准库设计 |
+| 形式化卷 | [`boring doc/`](boring%20doc/) | 形式化文法 + 形式化语义（重写中，旧卷仍在 git 历史） |
+| 例子 | [`examples/`](examples/) | 可运行的 `.subl` 示例（`特性巡礼.subl` 为一文件综合门面） |
+| 标准库 | [`core/`](core/) | logic / classic / async / mutex / flow 等 `.subl` 实现 |
+| 决策溯源 | `idea doc/` | 设计决策记录（本地，不入库） |
 
 ## 目录结构
 
 | 目录 | 内容 |
 | --- | --- |
-| `android doc/` | 安卓目标设计文档（《安卓标准库》《安卓注解处理器》等） |
-| `annotation processer/` | 安卓注解处理器（`@android` 内建校验、`@view` 视图变换、`@postcompile` APK 构建钩子） |
-| `stdlib/android/` | 安卓标准库：`activity`（7 个生命周期）、`log`、`toast`、`layout` 与 `ui/`（Box/Button/Text/Modifier/Alignment） |
-| `android-app/` | Gradle/AGP 8.7.3 壳工程：单活动 + WebView + `DshBridge`（JS-KT 桥） |
-| `app/` | 示例应用（`main.subl`）与各 `@view`/`@android` 标准库源码 |
+| `frontend/` | M1 词法 + M2 语法 + AST |
+| `compiler/` | M3 语义检查 + 证明 + 类型推导，M4 JS 代码生成（含 `e2e`） |
+| `interpreter/` | 大步求值 + 宿主函数注册；闭包捕获深拷的完整实现侧 |
+| `cli/` | 命令入口与诊断码解释表 |
+| `language-service/` | LSP 分析 |
+| `annotationproc/` | 注解处理器流水线（处理器 = Sublimation 脚本） |
+| `core/` | 标准库 `.subl` |
+| `brand/` `demo/` `playground/` `show/` | 辅助与演示工程 |
 
-## 端到端流程
+## 测试
 
+```text
+./gradlew :compiler:test        # 语义 + e2e 回归（530+ 例）
+./gradlew :interpreter:test     # 解释器回归
 ```
-sublimationc compile <app-dir> -o out.js \
-    -p "annotation processer" \
-    -A "appDir=<android-app 路径>" -A "jsPath=<out.js 路径>" -A "outDir=<APK 输出目录>"
-```
 
-1. 语义检查（`@android` 白名单/`@impure`/无体校验、`@composable` 视图纪律）。
-2. 生成 JS：`@android` 内建桥接为 `__dshAndroid(kind, args)`；生命周期注册为
-   `__dshLifecycle_onCreate` 并经 `registerLifecycle` 告知 KT 端；`layout` 的视图树经
-   `JSON.stringify` 传给 KT 端原生构建。
-3. **编译后阶段**（`@postcompile build`）：把 `out.js` 拷进 `android-app/app/src/main/assets/app.js`，
-   执行 `gradlew :app:assembleDebug`，把 APK 拷到 `outDir`。
-4. `adb install` 后启动：壳活动的 WebView 载入 `app.js.html`，JS 注册生命周期 →
-   KT 端按事件回调 JS（JS-KT 双向通信）。
+> 增量污染伪装失败（`NoClassDefFoundError` / 莫名越界）时，先 `:interpreter:clean` 再跑。
 
-## 架构要点
+> `examples/日常-*.subl` 为协作数据（未入库），其 e2e 引用在 pristine checkout 里会失败——已知，非回归。
 
-- **单活动**：`MainActivity` 持有 WebView 与 `DshBridge`（注入为全局 `__dshAndroid`）。
-- **视图树协议**：JS 端 `@view` 结构体（Box/Button/Text）序列化为 `{tag, children, modifier, ...}` JSON；
-  KT 端递归构建原生视图。函数型字段（`onClick`）注册为 `globalThis.__dshFn_<key>`、字段值换成 key，
-  KT 端按 key 回调 JS 闭包。
-- **重组合通道**：视图字段变异 → `__dc` 深拷贝 → `androidRecompose(viewName, ordinal, v)` → KT 端重建布局。
-- **生命周期秩序**：KT 端在页面加载前触发的事件记入 `firedEvents`，JS 注册时补发，
-  避免页面未就绪时注册丢失。
+## 安卓目标线
 
-## 编译器参数（-A）
-
-| 键 | 说明 |
-| --- | --- |
-| `appDir` | 安卓壳工程目录（含 `gradlew`/`app/`） |
-| `jsPath` | 编译器 JS 产物路径 |
-| `outDir` | APK 输出目录（默认 `appDir/build/apk`） |
-
-## 相关仓库
-
-- 编译器主仓：`KotlinProject/sublimation`（词法/语法/语义/JS 代码生成/注解处理器框架）。
+WebView 桥 + 原生 MD 视图（不使用 Compose）的安卓壳工程路线：注解处理器形态见 [`root doc/注解处理器.md`](root%20doc/)，标准库与工程审查细节将迁入 `docs/`。
