@@ -26,7 +26,7 @@ fun run(f: @impure () => Null): Null { f() }       // 函数类型位注解（�
 | 异步 / 并发（`@impure @async`） | `sleep`、`delay`、`runBoth`、`runSeq`、`collectToList`、`collectCount`、`collectAll`、`withMutex`、`bumpCounter`、`bumpPair`、`channelFromList`、`sendAll`、`channelDrain`、`channelPipe` |
 | 安卓桥（annotationproc 侧） | `log`、`toast`、`layout`、`onCreate` 等（AndroidBuiltins.kt） |
 
-用户函数的纯度只由**自己的注解决定**；`@root` 函数（无体内建声明）疑似由内建表判定，用户注解不参与（Symbols.kt:19 起）。
+用户函数的纯度只由**自己的注解决定**；`@root` 函数（无体内建声明）按内建表判定，用户注解不参与（Symbols.kt:19 起——否则用户 `@root fun readFile(…)` 无 @impure 会被误注册 `pure<readFile>`，制造错误证明）。
 
 **不能标注的位置**：
 

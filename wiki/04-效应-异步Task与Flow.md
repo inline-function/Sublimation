@@ -1,7 +1,7 @@
 # 效应·异步 Task 与 Flow
 
 > wiki/04-效应-异步Task与Flow · 主题域：@async 注解 / Task 惰性任务 / Flow 冷流（emit·collect·map）/ runBoth·runSeq·delay / collectAll / 自动 await / async-in-sync 闸 / core.async 模块边界 / IO 家族 @async（P5 决策 81）
-> 事实来源：_langfacts.md §2/§3/§6/§7/§8；core/async/async.subl（15 行全文）、task.subl（8）、channel.subl（18）、mutex.subl（16）、flow.subl（17）；core/io/io.subl（41）；frontend/.../Parser.kt（:1206-1225 Task/Flow 解析特判）；compiler/.../Checker.kt（:88 curFunAsync、:316 main 天然 @async、:1236-1244 TaskExpr、:1246-1262 FlowExpr）、CallCheck.kt（:185-191 emit、:194-210 Channel、:217-222 Mutex、:226-305 内建挂起方法闸、:765-774 async-in-sync 闸）、Types.kt（:12-16 BASE_TYPES、:56-117 IO+async 内建签名、:278-295 白名单）、MultiModule.kt（:160 留痕合并）；codegen/.../JsCodeGen.kt（:718 async function、:379-431 小运行时注入、:980-1019 taskJs/flowJs、:1155-1215 内建特判）；interpreter/.../Evaluator.kt（:268 脚本模式不支持）；root doc/异步.md（旧文档，含 `->` 旧文法处已按修正案改写）；examples/异步与并发.subl、examples/日常-异步任务.subl；compiler/src/test/.../ModuleE2ETest.kt（:470-535、:748-790、:1050-1090）、DiagCoverageTest.kt（:252-272）；实测探针经 build/libs/sublimation.jar（check/compile）+ node v24 验证
+> 事实来源：_langfacts.md §2/§3/§6/§7/§8；core/async/async.subl（15 行全文）、task.subl（8）、channel.subl（18）、mutex.subl（16）、flow.subl（17）；core/io/io.subl（41）；frontend/.../Parser.kt（:1206-1225 Task/Flow 解析特判）；compiler/.../Checker.kt（:88 curFunAsync、:316 main 天然 @async、:1236-1244 TaskExpr、:1246-1262 FlowExpr）、CallCheck.kt（:185-191 emit、:194-210 Channel、:217-222 Mutex、:226-305 内建挂起方法闸、:765-774 async-in-sync 闸）、Types.kt（:12-16 BASE_TYPES、:56-117 IO+async 内建签名、:278-295 白名单）、MultiModule.kt（:160 留痕合并）；codegen/.../JsCodeGen.kt（:718 async function、:379-431 小运行时注入、:980-1019 taskJs/flowJs、:1155-1215 内建特判）；interpreter/.../Evaluator.kt（:268 脚本模式不支持）；root doc/异步.md（旧文档，其中的 ASCII 箭头旧文法处已按修正案改写）；examples/异步与并发.subl、examples/日常-异步任务.subl；compiler/src/test/.../ModuleE2ETest.kt（:470-535、:748-790、:1050-1090）、DiagCoverageTest.kt（:252-272）；实测探针经 build/libs/sublimation.jar（check/compile）+ node v24 验证
 
 Sublimation 的异步是**编译目标决定模型的异步**：因为目标是 JS，语言不做操作系统线程，只暴露协程级原语——惰性任务 `Task { … }`、冷流 `Flow { … }`、互斥锁 `Mutex()` 与有缓冲通道 `Channel[T](cap)`，外加 `runBoth` / `runSeq` 两个组合子与 `delay`。所有挂起点由编译器**自动 await**——语言没有 `await` 关键字，也没有 `async { }` 块表达式；异步性由 `@async` 注解标记并在以下四种「天然 @async 上下文」中合法传播：`main` 函数体、`@async` 函数体、`Task { …}` 体、`Flow { … }` 体（Checker.kt:316、:1240、:1252）。同步函数触碰任何挂起点会被 **async-in-sync 闸**拦下（CallCheck.kt:769，E-NEED-ASYNC）。
 
@@ -83,7 +83,7 @@ core/io/io.subl 把可失败的 IO 全标 `@impure @async` 且返回 `Result[_, 
 
 ### async-in-sync 闸与自动 await
 
-调用点是否合法由一条规则 closing（CallCheck.kt:769）：
+调用点是否合法由一条规则把守（CallCheck.kt:769）：
 
 $$\frac{f \text{ 标有 } @async \qquad \neg\,\mathrm{curFunAsync} \qquad \mathrm{uncheckedDepth} = 0}{\text{E-NEED-ASYNC（给调用方加 } @async\text{）}} \ (\text{async-in-sync})$$
 
@@ -111,7 +111,7 @@ $$\frac{}{\texttt{runBoth}(f, g) \Rightarrow \text{先 } \texttt{then}\!-\!\text
 
 $$\frac{}{\texttt{Flow }\{b\} \Rightarrow \_\_\text{flow}(\texttt{async function*}\ (b))} \ (\text{创建零执行}) \qquad \frac{c \in \{\texttt{collect},\ \text{collectToList},\ \text{collectCount},\ \text{collectAll}\}}{b \text{ 作为生成器被迭代}} \ (\text{冷})$$
 
-$$\frac{\mathrm{collectAll}(fl, p) \quad \exists v \<: fl,\ \neg p(v)}{\mathrm{false}\ (\text{短路，后续不求值})} \quad \frac{\mathrm{collectAll}(fl, p) \quad fl \text{ 为空}}{\mathrm{true}\ (\text{空真值，实测})}$$
+$$\frac{\mathrm{collectAll}(fl, p) \quad \exists v \in fl,\ \neg p(v)}{\mathrm{false}\ (\text{短路，后续不求值})} \qquad \frac{\mathrm{collectAll}(fl, p) \quad fl \text{ 为空}}{\mathrm{true}\ (\text{空真值，实测})}$$
 
 流体被翻译为 JS async generator：`emit(v)` → `yield v`（flowEmitHits 留痕，JsCodeGen.kt:1008-1019），其余语句原样；`map(g)` 返回 `__flow(async function* () { for await (v of gen()) yield g(v) })`——派生的仍是冷流，再 collect 才执行。collect 方法与三个收集自由函数都挂起（CallCheck.kt:296-303），故 `fl.collect(f)` 不能写在同步函数里。
 
@@ -142,7 +142,7 @@ fun main() {
 }
 ```
 
-`@async` 函数 + 自动 await + IO 家族 Result（P5 决策 81）：
+`@async` 函数 + 自动 await + IO 家族 Result（P5 决策 81）。本例需工程模式（core 挂载，Result/Ok/Err 来自 core.collection；单文件模式编译器回退的 Result 与 codegen 引用的 `core_collection__Ok` 不一致，IO 落不了地——实测），输出 len=0 / err: ENOENT … / done（cfg.txt 不存在 → Err → 兜底 0）：
 
 ```subl
 @impure @async
@@ -158,12 +158,18 @@ fun loadNum(p: Str): Nat {
 fun main() {
     var n = loadNum("cfg.txt")         // main 天然 @async，普通调用语句即 await
     print(concat("len=", toStr(n)))
+
+    var bad = readFile("no-such-file.txt")
+    when(bad) {
+        is Ok(_) => { print("ok") }
+        is Err(e) => { print(concat("err: ", e)) }   // Err 分支带宿主错误信息
+    }
     sleep(5)                           // 恒为挂起点
     print("done")
 }
 ```
 
-Flow 的冷性、collect 与 collectAll 短路（实测输出：10 / 20 / nothing / ecount=0 / emptyAll=true / list=[1,2,3]）：
+Flow 的冷性、collect 与 collectAll 短路（实测输出：10 / 20 / nothing / ecount=0 / emptyAll=true / list=[1,2]）：
 
 ```subl
 @impure @async
@@ -177,11 +183,11 @@ fun main() {
 
     var e = Flow { }
     print(concat("emptyAll=", toStr(collectAll(e, { v => false }))))   // true（空真值）
-    print(concat("list=", toStr(collectToList(fl))))       // [1,2,3] 发送序保持
+    print(concat("list=", toStr(collectToList(fl))))       // [1,2] 发送序保持
 }
 ```
 
-组合子与临界区（对应 ModuleE2ETest.kt:1053 的端到端验收，输出 A / B / X / Y / locked / counter=3 / done）：
+组合子与临界区（改写自 ModuleE2ETest.kt:1053 的端到端验收，实测输出 A / B / X / Y / locked n=3 / done）：
 
 ```subl
 @mut struct Counter(@mut n: Nat)
@@ -237,7 +243,7 @@ fun main() {
 4. **`join` 前必须 `start`**：函数体内无 `t.start()` 就 `t.join()` 报 `E-NOT-STARTED`（TASK-7，CallCheck.kt:238-241）。顺序由同一函数体内语句顺序静态判定，跨函数/分支的 start 不计。
 5. **runBoth/runSeq 的回调是普通 lambda**：签名是 `f: () => Null`——lambda 本体不天然 `async`，体内出现挂起点（`sleep` / `delay` / `collect` / IO 等）时，codegen 会在**非 async 箭头函数**里生成 `await`，产出非法 JS（node 抛 `await is only valid in async functions`，实测）。耗时操作放进 `Task { … }`，回调内只放非挂起动作。`withMutex(m, f)` 的 `f` 同型同因（mutex.subl 的 `withLock(f)` 文档形态 `f : @impure ()=>Null` 属旧文法写法，按 `f: () => Null` 读）。
 6. **Flow 是冷的，`collectAll` 空流为真**：只构造不消费，流体一行也不执行（连其中的 print 都不跑）；`Flow { }` 对任意谓词 `collectAll` 返回 `true`、`collectToList` 返回 `[]`（实测）。依赖副作用的流必须被消费。
-7. **`emit` 只在 Flow 体内合法**：识别靠 `flowElemStack`（CallCheck.kt:185-191）；体外 `emit(1)` 报 `E-UNBOUND-NAME` 而非「emit 未定义」之类提示——别在普通函数里写 emit 期望延迟生效。嵌套 Flow 用栈区分（Checker.kt:113），但跨函数边界的 emit（helper 里写 emit 供外层流用）不被识别，待核是否有引导诊断。
+7. **`emit` 只在 Flow 体内合法**：识别靠 `flowElemStack`（CallCheck.kt:185-191），嵌套 Flow 靠栈区分（Checker.kt:113）；体外 `emit(1)` 按普通函数解析，报 `E-UNBOUND-NAME`（实测）——别在普通函数里写 emit 期望延迟生效，跨函数边界的 emit 没有对应识别机制。
 8. **脚本模式（.subs）不支持异步**：`Task { }` / `Flow { }` 在解释器里直接抛「异步特性不在脚本中支持」（Evaluator.kt:268）。异步必须走工程模式（目录 + `compile`）落 JS 跑；`run-script` 的 .subs 顶层语句既不能定义 Task 也不能 collect。
 9. **main 天然 @async，但不天然 @impure**：`fun main() { sleep(1) }` 会因 `sleep` 的 @impure 在纯作用域报 E-IMPURE-CALL；异步入口照例写 `@impure fun main()` 或 `@impure @async fun main()`（两形态均实测通过）。
 10. **IO 家族返回 Result，不是原始值**（P5 决策 81）：`readFile` / `writeFile` / `readLine` / `appendFile` / `readDir` 一律 `Result[_, Str]`，必须 when 解构或 unwrapOr；且它们全标 @async，同步函数里调用先撞 E-NEED-ASYNC。`print` / `fileExists` / `getArgs` / `timeNow` 不是 @async，无挂起。

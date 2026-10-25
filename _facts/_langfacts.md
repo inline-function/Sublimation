@@ -12,7 +12,8 @@
 
 ## 2 文法（frontend/.../parser/Parser.kt，1724 行）
 - 入口：parseFile → 工程模式（parseEntry：fun/type/enum/struct/impl/axiom 顶层级）；脚本模式（脚本语句直接顶层）
-- 语句种类：fun/var/axiom（顶层+函数内）/unchecked/when/if/∀引入/∃语句/∵∴/return/by/typedef/impl/enum/struct/import/表达式语句
+- 语句种类：fun/var/axiom（顶层+函数内）/unchecked/when/if/∀引入/∃语句/∵∴/return/by/typedef/impl/enum/struct/表达式语句
+- **模块挂载不是源码语句**：语言无 import 产生式（Parser 无 ImportStmt）；跨模块靠 `.settings` 文件的 `mount <路径> [as <别名>]` 指令 + 限定引用 `a.b.c`（ModuleTree.kt；core 隐式挂载默认导入；多模块工程检查见 MultiModule.kt；环挂载报 E-CIRCULAR-MOUNT）
 - 表达式层级（全部左结合、**无优先级**，想要优先级必须加括号）：parseExpr 中缀循环（binops 集合 ≈ Parser.kt:50-56：算术+比较+逻辑 Unicode+IMPLIES+EQUIV+IFF+`=`+`:`+`in`	TokenName…）；parseUnary（一元 -/¬/!）；初等项
 - 中缀糖 D-5：`a f b`（f 前后均带空格、同行、右操作数为合法表达式起始，排除 `->` `,` `}` `]` `;` `)` `=` `return`）→ CallExpr(f, [a, b])
 - 符号前缀调用：`<(1,2)`（symbolCallStart = LT/GT/EQ/NEQ/LE/GE，后随 LPAREN）→ SymbolCallExpr，只取位置实参（Parser.kt:1353）
@@ -51,13 +52,13 @@
 - 异步：core 下 async/mutex/flow 标准库（Task 冷流、runBoth/runSeq、withMutex、collectAll）
 
 ## 7 求值与代码生成
-- 解释器：大步求值 Evaluator（924 行）；ScriptValue 值模型（Int/Str/结构/函数/Null…）；宿主函数注册；print/printable 输出；panic/unwrapOr 错误路径
+- 解释器：大步求值 Evaluator（924 行）；ScriptValue 值模型（Int/Str/结构/函数/Null…）；宿主函数注册；print 输出（**全库检索无 `printable`**，旧记载勘误）；panic/unwrapOr 错误路径
 - JS 代码生成：JsCodeGen（1797 行）；模块拼接；lambda 翻译；`__dc` 深拷边界；命题以断言形态落地
 - 脚本模式：.subs 每文件独立执行（互不共享、无需 main）；工程模式 = 目录即模块（根 / 扫全树）
 
 ## 8 模块与工具链
-- CLI（Main.kt 402 行）：`check <文件|目录>`（parse+语义检查；目录=模块全树）、`compile <文件|目录> -o <out>`（+JS 生成）、`run`（subl 工程解释执行）、`run-script <路径|目录>`（.subs 脚本）；`-p <处理器>`、`-A key=value`、`-v`（诊断+supplement）、aggressive 标志（激进证明）
-- 注解处理器（annotationproc）：AnnotationScanner 扫描 + 改写流水线（AndroidViewEdits 等）；@allMut 等 APT 引入注解先于 B/C 检查跑
+- CLI（Main.kt 402 行）：子命令 = parse / tokens / check <文件|目录>（目录=模块全树）/ compile <文件|目录> [-o out] / run-script <路径|目录>（先 .subs 后工程回退）/ explain <CODE>；**没有 `run` 子命令**（误输入回退 USAGE、退出码 2；工程执行走 run-script 目录回退或 compile+node）；`-p <处理器>>`、`-A key=value`、`-v`（诊断+supplement）、aggressive 标志（激进证明）
+- 注解处理器（annotationproc）：AnnotationScanner 扫描 + 改写流水线（AndroidViewEdits 等）；@allMut 等 APT 引入注解先于 B/C 检查跑；**内建处理器目录是 cwd 相对路径 `annotation processer/`（注意拼写）——换工作目录即静默失效**
 - 标准库 core/：logic（list/set/map/optional/result/typeclass/real…）、classic、async、mutex、flow 等 .subl
 - 诊断体系：E-（错误）/W-（警告）/D-（提示）三族；cli 有全量 explain 表；关键码如 E-IMMUT-ASSIGN、E-CANNOT-PROVE、E-PREMISE-UNPROVEN、W-PROP-UNBOUND、E-MAIN-PARAMS、E-RETURN-OUT-OF-BLOCK 等
 - 测试规模：frontend 65、compiler 536、interpreter 52、cli/language-service 各若干；examples 由 ParserTest/CheckerTest/E2E 引用
