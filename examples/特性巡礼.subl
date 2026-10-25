@@ -1,14 +1,8 @@
 // ============================================================
-// 特性：特性巡礼（一文件覆盖大部分特性：struct/enum/type/when/λ/type class/
-//       上下文弥散/@mut/main……起点语法定稿）——15 行输出，锁定首 alice 尾 done
-// 其余示例按本文档目录按特性拆分（见 说明.md）
-// 语法铁律：函数体两种形态**互斥**——`= 表达式`（不带花括号）或 `{ 语句… }`（不带等号）；
-//          顶层只能写声明，执行代码全部放进 `fun main()`（脚本模式将来支持）。
-// 覆盖：struct 默认值/命名字段构造、type 别名、枚举 ADT、Optional 嵌套解构、
-//       元组、函数类型与 lambda、when 全形态（守卫引用绑定变量）、提前 return、
-//       class/impl 隐式 self、双形态调用、@mut、上下文弥散、$ 返回值指代、
-//       合一供给、pure 命题驱动纯度、main 入口
-// 预期 stdout 见 main 内行尾注释
+// 特性巡礼（重写版）：一文件覆盖修正案后语言状态——
+//   程序位 => / 命题位 →、独立 axiom 语句（无线性作用域）、
+//   可变拷贝 4 条规则、@ref @mut 别名、闭包捕获创建时深拷
+// 契约（测试锁定）：输出恰 15 行，首行 alice，末行 done；check 无 ERROR
 // ============================================================
 
 // ---------- 结构体：字段默认值 + 两种构造 ----------
@@ -28,7 +22,7 @@ fun roleText(r: Role): Str {
     }
 }
 
-// ---------- Optional 嵌套解构（决策 64） ----------
+// ---------- Optional 嵌套解构 ----------
 fun flatten(oo: Optional[Optional[Nat]]): Nat {
     return when(oo) {
         is Some(is Some(y)) => y
@@ -36,6 +30,9 @@ fun flatten(oo: Optional[Optional[Nat]]): Nat {
         None => 0
     }
 }
+
+// ---------- @mut 结构体：拷贝规则的载体 ----------
+@mut struct Cell(@mut n: Nat)
 
 // ---------- 元组：字面量 + 解构 ----------
 fun label(t: (Nat, Str)): Str {
@@ -45,10 +42,10 @@ fun label(t: (Nat, Str)): Str {
     }
 }
 
-// ---------- 函数类型 + lambda（单表达式体：`= ` 不带花括号） ----------
+// ---------- 函数类型 + lambda ----------
 fun applyTwice(f: (Nat) => Nat, x: Nat): Nat = f(f(x))
 
-// ---------- when 守卫：引用绑定变量 m；守卫是运行期值位，用 !=/& 而非命题算符 ----------
+// ---------- when 守卫：引用绑定变量 m ----------
 fun classify(n: Nat): Str {
     return when(n) {
         0 => "zero"
@@ -57,7 +54,7 @@ fun classify(n: Nat): Str {
     }
 }
 
-// ---------- 提前 return（决策 75：语句位 if 里可直接 return 退出函数） ----------
+// ---------- 提前 return ----------
 fun abs(n: Int): Nat {
     if (n < 0) { return 0 - n }
     return n
@@ -69,7 +66,7 @@ fun signOf(n: Int): Str = when(var m = n * 2) {
     else => "moved"
 }
 
-// ---------- 类型类 + impl + 隐式 self（体内裸用字段 name ≡ self.name） ----------
+// ---------- 类型类 + impl + 隐式 self ----------
 class Named {
     fun describe(): Str
 }
@@ -88,7 +85,7 @@ impl Named for User {
     return sum
 }
 
-// ---------- 上下文弥散：下文 <answered> 兑现后弥散进作用域，<answered> 上文自动消费 ----------
+// ---------- 上下文弥散：下文 <answered> 兑现后弥散进作用域 ----------
 fun fact(): Null <answered> {
     axiom answered
 }
@@ -100,19 +97,31 @@ fun get7(): Id <$ = 7> {
 }
 fun needTagged()<tagged<7>>: Null {}
 
-// ---------- pure 命题改变代码行为（决策 54/55） ----------
+// ---------- pure 命题改变代码行为 ----------
 @impure fun side(): Null {}
 fun pureCaller()<pure<side>>: Null {
-    side()          // 上下文持 pure<side> ⇒ 纯作用域调非纯函数放行
+    side()
 }
 
-// ---------- 入口：顶层不许放语句，一切执行代码在 main ----------
 @impure
 fun main() {
-    var u1 = User("alice", 30)          // 位置式构造
-    var u2 = User(name = "bob")         // 命名字段构造，age 取默认值 0
+    var u1 = User("alice", 30)
+    var u2 = User(name = "bob")
     axiom forall n. tagged<n>
-    axiom pure<side>          // @impure 函数不自动注册 pure，前件需显式供给
+    axiom pure<side>
+
+    // —— 拷贝规则演示 1：@mut 目标 ← 纯源 = 深拷贝 ——
+    var a : Cell = Cell(0)
+    var b : @mut Cell = a
+    b.n = 1
+    // —— 拷贝规则演示 2：@ref @mut 目标 ← @mut 源 = 别名共享 ——
+    @mut var c : Cell = Cell(0)
+    @ref var d : @mut Cell = c
+    c.n = 1
+    // —— 闭包捕获：创建时深拷快照 ——
+    @mut var ctr : Cell = Cell(7)
+    var snapshot = { => ctr.n }
+    ctr.n = 8
 
     unchecked print(u1.name)                    // alice
     unchecked print(u2.age)                     // 0
@@ -120,17 +129,17 @@ fun main() {
     unchecked print(flatten(Some(Some(9))))     // 9
     unchecked print(label((1, "a")))            // pair
     unchecked print(applyTwice({ x => x + 1 }, 10))  // 12
-    unchecked print(classify(0))                // zero
     unchecked print(classify(7))                // many
     unchecked print(abs(0 - 5))                 // 5（提前 return）
-    unchecked print(signOf(3))                  // moved
-    unchecked print(u1.describe())              // alice（点号调用）
-    unchecked print(describe(u2))               // bob（自由式，双形态等价）
+    unchecked print(a.n)                        // 0（深拷后 a 不受 b 影响）
+    unchecked print(d.n)                        // 1（别名：c.n 改了 d.n 跟着变）
+    unchecked print(snapshot())                 // 7（闭包持有创建时快照）
     unchecked print(counterDemo())              // 42
+    unchecked print(get7())                     // 7
+    unchecked print(signOf(3))                  // moved
     fact()
     usesFact()
-    pureCaller()                                // pure<side> 由调用点公理供给
-    unchecked print(get7())                     // 7
+    pureCaller()
     needTagged()
     unchecked print("done")                     // done
 }
