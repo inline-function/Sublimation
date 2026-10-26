@@ -23,7 +23,7 @@ class CodegenError(message: String) : RuntimeException("[代码生成] $message"
  * 全局引用的 mangle 结果由 Checker 按引用点实例留痕（moduleHits）传入——
  * codegen 不再猜测"裸名 = 本模块符号"，跨模块/同模块非根调用都能拿到正确前缀。
  */
-class JsCodeGen {
+class JsCodeGen(val target: Target = Target.NODE) {
     private val sb = StringBuilder()
     private var indent = 0
     /** 已知构造子名（含 prelude），用于区分模式里的裸名是构造子还是绑定变量 */
@@ -400,17 +400,42 @@ private var bridgeFnCounter = 0
             for (e in fa.entries) if (e is DeclEntry) genDecl(e.decl)
         }
         val mains = units.flatMap { (_, fa) -> fa.entries.filterIsInstance<StmtEntry>() }
-        if (mains.isNotEmpty()) {
+        // t35：node 目标照旧（主序列在装载期内联执行）；非 node 目标改 S-1 装载模型，主序列包进导出函数
+        if (target == Target.NODE && mains.isNotEmpty()) {
             blank(); comment("主序列")
             for (e in mains) genStmt(e.stmt)
         }
-        // O4（决策 70）：具名 `fun main()`（0 形参）自动作为入口调用；P0：main 可位于任意模块，全局唯一由 MultiModule 检查
+        // O4（决策 70）+ t35（SfW Phase 1）：node 自执行 main()；browser/wasm 抑制自执行，
+        // 按 S-1 装载模型把入口导出到 globalThis.__subl.main（宿主 eval 后调用）。
+        // P0：main 可位于任意模块，全局唯一由 MultiModule 检查。
         val mainUnit = units.firstOrNull { (_, fa) ->
             fa.entries.filterIsInstance<DeclEntry>().any {
                 val fn = it.decl as? FunDecl; fn != null && fn.name == "main" && fn.params.isEmpty() && fn.body != null
             }
         }
-        if (mainUnit != null) line("${moduleJsName(mainUnit.first, "main")}();")
+        if (target == Target.NODE) {
+            if (mainUnit != null) line("${moduleJsName(mainUnit.first, "main")}();")
+        } else {
+            // S-1：合并进宿主可能预置的 __subl 对象（赋值式合并不覆盖宿主的 d 等分派入口）
+            if (mainUnit != null) {
+                line("(globalThis.__subl || (globalThis.__subl = {})).main = ${moduleJsName(mainUnit.first, "main")};")
+                if (mains.isNotEmpty()) {
+                    // 主序列 + main 并存（少见的 module 模式）：主序列导出为 prelude，由宿主在 main 前调
+                    line("(globalThis.__subl || (globalThis.__subl = {})).prelude = () => {")
+                    indent++
+                    for (e in mains) genStmt(e.stmt)
+                    indent--
+                    line("};")
+                }
+            } else if (mains.isNotEmpty()) {
+                // 脚本式顶层序列（无 main 声明）：包成入口函数导出，不在装载期执行
+                line("(globalThis.__subl || (globalThis.__subl = {})).main = () => {")
+                indent++
+                for (e in mains) genStmt(e.stmt)
+                indent--
+                line("};")
+            }
+        }
         indent--
         line("})();")
         val body = sb.toString()
@@ -818,7 +843,8 @@ private fun needEqPreScan(file: FileAst): Boolean {
             }
             // 命题逃逸：擦除为注释，可 grep 审计
             is AxiomStmt -> s.props.forEach { comment("axiom: ${tag(it)}") }
-            is ByStmt -> s.props.forEach { comment("by: ${tag(it)}") }
+            // t30：ByStmt 已改为编译期错误（E-BY-REMOVED），正常编译不会到达此处——分支保留为空仅为 when 穷尽
+            is ByStmt -> {}
             is UncheckedStmt -> { comment("unchecked"); genStmt(s.inner) }
             is ExprStmt -> {
                 // 决策 75：语句位 if 一律展平成真正的 JS 控制语句（与检查器给它的 flow=true 对齐）；
@@ -1025,6 +1051,37 @@ private fun needEqPreScan(file: FileAst): Boolean {
     private fun awaited(e: CallExpr, js: String): String =
         if (awaitHits[e] == true) "await $js" else js
 
+    // ---- t35（SfW Phase 1）：平台分派 ----
+    /** 平台调用分派结果：node 原生直连 / 宿主桥 / wasm 编译期拒绝 */
+    private enum class PlatformOp { NODE_DIRECT, BRIDGE, WASM_REJECT }
+
+    /** 按名字与 target 判定平台调用去向（t35）。node 目标与同名用户函数一律 NODE_DIRECT，
+     *  保证既有行为不变；op 表与可用性见 Target.kt 的 Platform。 */
+    private fun platformOp(name: String?): PlatformOp {
+        if (name == null || target == Target.NODE || name in userFns) return PlatformOp.NODE_DIRECT
+        if (target == Target.WASM && name in Platform.WASM_REJECTED) return PlatformOp.WASM_REJECT
+        // wasm 宿主未必提供 console → println/print 经桥；browser 宿主有 console → 直连 console.log
+        if (name == "println" || name == "print")
+            return if (target == Target.WASM) PlatformOp.BRIDGE else PlatformOp.NODE_DIRECT
+        return if (name in Platform.BRIDGE_OPS) PlatformOp.BRIDGE else PlatformOp.NODE_DIRECT
+    }
+
+    /** 宿主桥调用：globalThis.__subl.d("<op>", [args...])——宿主按 op 名实现平台能力（t35）。
+     *  Result 型 IO 与 node 分支同构（try/catch 包 Ok/Err）；sleep 经 awaited 保持挂起语义。 */
+    private fun bridgeCall(e: CallExpr, name: String): String {
+        val op = if (name == "print") "println" else name
+        val args = if (name == "println" || name == "print")
+            e.args.joinToString(", ") { "__dshtoStr(${expr(it)})" }
+        else e.args.joinToString(", ") { expr(it) }
+        val call = "globalThis.__subl.d(\"" + op + "\", [" + args + "])"
+        return when (name) {
+            "readFile", "readLine", "writeFile", "appendFile", "readDir" ->
+                awaited(e, "(() => { try { return core_collection__Ok(" + call + "); } catch (x) { return core_collection__Err(x.message); } })()")
+            "sleep" -> awaited(e, call)
+            else -> call
+        }
+    }
+
     private fun unop(op: String): String = when (op) {
         "-", "!", "¬" -> op
         else -> "!"
@@ -1122,6 +1179,18 @@ private fun needEqPreScan(file: FileAst): Boolean {
                 rtName == "List" || rtName == "Optional" -> "JSON.parse(" + call + ")"
                 else -> call
             }
+        }
+        // t35（SfW Phase 1）：平台分派——非 node 目标的平台调用走宿主桥或（wasm）编译期拒绝。
+        // node 分支（require('fs') 直连、process.argv、setTimeout 等）一律保持不变，向后兼容。
+        // 宿主桥单入口：globalThis.__subl.d("<op>", [args...])——宿主按 op 实现（op 表见 Target.kt 的 Platform）。
+        // 与安卓桥同层约定：本模块有同名用户定义函数时让位（用户函数优先）。
+        when (platformOp(name)) {
+            PlatformOp.NODE_DIRECT -> { /* 落回下面的 node 原生实现 */ }
+            PlatformOp.BRIDGE -> return bridgeCall(e, name!!)
+            PlatformOp.WASM_REJECT -> throw CodegenError(
+                "E-PLATFORM-UNAVAILABLE 目标 wasm 不支持平台调用「${name}」（wasm 单线程无同步宿主调用通道）。" +
+                "同步 IO 请改用 --target=node；或 --target=browser 走宿主桥"
+            )
         }
         if (name == "println" || name == "print") {
             // 修复（#8）：print 与 toStr 统一走 __dshtoStr（列表打印为 [] 形式，无空格）
@@ -1518,7 +1587,7 @@ private fun needEqPreScan(file: FileAst): Boolean {
         is AssignStmt -> "${expr(s.target)} = ${dcWrap(s, expr(s.value))};"
         is ExprStmt -> "${expr(s.expr)};"
         is UncheckedStmt -> stmtStr(s.inner)
-        is AxiomStmt, is ByStmt -> ""
+        is AxiomStmt, is ByStmt -> ""   // t30：ByStmt 已是编译期错误，此分支仅保穷尽
         // 第四轮：值位块的语句串化——语义层已禁止值位 return（E-RETURN-OUTSIDE），
         // 此分支是防御性正确语义（IIFE 内 return 即该块的值）
         is ReturnStmt -> s.expr?.let { "return ${expr(it)};" } ?: "return null;"
@@ -1585,7 +1654,7 @@ private fun needEqPreScan(file: FileAst): Boolean {
                 else out += "$ind${expr(s.expr)};"
             is ReturnStmt -> out += "$ind${s.expr?.let { "return ${expr(it)};" } ?: "return;"}"
             is UncheckedStmt -> lambdaStmtToLines(s.inner, out, ind)
-            is AxiomStmt, is ByStmt -> {}
+            is AxiomStmt, is ByStmt -> {}   // t30：ByStmt 已是编译期错误，此分支仅保穷尽
         }
     }
 

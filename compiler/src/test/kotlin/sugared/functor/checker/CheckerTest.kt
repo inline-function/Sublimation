@@ -80,6 +80,39 @@ class CheckerTest {
         assertTrue(warns(src).contains("E-PROP-UNBOUND"), "封存：显式供给失败降级为警告")
     }
 
+    // ---------- t30（用户决策「by 只有委托」）：by 新语义 = 断言（proveOrDeep 核对，不再注入 Γ） ----------
+
+    @Test
+    fun `t30 by 断言 - 可证断言通过且不再注入 Γ`() {
+        // `1 == 1` 由算术通道可证 → 断言通过；但断言不注入 Γ，故随后的 ∴ p 仍无依据报错
+        // （旧语义：by [p] 免验证注入后 ∴ p 直通——这正是被删除的逃逸通道）
+        val src = "fun main() { var x = 1 by [1 == 1]\n∴ p }"
+        val e = errs(src)
+        assertTrue(!e.contains("E-BY-REMOVED"), "后缀式 by 是合法语法，不应报 E-BY-REMOVED: $e")
+        assertTrue(e.any { it.contains("E-CANNOT-PROVE") }, "by 断言不注入 Γ，∴ p 应报 E-CANNOT-PROVE: $e")
+    }
+
+    @Test
+    fun `t30 by 断言 - 绑定完成后才核对（自引用自然命题）`() {
+        // 断言核对延迟到 r 声明与自然命题（r ≥ 0）注入之后：r 可引用且 r ≥ 0 可证
+        assertTrue(ok("fun main() { var r: Nat = 1 by [r >= 0] }"))
+    }
+
+    @Test
+    fun `t30 by 断言 - 绑定等式不再免验证供给`() {
+        // 旧语义：`var r = 5 by [r == 5]` 免验证注入 =(r,5)；新语义：断言须经证明器核对，
+        // VarStmt 不注入初值等式 → 证不出报 E-CANNOT-PROVE（健全性代价：要信仰式供给请改用 `axiom r == 5`）
+        assertTrue(errs("fun main() { var r = 5 by [r == 5] }").contains("E-CANNOT-PROVE"))
+    }
+
+    @Test
+    fun `t30 by 语句式已移除 - 报 E-BY-REMOVED 带迁移指引`() {
+        val src = "fun main() { by [p] }"
+        assertTrue(errs(src).contains("E-BY-REMOVED"), "语句式 by 应报 E-BY-REMOVED，实际: ${errs(src)}")
+        val msg = checkFile(parseSource(src, "t")).diags.first { it.code == "E-BY-REMOVED" }.message
+        assertTrue(msg.contains("axiom"), "报错文案应指引改用 axiom: $msg")
+    }
+
     @Test
     fun `可变性 - 无 mut 赋值报错`() {
         assertTrue(errs("fun main() { var x = 1\nx = 2 }").contains("E-IMMUT-ASSIGN"))

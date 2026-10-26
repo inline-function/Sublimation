@@ -33,6 +33,12 @@ internal fun Checker.containsUnresolvedTp(t: Type): Boolean = when (t) {
     else -> false
 }
 
+/** 期望位为自动类型类（裸 Any，零类型实参）：接受任意具体类型——Any 对所有类型自动实例化
+ *  （idea doc/自动类型类.md §二），故具体类型（如 Box）的值可作 Any 返回/默认值/实参。
+ *  与 Symbols.kt/CallCheck.kt 的 expect == Any 豁免同构；仅用于「期望 vs 实际」的**期望侧**，
+ *  实际侧（实参为 Any、期望具体类型）仍严格检查。 */
+fun Type.isAnyExpect(): Boolean = this is NamedType && name in autoTraits && args.isEmpty()
+
 /** 名义类型判定：仅 NamedType 首字母大写 或 跨模块限定类型（函数/元组类型不是名义类型，T1/决策 57） */
 fun Type.isNominal(): Boolean =
     (this is NamedType && name.isNotEmpty() && name.first().isUpperCase() && !isSynthetic()) ||

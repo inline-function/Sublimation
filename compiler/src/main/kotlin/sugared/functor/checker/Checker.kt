@@ -115,6 +115,9 @@ class Checker(
     internal val flowEmitHits = java.util.IdentityHashMap<CallExpr, Boolean>()
     /** P9：变量血缘（子 → 父）：when 解构绑定变量 → 主题变量（`when(xs){Cons(_,t)->...}` ⇒ t→xs）。checkFun 进出清空恢复。 */
     internal var structSub: MutableMap<String, String> = LinkedHashMap()
+    /** t30（用户决策「by 只有委托」）：待核 by 断言队列——ByExpr 把 (props, pos) 挂队，
+     * 由 flushByAsserts 在包围语句/函数体检查完成（名字绑定与事实注入就绪）后统一核对；不跨语句残留。 */
+    internal val pendingByAsserts = ArrayList<Pair<List<Expr>, String>>()
     /**
      * P0（M8）：全局符号引用的 JS 名留痕（**引用点实例** → mangle 后的完整名字）。
      * 不再依赖"codegen 猜测裸名=本模块符号"：Checker 解析时即知目标模块，
@@ -385,6 +388,7 @@ class Checker(
         // 单一表达式体无语句位，flow=false。
         funRetType = rt; bodyHasReturn = false
         val t = checkExpr(body, f, pure, flow = body is BlockExpr)
+        flushByAsserts(f)   // t30：表达式体的 by 断言在函数体检查完、参数事实注入后核对
         val sawRet = bodyHasReturn
         // v1.1：表达式体省略返回类型 → 推导生效（供调用点反推；递归自引用时保留 Null/synthetic）
         val effRt = if (fn.retType == null && isExprBody && !t.isSynthetic()) {
@@ -401,7 +405,7 @@ class Checker(
         if (t.isUnsealed() && effRt.name != "Null")
             d.error("E-NON-SEALED-MATCH", body.pos,
                 "函数 ${fn.name} 的返回值来自 when 表达式，但分支不穷尽（值可能为空 `Null`）。补全所有构造子分支，或加 `else` 兜底")
-        else if (!t.isSynthetic() && !typeLooseEq(t, effRt) &&
+        else if (!t.isSynthetic() && !effRt.isAnyExpect() && !typeLooseEq(t, effRt) &&
             !(effRt.name == "Null" && body is BlockExpr))
             d.error("E-TYPE-MISMATCH", body.pos, "函数 ${fn.name} 声明返回 ${effRt.render()}，但函数体是 ${t.render()}，两边不一致")
         val tail = dollarOf(body)
@@ -414,7 +418,7 @@ class Checker(
         for (post in postRewritten) {
             val goal = PropLogic.substDollar(PropLogic.fromExpr(post), tail)
             if (!proveOrDeep(f.allFacts(), goal))
-                d.error("E-POST-UNPROVEN", body.pos, "函数 ${fn.name} 声明了返回后的保证（下文 `${PropLogic.render(goal)}`），但函数体没证出。检查 return 的值是否满足它；必要时用 `by` 策略辅助证明")
+                d.error("E-POST-UNPROVEN", body.pos, "函数 ${fn.name} 声明了返回后的保证（下文 `${PropLogic.render(goal)}`），但函数体没证出。检查 return 的值是否满足它，或用 `∵` 前提供给可推出的事实、`axiom` 语句声明公理")
         }
         // W-UNUSED（报错增强）：函数参数 / 语句与表达式 var（含解构分量）声明后从未使用
         emitWUnused(f, fn)
@@ -511,6 +515,12 @@ class Checker(
     /** 返回该语句的"值类型"，供块体做 Nothing 不可达追踪（A5）。flow=语句流（return 合法区）。 */
 
     internal fun checkStmt(s: Stmt, f: Frame, pure: Boolean, flow: Boolean = false): Type {
+        val t = checkStmtInner(s, f, pure, flow)
+        flushByAsserts(f)   // t30：by 断言延迟核对点——语句内表达式（含 var 绑定）检查完、事实注入后统一核对
+        return t
+    }
+
+    private fun checkStmtInner(s: Stmt, f: Frame, pure: Boolean, flow: Boolean = false): Type {
         return when (s) {
             is VarStmt -> {
                 // 元组解构声明 `var (b, c) = e`：初值须为元组，逐分量声明变量（决策 91 声明版）
@@ -760,8 +770,10 @@ class Checker(
             }
             is AxiomStmt -> { s.props.forEach { f.inject(PropLogic.fromExpr(it)) }; namedT("Null", emptyList()) }
             is ByStmt -> {
-                s.props.forEach { f.inject(PropLogic.fromExpr(it)) }
-                d.supplement("D-BY", s.pos, "辅助策略注入 ${s.props.size} 条命题")
+                // t30（用户决策「by 只有委托」）：语句式 by 的免验证命题注入已删除——编译期错误并给迁移指引
+                // （Parser 仍解析 ByStmt，以便在此给出带指引的诊断而非裸解析失败）
+                d.error("E-BY-REMOVED", s.pos,
+                    "语句式 `by [q]` 的免验证命题注入已移除（by 只保留委托语义）。供给命题改用 `axiom q` 语句（顶层/函数内通用）；断言表达式成立改用后缀式 `expr by [q]`（经证明器核对）")
                 namedT("Null", emptyList())
             }
             is UncheckedStmt -> { uncheckedDepth++; val r = checkStmt(s.inner, f, pure = false, flow); uncheckedDepth--; r }
@@ -788,7 +800,7 @@ class Checker(
                         d.error("E-RETURN-TYPE", s.pos, "裸 return 要求函数返回 Null，实际声明 ${rt.render()}")
                     rexpr != null -> {
                         val t0 = checkExpr(rexpr, f, if (uncheckedDepth > 0) false else pure)   // 值是值位
-                        if (!t0.isSynthetic() && !typeLooseEq(rt, t0))
+                        if (!t0.isSynthetic() && !rt.isAnyExpect() && !typeLooseEq(rt, t0))
                             d.error("E-RETURN-TYPE", s.pos, "return 值类型 ${t0.render()} 与声明 ${rt.render()} 不符")
                     }
                 }
@@ -797,6 +809,21 @@ class Checker(
             }
             is ExprStmt -> checkExpr(s.expr, f, if (uncheckedDepth > 0) false else pure, flow = flow)
         }
+    }
+
+    /** t30：清空待核 by 断言队列——逐条 proveOrDeep 核对，证不出报 E-CANNOT-PROVE；断言不注入 Γ
+     *  （能证出的命题本就可由 Γ 推出，无需注入；免验证供给一律走 axiom 语句）。 */
+    private fun flushByAsserts(f: Frame) {
+        if (pendingByAsserts.isEmpty()) return
+        for ((props, pos) in pendingByAsserts) {
+            for (q in props) {
+                val goal = PropLogic.fromExpr(q)
+                if (!proveOrDeep(f.allFacts(), goal))
+                    d.error("E-CANNOT-PROVE", pos,
+                        "by 断言「${PropLogic.render(goal)}」在当前上下文证不出。by 断言须由现有事实推出；要声明免验证的公理请改用 `axiom` 语句")
+            }
+        }
+        pendingByAsserts.clear()
     }
 
     /** 按名字跨模块找函数（本模块 → 可见模块含 core 标准库）——isPureValue 判定 core 纯函数用 */
@@ -1126,7 +1153,7 @@ class Checker(
             val retIsTp = ftRet is NamedType && ftRet.args.isEmpty() &&
                 ftRet.name !in BASE_TYPES && ftRet.name !in syms.enums &&
                 ftRet.name !in syms.structs && !ftRet.isSynthetic()
-            if (ft != null && !retIsTp && !containsUnresolvedTp(ft.ret) && !bt.isSynthetic() && !typeLooseEq(bt, ft.ret))
+            if (ft != null && !retIsTp && !containsUnresolvedTp(ft.ret) && !bt.isSynthetic() && !ft.ret.isAnyExpect() && !typeLooseEq(bt, ft.ret))
                 d.error("E-TYPE-MISMATCH", e.pos, "lambda 体类型 ${bt.render()} 与期望返回 ${ft.ret.render()} 不符")
             // P2（决策 78）：带期望时返回**实际组合类型** FunType(期望参数, 实际体类型)，
             // 无期望时返回 FunType(合成参数, 实际体类型)——调用点据此反推类型参数
@@ -1262,9 +1289,11 @@ class Checker(
             namedT("Flow", listOf(elemT))
         }
         is ByExpr -> {
+            // t30：props 不再免验证注入 Γ，改为**断言**——值/类型同 target，断言延迟到包围
+            // 语句/函数体检查完（名字绑定与事实注入就绪）后经 flushByAsserts 用 proveOrDeep 核对，
+            // 证不出报 E-CANNOT-PROVE（编译期核对、运行期擦除，JsCodeGen 只留 target）
             val t = checkExpr(e.target, f, pure)
-            e.props.forEach { f.inject(PropLogic.fromExpr(it)) }
-            d.supplement("D-BY", e.pos, "辅助策略注入 ${e.props.size} 条命题")
+            if (e.props.isNotEmpty()) pendingByAsserts += e.props to e.pos
             t
         }
         is QuantExpr -> { checkExpr(e.body, f, pure); namedT("Bool", emptyList()) }
@@ -1324,7 +1353,7 @@ class Checker(
             val bt = if (abody != null) {
                 val bt0 = checkExpr(abody, nf, pure)
                 val rt = e.retType
-                if (rt != null && !bt0.isSynthetic() && !typeLooseEq(bt0, rt))
+                if (rt != null && !bt0.isSynthetic() && !rt.isAnyExpect() && !typeLooseEq(bt0, rt))
                     d.error("E-TYPE-MISMATCH", e.pos, "匿名函数体类型 ${bt0.render()} 与声明 ${rt.render()} 不符")
                 val tail = dollarOf(abody)
                 for (post in e.posts) {

@@ -275,7 +275,7 @@ object PropLogic {
                 is LambdaExpr -> collectTerm(e.body)
                 is TupleExpr -> e.items.forEach { collectTerm(it) }
                 is StructCtorExpr -> e.assigns.forEach { collectTerm(it.second) }
-                is ByExpr -> { collectTerm(e.target); e.props.forEach { collectTerm(it) } }
+                is ByExpr -> collectTerm(e.target)   // t30：props 是待核断言（非事实），不入项收集池
                 is VarExpr -> collectTerm(e.value)
                 is BlockExpr -> e.tailExpr?.let { collectTerm(it) }
                 is IfExpr -> { collectTerm(e.cond); collectTerm(e.thenBlock); e.elseBlock?.let { collectTerm(it) } }

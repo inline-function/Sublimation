@@ -156,7 +156,7 @@ private fun Checker.containsImpureCall(e: Expr): Boolean = when (e) {
     is InstExpr -> containsImpureCall(e.target) || e.terms.any { containsImpureCall(it) }
     is TupleExpr -> e.items.any { containsImpureCall(it) }
     is StructCtorExpr -> e.assigns.any { containsImpureCall(it.second) }
-    is ByExpr -> containsImpureCall(e.target) || e.props.any { containsImpureCall(it) }
+    is ByExpr -> containsImpureCall(e.target)   // t30：props 是证明层断言、求值期擦除，不参与纯性判定
     is VarExpr -> containsImpureCall(e.value)
     is LambdaExpr -> containsImpureCall(e.body)
     is AnonFunExpr -> e.body?.let { containsImpureCall(it) } == true

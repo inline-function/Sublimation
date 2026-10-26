@@ -7,6 +7,8 @@ import sugared.functor.ast.tokenLine
 import sugared.functor.checker.MultiModule
 import sugared.functor.checker.checkFile
 import sugared.functor.checker.generateSingle
+import sugared.functor.codegen.CodegenError
+import sugared.functor.codegen.Target
 import sugared.functor.lexer.Lexer
 import sugared.functor.interpreter.InterpreterError
 import sugared.functor.interpreter.Interpreter
@@ -26,6 +28,10 @@ const val USAGE = """sublimationc — Sublimation 编译器（M1 词法 + M2 语
 
             处理器即 Sublimation 脚本（文件名=处理器名=关注的注解），编译时由解释器解释执行
   compile <file.subl> [-o out.js] [-p ...]   语义通过后生成 JS（默认打印到标准输出）
+  --target=node|browser|wasm  编译目标（默认 node 向后兼容）：node=自执行脚本；
+             browser/wasm=S-1 装载模型——产物导出 globalThis.__subl.main（宿主 eval 后调用，不自执行），
+             平台调用走宿主桥 globalThis.__subl.d(op, args)；wasm 无同步宿主通道，
+             readFile 等同步 IO 编译期拒绝（E-PLATFORM-UNAVAILABLE）
   run-script <file.subs> [<file2.subs> ...]  脚本模式解释执行：顶层语句直接运行（无需 main）；多条脚本互不共享
   run-script <dir>            运行目录下所有 .subs 脚本（每个独立运行）；无 .subs 时按 .subl 工程(main)执行
   --global-inference         run-script 可选旗标：开启全局类型推导（省略类型/可变性/效应标注时自动填充；
@@ -79,13 +85,13 @@ val EXPLAIN: Map<String, String> = mapOf(
     "D-AXIOM-POST" to "补充：函数标了 @axiom，下文签名即公理。—— 编译器直接信任，不做自动证明；若下文与实际行为不符需你自己负责。",
     "D-BTS" to "补充：因为-所以语句成立。—— ∵ 注入的事实支撑 ∴ 结论，该结论已注入上下文可供后续使用。",
     "D-WHEN-PROP" to "补充：when[p ∨ q] 分类讨论得出了所有分支共有的结论。—— 这些结论已注入上下文。",
-    "D-STRATEGY" to "补充：by 策略证出了目标。—— 你写的 @策略名 成功证明了这个命题。",
+    "D-STRATEGY" to "补充：@策略 证出了目标。—— 你写的 @策略名 成功证明了这个命题。",
     "W-PROP-UNBOUND" to "分类讨论的析取前提不在上下文中。—— when[p] 语句要求先注入或证出析取式（如 p ∨ q），否则分类讨论无据。用 axiom p ∨ q 或前置证明注入。",
     "W-WHEN-NO-COMMON" to "when[p ∨ q] 各分支没有共同结论。—— 分类讨论语句的意义在于各支得出同一结论；若各支结论不同，该语句不产生可用事实。",
     "E-CANNOT-PROVE" to "编译器证不出这个命题。—— ∴ 的目标在当前上下文里证不出。在前面用 ∵ 注入事实、换用 axiom 显式声明公理，或检查命题是否写错。",
     "E-PREMISE-UNPROVEN" to "前提条件没证明。—— 你写的 ∵ 前提编译器证不出；前提必须是上下文已知的事实。先证明它，或用 axiom 显式声明公理。",
     "E-CTX-UNPROVEN" to "调用函数值前须证明其上下文命题。—— 该函数值携带上下文条件，调用前必须先证出它。用 ∵ 注入事实或换用普通函数。",
-    "E-STRATEGY-FAILED" to "by 策略无法证明目标。—— 你指定的 @策略 未能证出该命题。检查策略名是否正确，或改用其他策略/手动分解。",
+    "E-STRATEGY-FAILED" to "@策略 无法证明目标。—— 你指定的 @策略 未能证出该命题。检查策略名是否正确，或改用其他策略/手动分解。",
     "E-PROCESSOR-LOAD" to "注解处理器加载失败。—— 处理器脚本加载或执行报错，详细信息见附带的错误消息。检查 .subs 脚本语法。",
     "H-PROCESSOR-SCRIPT" to "提示：注解处理器脚本输出消息。—— 处理器脚本通过 hint() 主动输出的信息。",
     "D-PROCESSOR-SCRIPT" to "补充：注解处理器脚本输出消息。—— 处理器脚本通过 diag() 主动输出的信息。",
@@ -94,7 +100,7 @@ val EXPLAIN: Map<String, String> = mapOf(
     "E-PRE-UNPROVEN" to "函数调用的前置条件没证明。—— 函数声明了上文 `<条件>`，调用前必须证明这个条件成立。你可以在调用前用 `+∵ 条件` 注入事实，或者换个调用参数让编译器能自动证出。",
     "E-CONSTRAINT-VIOLATED" to "调用违反了函数的约束表。—— `fun f()<score <= 100>` 的形参比较条件由调用点实参承担；编译器已反证你的实参不满足。换一个满足条件的实参，或放宽声明里的约束。",
     "W-CONSTRAINT-UNPROVEN" to "函数约束表的条件编译器没证出。—— `fun f()<score <= 100>` 形参条件由实参承担；若实参是运行时才确定的变量，编译器证不出来，只给警告。换成字面量或先注入事实可消除。",
-    "E-POST-UNPROVEN" to "函数体的后置条件没证明。—— 函数声明了下文 `<\$条件>`，你的函数体必须保证返回值满足这个条件。检查 return 的值，必要时用 `by` 策略辅助证明。",
+    "E-POST-UNPROVEN" to "函数体的后置条件没证明。—— 函数声明了下文 `<\$条件>`，你的函数体必须保证返回值满足这个条件。检查 return 的值，或用 `∵` 前提供给可推出的事实、`axiom` 语句声明公理。",
     "D-AUTO-IMPURE" to "全局类型推导自动标注 @impure。—— 脚本模式下某函数自递归但找不到递减的参数（停机检查失败），已降级为 @impure 放行（用户自担「可能不停」风险）；该函数的效应会向上传播。想精确控制就显式标注返回类型（doc §7.6 逃生舱）。",
     "E-NON-STRUCTURAL-REC" to "纯函数的递归停止性存疑。—— 纯函数自递归时，必须有一个参数在「变小」（比如列表解构：对子列表递归）。如果不是这种模式，加上 `@impure` 允许它（编译器不会检查 @impure 函数的停机性）。",
     "E-IMMUT-ASSIGN" to "给不可变的变量赋值了。—— `xxx` 声明时没标 `@mut`，不允许重新赋值。要么改成 `@mut var xxx = …`，要么换个新变量名。",
@@ -128,7 +134,7 @@ val EXPLAIN: Map<String, String> = mapOf(
     "D-THEREFORE" to "补充：命题证明成立。`∴ …` 求证成功，结果注入后续上下文。",
     "D-PLUSBECAUSE-PROVED" to "补充：命题成立、已注入上下文。`+∵ …` 引入的事实会进入后续证明的上下文。",
     "W-CANNOT-PROVE" to "警告：命题没证出来。`∵/∴/+∵` 里的命题在当前已知事实下推不出，检查是不是漏了前提，或换个能自动证的写法。",
-    "D-BY" to "补充：用了 `by` 证明策略辅助证明。编译器按你给的策略展开命题。",
+    "E-BY-REMOVED" to "错误：语句式 `by [q]` 的免验证命题注入已移除（by 只保留委托语义）。供给命题改用 `axiom q` 语句（顶层/函数内通用）；断言表达式成立改用后缀式 `expr by [q]`（经证明器核对，证不出报 E-CANNOT-PROVE）。",
     "D-EXIST-INTRO" to "补充：`∃` 引入成立。你给出了满足性质的实例，编译器确认存在性。",
     "D-LOCAL-FUN" to "补充：局部函数展开。`f = { x -> … }` 内部作为自由函数处理（等价 ∀ 引入）。",
     "E-AMBIGUOUS-INSTANCE" to "错误：一个类型对同一方法有多个 impl 实现，编译器分不清用哪个。让它们之间存在父子类型类关系，或删掉多余的 impl。",
@@ -150,6 +156,7 @@ val EXPLAIN: Map<String, String> = mapOf(
     "E-NON-PATTERN-HKT" to "错误：类型参数嵌套了类型构造子（如 `F[G[Nat]]`）。类型构造子的实参必须是具体类型。",
     "E-PARAM-REF" to "错误：匿名函数参数引用越界。函数只有 N 个形参，你却引用了第 N+1 个（如 '$1', '$2' 等）。",
     "E-PARAM-REF-IN-BODY" to "错误：函数体里用了非法的匿名参数引用。用参数名代替。",
+    "E-PLATFORM-UNAVAILABLE" to "错误：编译目标不支持该平台调用。--target=wasm 无同步宿主调用通道（readFile 等同步 IO 被拒绝）；改用 --target=node，或 --target=browser 走宿主桥 globalThis.__subl.d(op, args)。模块级可用性见 Target.kt 的 Platform 表。",
     "E-PROP-AMBIGUOUS" to "错误：命题有歧义，编译器无法唯一确定。给命题加括号或显式类型标注。",
     "E-PROP-UNBOUND" to "错误：前提命题不在当前已知事实里。先用 `∵` 或 `∃` 引入它。",
     "E-QUANT-UNPROVEN" to "错误：`∃` 引入的实例满足不了目标性质。检查实例能否推出目标命题。",
@@ -194,6 +201,12 @@ fun main(args: Array<String>) {
     val verbose = args.contains("-v")
     // 激进模式（idea doc/激进模式.md §6）：--prover=aggressive 只作用于 compile/check
     val pf = parseProveFlags(args)
+    // t35（SfW Phase 1）：--target=node|browser|wasm（默认 node，-A/SfA 路线不受影响）
+    val target = try {
+        Target.parse(args.firstOrNull { it.startsWith("--target=") }?.substringAfter("="))
+    } catch (e: IllegalArgumentException) {
+        System.err.println("[错误] ${e.message}"); exitProcess(2)
+    }
     // §8.1：Ctrl-C → 置中断位，搜索循环在下一个 checkAbort 抛 ProverInterrupted，由 main 的 catch 写报告 + halt(130)
     if (pf.aggressive) {
         Runtime.getRuntime().addShutdownHook(Thread { sugared.functor.checker.AggressiveRuntime.interrupt() })
@@ -246,7 +259,7 @@ fun main(args: Array<String>) {
                 exitProcess(2)
             }
             val mm = MultiModule(path, aggressive = pf.aggressive, proveVerbose = pf.verbose,
-                proveIntervalMs = pf.intervalMs, proveDumpPath = pf.dumpPath)
+                proveIntervalMs = pf.intervalMs, proveDumpPath = pf.dumpPath, target = target)
             // 注解处理器先于 B/C 检查跑（脚本模式解释执行）：变换后的模块才是检查对象
             //（如 @allMut 引入的 @mut）；-p 追加的处理器也一并装载。processModules 内部统一重跑阶段 A/B/C
             val loadErrs = ProcessorPipeline.loadErrorsToBag(extraProcessors)
@@ -263,7 +276,9 @@ fun main(args: Array<String>) {
             if (cmd == "check") {
                 println("[完成] 模块检查通过")
             } else {
-                val js = mm.generateJs()
+                val js = try { mm.generateJs() } catch (e: CodegenError) {
+                    System.err.println("[错误] ${e.message.orEmpty().removePrefix("[代码生成] ")}"); exitProcess(1)
+                }
                 val oi = args.indexOf("-o")
                 val targetFile: File? = if (oi >= 0 && oi + 1 < args.size) File(args[oi + 1]) else null
                 if (targetFile != null) {
@@ -325,7 +340,9 @@ fun main(args: Array<String>) {
                 val finalChk = if (ast !== pr.ast) sugared.functor.checker.Checker(ast,
                     aggressive = pf.aggressive, proveVerbose = pf.verbose,
                     proveIntervalMs = pf.intervalMs, proveDumpPath = pf.dumpPath).also { it.run() } else chk
-                val js = generateSingle(finalChk, ast)   // 单文件：留痕字段经 compiler 模块公开入口传递（跨模块 internal 边界）
+                val js = try { generateSingle(finalChk, ast, target) } catch (e: CodegenError) {
+                    System.err.println("[错误] ${e.message.orEmpty().removePrefix("[代码生成] ")}"); exitProcess(1)
+                }   // t35：单文件同样按 --target 分派（默认 node 兼容）
                 val oi = args.indexOf("-o")
                 if (oi >= 0 && oi + 1 < args.size) {
                     val target = File(args[oi + 1])

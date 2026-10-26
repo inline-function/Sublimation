@@ -9,6 +9,8 @@ import sugared.functor.ast.FunDecl
 import sugared.functor.ast.Node
 import sugared.functor.ast.VarStmt
 import sugared.functor.codegen.JsCodeGen
+import sugared.functor.codegen.Platform
+import sugared.functor.codegen.Target
 import sugared.functor.parser.parseSourceWithNotes
 import java.io.File
 import java.util.IdentityHashMap
@@ -27,6 +29,8 @@ class MultiModule(
     proveVerbose: Boolean = false,
     proveIntervalMs: Long = 5_000L,
     proveDumpPath: String? = null,
+    /** t35（SfW Phase 1）：编译目标平台（默认 node 向后兼容——-A/SfA 路线不传本参） */
+    val target: Target = Target.NODE,
 ) {
     private val agg = aggressive
     private val pv = proveVerbose
@@ -138,6 +142,13 @@ class MultiModule(
         }
         if (mains.size > 1)
             bag.error("E-DUP-DECL", "", "多个模块声明了入口 main：${mains.joinToString(", ")}")
+        // t35（SfW Phase 1）：模块级 target 可用性——core 子包按 Platform 表核对（未列 = 全 target 可用）
+        if (target != Target.NODE) for (p in asts.keys) {
+            if (!Platform.moduleAvailable(p, target))
+                bag.error("E-PLATFORM-UNAVAILABLE", "",
+                    "模块 $p 在目标 ${target.cliName} 下不可用（模块级可用性见 Target.kt 的 Platform）。" +
+                    "改用 --target=node，或从工程里移除该模块的挂载")
+        }
         for (chk in checkers.values) bag.absorb(chk.d)
         // v4 诊断：只保留根模块的补充级诊断——core 标准库等挂载模块内部的推导/方法糖是噪声
         bag.dropSupplementsOutside("")
@@ -193,7 +204,8 @@ class MultiModule(
             deepCopyHits.putAll(chk.deepCopyHits)
             listMethodHits.putAll(chk.listMethodHits)
         }
-        return JsCodeGen().generateUnits(asts.toList(), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, mutexUsed, atomicUsed, flowUsed, rangeHits, rangeUsed, receiveSmarts, flowEmitHits, hktKindHits, funRefTargets, funRefFree.keys, lambdaDestructKeys, emptyMap(), deepCopyHits, listMethodHits)
+        // t35：按目标平台分派平台调用（node 保持原样）
+        return JsCodeGen(target).generateUnits(asts.toList(), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, mutexUsed, atomicUsed, flowUsed, rangeHits, rangeUsed, receiveSmarts, flowEmitHits, hktKindHits, funRefTargets, funRefFree.keys, lambdaDestructKeys, emptyMap(), deepCopyHits, listMethodHits)
     }
 }
 
@@ -201,7 +213,7 @@ class MultiModule(
  * 单文件 JS 生成入口（M4 跨模块边界）：从已经 run() 过的 Checker 生成 JS。
  * Checker 的留痕字段是 internal——CLI/LSP 等外部模块不应逐个搬运字段，而应经由本入口。
  */
-fun generateSingle(chk: Checker, ast: FileAst): String = JsCodeGen().generate(
+fun generateSingle(chk: Checker, ast: FileAst, target: Target = Target.NODE): String = JsCodeGen(target).generate(
     file = ast,
     dictHits = chk.dictHits,
     moduleHits = chk.moduleHits,

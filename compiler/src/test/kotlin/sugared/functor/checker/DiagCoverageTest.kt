@@ -230,7 +230,7 @@ class DiagCoverageTest {
 
     @Test fun `D-TYPE-INFERRED`() = assertTrue(has("fun main() { var a = 1 }", "D-TYPE-INFERRED"))
 
-    @Test fun `D-BY`() = assertTrue(has("fun f(): Null { by [p]\n}", "D-BY"))
+    @Test fun `E-BY-REMOVED 语句式 by 免验证供给已删`() = assertTrue(has("fun f(): Null { by [p]\n}", "E-BY-REMOVED"))
 
     // ---------- NOTES：不单独触发的码 ----------
     // E-ANY-INFER：预留码，v1 未接线（决策 59 的"涉 Any 推导失效"由 E-ANY-CALL/E-ANY-STRUCT 落地）。

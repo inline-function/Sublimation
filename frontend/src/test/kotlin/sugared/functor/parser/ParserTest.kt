@@ -229,7 +229,7 @@ class ParserTest {
     }
 
     @Test
-    fun `by 辅助策略两种形态`() {
+    fun `by 两种形态解析（t30 后语句式由 Checker 报 E-BY-REMOVED，解析保留）`() {
         val st = stmtsOf("by [p]\nvar q = 1 by [r]")
         assertTrue(st[0] is ByStmt)
         val v = (st[1] as VarStmt).value

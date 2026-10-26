@@ -188,7 +188,9 @@ class Evaluator(
                 val v = stmt.expr?.let { evalExpr(it, frame) } ?: ScriptValue.Null
                 throw ReturnException(v)
             }
-            is BTSStmt, is WhenPropStmt, is StrategyStmt, is AxiomStmt, is ByStmt -> ScriptValue.Null
+            is BTSStmt, is WhenPropStmt, is StrategyStmt, is AxiomStmt -> ScriptValue.Null
+            // t30：ByStmt 已改为编译期错误（E-BY-REMOVED），不可达——保留空求值仅为 when 穷尽
+            is ByStmt -> ScriptValue.Null
             is IfPropStmt -> ScriptValue.Null
             is ExistIntroStmt, is ExistsElimStmt -> ScriptValue.Null
             is UncheckedStmt -> evalStmt(stmt.inner, frame)

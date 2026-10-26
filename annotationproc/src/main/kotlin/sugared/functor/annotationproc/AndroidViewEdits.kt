@@ -199,6 +199,17 @@ private fun rewriteExpr(
             val stmts = e.stmts.map { rewriteStmt(it, viewNames, ordinals) { ch = true } }
             return (if (ch) BlockExpr(stmts) else e) to ch
         }
+        is WhenExpr -> {
+            var ch = false
+            val subj = e.subject?.let { applyTo(it, viewNames, ordinals) { ch = true } }
+            val arms = e.arms.map { arm ->
+                val ng = arm.guard?.let { applyTo(it, viewNames, ordinals) { ch = true } }
+                val nc = arm.cond?.let { applyTo(it, viewNames, ordinals) { ch = true } }
+                val nb = applyTo(arm.body, viewNames, ordinals) { ch = true }
+                if (ng === arm.guard && nc === arm.cond && nb === arm.body) arm else arm.copy(guard = ng, cond = nc, body = nb)
+            }
+            return (if (ch) WhenExpr(subj, e.subjectBinding, arms, e.pos) else e) to ch
+        }
         is IfExpr -> {
             var ch = false
             val c = applyTo(e.cond, viewNames, ordinals) { ch = true }
