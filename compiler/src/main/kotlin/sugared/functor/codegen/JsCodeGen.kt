@@ -76,6 +76,8 @@ class JsCodeGen(val target: Target = Target.NODE) {
     private val viewFieldTypes = HashMap<String, Map<String, Type>>()
     // 决策 69 扩展：@android 无体内建按名登记（桥调用点补默认值）
     private val androidBuiltins = HashMap<String, FunDecl>()
+/** t43（SfW/SfG t40 出入1）：@host 无体声明（非 node 目标调用点走 __subl.call） */
+private val hostBodyless = HashMap<String, FunDecl>()
     /** 安卓视图结构体（@view）名 → 字段名（android doc：mutation → 副本 → recomposion 用）。 */
     private val viewFieldsByStruct = HashMap<String, List<String>>()
 private var viewFnCounter = 0
@@ -210,6 +212,7 @@ private var bridgeFnCounter = 0
         viewFieldsByStruct.clear()
         viewFieldTypes.clear()
         androidBuiltins.clear()
+        hostBodyless.clear()
         bridgeFnCounter = 0
         overloadsByUnit.clear()
         for ((_, fa) in units) for (e in fa.entries) if (e is DeclEntry) {
@@ -221,6 +224,10 @@ private var bridgeFnCounter = 0
                 // 决策 69 扩展：@android 无体内建声明——桥调用点按声明默认值补齐实参（KT 按位置读 args）
                 val fd = e.decl as? FunDecl
                 if (fd != null && "android" in fd.annotations && fd.body == null) androidBuiltins[fd.name] = fd
+                // t43：@host 无体声明（如 @wasm @host @impure fun demoBridge(): Str）登记——
+                // 调用点在非 node 目标走宿主桥 __subl.call("<hostFunName>", [args])（host 注册表是单一真源）
+                if (fd != null && fd.body == null && "host" in fd.annotations && "android" !in fd.annotations)
+                    hostBodyless[fd.name] = fd
                 continue
             }
             if ("view" in s.annotations) {
@@ -1191,6 +1198,17 @@ private fun needEqPreScan(file: FileAst): Boolean {
                 "E-PLATFORM-UNAVAILABLE 目标 wasm 不支持平台调用「${name}」（wasm 单线程无同步宿主调用通道）。" +
                 "同步 IO 请改用 --target=node；或 --target=browser 走宿主桥"
             )
+        }
+        // t43（SfW/SfG t40 出入1）：@host 无体声明在非 node 目标统一改走宿主桥单入口
+        // __subl.call("<hostFunName>", [args...])——宿主按注册表（OPS/__SG_OPS，单一真源）分发，
+        // 不再需要裸名过渡别名。node 直连现状零影响；同名用户带体函数优先让位（与 platformOp 同族约定）；
+        // 省略的尾部默认形参按声明默认值补齐（无函数体 → 无 JS 原生默认可用，同 androidBuiltins 处理）。
+        if (name != null && target != Target.NODE && name !in userFns && name in hostBodyless) {
+            val decl = hostBodyless.getValue(name)
+            val filled = if (e.args.size < decl.params.size)
+                e.args + decl.params.drop(e.args.size).mapNotNull { it.default } else e.args
+            val hsArgs = filled.joinToString(", ") { expr(it) }
+            return awaited(e, "globalThis.__subl.call(\"" + name + "\", [" + hsArgs + "])")
         }
         if (name == "println" || name == "print") {
             // 修复（#8）：print 与 toStr 统一走 __dshtoStr（列表打印为 [] 形式，无空格）

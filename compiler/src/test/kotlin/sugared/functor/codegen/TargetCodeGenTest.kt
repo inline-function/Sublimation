@@ -111,6 +111,39 @@ class TargetCodeGenTest {
         assertTrue(js.contains("__subl.call(\"getArgs\""), "wasm getArgs 应走宿主桥: $js")
     }
 
+    // ---------- t43（SfW/SfG t40 出入1）：@host 无体声明走宿主桥 ----------
+
+    @Test
+    fun `t43 host 无体声明 browser 走宿主桥无裸调`() {
+        val src = "@host @impure fun demoBridge(): Str\n@impure fun main() { print(demoBridge()) }"
+        val js = gen(src, Target.BROWSER)
+        assertTrue(js.contains("__subl.call(\"demoBridge\", [])"), "browser @host 调用应走宿主桥: $js")
+        assertFalse(js.contains("demoBridge()"), "browser @host 不应残留裸名调用: $js")
+    }
+
+    @Test
+    fun `t43 host 无体声明 wasm 同走宿主桥`() {
+        val src = "@host @impure fun demoBridge(): Str\n@impure fun main() { print(demoBridge()) }"
+        val js = gen(src, Target.WASM)
+        assertTrue(js.contains("__subl.call(\"demoBridge\", [])"), "wasm @host 调用应走宿主桥（非 WASM_REJECT 表）: $js")
+        assertFalse(js.contains("demoBridge()"), "wasm @host 不应残留裸名调用: $js")
+    }
+
+    @Test
+    fun `t43 host 无体声明 node 保持裸调`() {
+        val src = "@host @impure fun demoBridge(): Str\n@impure fun main() { print(demoBridge()) }"
+        val js = gen(src, Target.NODE)
+        assertTrue(js.contains("demoBridge()"), "node @host 保持裸名调用（现状，宿主/运行时自接）: $js")
+        assertFalse(js.contains("__subl.call("), "node 产物不应出现宿主桥: $js")
+    }
+
+    @Test
+    fun `t43 host 省略的默认形参按声明补齐`() {
+        val src = "@host @impure fun greet(name: Str, prefix: Str = \"hi\"): Str\n@impure fun main() { print(greet(\"x\")) }"
+        val js = gen(src, Target.BROWSER)
+        assertTrue(js.contains("__subl.call(\"greet\", [\"x\", \"hi\"])"), "省略的尾部默认形参应按声明补齐进桥参数: $js")
+    }
+
     // ---------- 用户函数优先（桥不劫持同名用户定义） ----------
 
     @Test fun `用户定义同名函数不走平台分派`() {

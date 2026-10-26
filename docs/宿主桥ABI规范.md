@@ -44,6 +44,8 @@ op 名即 Sublimation 平台调用名（print 映射为 println）；参数按�
 
 op 表来源：compiler/.../codegen/Target.kt 的 Platform.BRIDGE_OPS（单一事实源；wasm 额外拒绝 Platform.WASM_REJECTED 中的同步 IO op，编译期报 E-PLATFORM-UNAVAILABLE）。
 
+@host 无体声明（t43）：编译期无函数体的 @host 声明（如 @wasm @host @impure fun demoBridge(): Str）在 browser/wasm 目标下，调用点同样走单入口——globalThis.__subl.call("demoBridge", [args...])，op 为声明名（宿主注册表 OPS/__SG_OPS 按此名分发）。省略的尾部默认形参按声明默认值补齐进桥参数；调用 @async 的 @host 声明时按挂起点加 await。宿主不再需要裸名过渡别名（globalThis.demoBridge 之类可直接删除）。node 目标保持裸名调用不变。
+
 ## 5. 错误协议
 
 - 失败一律 throw new Error（JS 原生异常通道）；**message 建议以 [__subl] 前缀**，便于产品/插件过滤宿主来源错误。
