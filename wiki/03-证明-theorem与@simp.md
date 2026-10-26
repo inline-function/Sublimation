@@ -66,8 +66,7 @@ fun size[F[_]: Foldable, A](fa: F[A]): Nat
 |---|---|---|
 | axiom 语句 | `axiom p1, p2, …` | 顶层 + 函数内（parseAxiomStmt :706） |
 | ∵∴ 链 | `∵ form, p₁, p₂ ∴ conclusion` | 函数内（parseBTS :683）；裸 `∴ q` 反糖为 `∵ ⊤ ∴ q` |
-| by 语句 | `by [q]` | 函数内（:652） |
-| by 表达式 | `expr by [q]` | 表达式位后缀（:1027） |
+| by 表达式 | `expr by [q]` | 表达式位后缀（:1027）；语句式 `by [q]` 已移除（t30，E-BY-REMOVED，:652 仍解析） |
 | 策略语句 | `@simp[命题]` | 函数内 / 脚本顶层 |
 
 ## 语义
@@ -135,9 +134,9 @@ $$\frac{\text{"axiom"} \in \text{fn.annotations}}{\text{跳过 E-POST-UNPROVEN�
 | `@axiom fun` | 函数下文签名 | 后件免证，**上文仍需证** | 调用点注入 | 函数体正常生成 |
 | `@theorem fun` | 定理后件 | 有体时体须证后件 | **全局定理空间**（可搜索） | **JS 擦除**，调用→null；解释器照常求值 |
 | `∵ p₁, p₂ ∴ q` | Γ 推导 | 前提**必证**（`E-PREMISE-UNPROVEN`），结论须推出（`E-CANNOT-PROVE`） | 结论注入当前 Γ | 语句求值为 Null |
-| `by [q]` / `expr by [q]` | 作者直接供给 | 免证（`D-BY` 提示） | 当前帧 | by 后缀擦除，只留目标值 |
+| `expr by [q]` | 断言（t30） | **须证**（`E-CANNOT-PROVE`） | 不注入 | by 后缀擦除，只留目标值 |
 
-一句话分工：**axiom/by 是「我说它是」的局部信任；@axiom 是「签名说的算」的函数级信任；@theorem 是「全局可搜的名片」；∵∴ 是「请你查 Γ」的证明义务**。
+一句话分工：**axiom 是「我说它是」的局部信任（t30 后唯一的免验证入口）；by 断言是「请你查 Γ」的表达式位义务；@axiom 是「签名说的算」的函数级信任；@theorem 是「全局可搜的名片」；∵∴ 是「请你查 Γ」的语句位证明义务**。
 
 ## 示例
 
@@ -222,7 +221,7 @@ fun spec2(n: Nat): Nat <$ = 999> = n       // 通过；-v 可见 D-AXIOM-POST（
 7. **`@theorem` 不豁免后件证明**：有体的定理仍报 `E-POST-UNPROVEN`（实测）；要豁免请加 `@axiom`（两者可叠写，实测通过）
 8. **`@theorem` 不要求纯/Null**：`@theorem @impure`、非 Null 返回类型都能过 check——但注意陷阱 6，JS 侧调用恒 null，这类「带值的定理」跨后端必然踩坑
 9. **`E-NEED-CLASSIC` 是警告不是错误**：没挂 `@classic` 的 `if[p]` 照样编译通过，只是排中律通道没开（两支结论不会溢出）——别拿「编译过了」当「经典逻辑生效」
-10. **axiom 语句免证但作用域局部**：`axiom p` 只注入当前函数/块；跨函数复用要么再写一次，要么升格成 `@theorem`（全局可搜）。同理 `by [q]` 也是免证供给——信任边界由作者守住，Γ 被污染不会报警
+10. **axiom 语句免证但作用域局部**：`axiom p` 只注入当前函数/块；跨函数复用要么再写一次，要么升格成 `@theorem`（全局可搜）。t30 后免验证供给只剩 axiom 一条路（旧 `by [q]` 供给已删，by 断言不注入 Γ）——信任边界由作者守住，Γ 被污染不会报警
 11. **旧文档口径过时**：Types.kt:356 注释「有体定理照常生成运行时代码」与 JsCodeGen.kt:576 实现冲突，实测有体 `@theorem` 同样被擦除；遇冲突以代码与实测为准
 12. **策略失败是硬错误**：`E-STRATEGY-FAILED` 阻塞编译（error 级），不像 `E-NEED-CLASSIC` 是警告；`∵ … ∴` 证不出给 `E-CANNOT-PROVE`（激进模式下也不放宽）
 13. **跨模块定理可见性：待核**——同一模块树内跨文件搜索已实测通过；用户模块引用 core 标准库定理的可见性规则（visiblePaths/allSymbols 与 .settings 的交互）未在本次实测，引用前请自行验证

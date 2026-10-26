@@ -25,18 +25,19 @@
 - 角表（后缀 `<…>`）：实例化/显式供给/上下文约束；`¬前空格` 约束（如 `<p>` 后不接空格才作后缀）；angle 上下文中 `>` 作中缀须前空格且有操作数（Parser.kt:1028）
 - axiom 语句：`axiom p1, p2, …`（canStartAxiomProp 允许 IDENT/SYMBOL/INT/FLOAT/STR/LPAREN/LNOT/BANG/TOP/BOT/MINUS/FORALL/EXISTS/EXISTS1 起始；旧 `unchecked.axiom[p]` 报错引导）
 - unchecked 语句：`unchecked <语句>` → UncheckedStmt（parseUnchecked Parser.kt:796）；`unchecked.axiom[…]` 与 `unchecked.<其它>` 均报错
-- by：`expr by [q]` → ByExpr（命题证明依据）
+- by：`expr by [q]` → ByExpr 后缀**断言**（t30：免验证供给已删——语句式 `by [q]` 报 E-BY-REMOVED，Parser 仍解析）；`impl C for T by field` 委托位另解（Parser.kt:969）
 
 ## 3 类型系统（Checker.kt + TypeInfer.kt + Ast.kt）
 - 类型形态：`T`（不可变）、`@mut T`（唯一所有权可变）、`@ref T`（共享只读视图）、`@ref @mut T`（共享可变=别名）；函数类型 `(T) => U` / 零参 `() => U`；类型参数 `[T]`；类型别名 `type F[a] = T[a]`（带泛型头）；联合 `Nat | Str`；类型类 typeclass（约束式泛型）；Optional/Result 为标准库枚举
 - 枚举/结构体：`enum E { A(), B(T, E) }`；`@mut struct T(@mut n: Nat)`（字段可 @mut）；构造 `Cons(h, t)`
 - isMut/isRef 工具于 Checker；赋值闸 E-IMMUT-ASSIGN 仅当 !isMut(lhs) 且 uncheckedDepth==0（Checker.kt:612）
 - Optional Some 视图已删除（修正案）；`o.getOr...` 系列为方法/标准库形态
+- Any 期望位豁免（自动类型类，autoTraits）：**期望侧**为裸 Any（零类型实参）时接受任意具体类型——与字段默认值/参数默认值（Symbols.kt:227/240）、形参位（CallCheck.kt:42/677）、变长回退（:885）同构；返回位 4 处：命名函数体/return 语句/lambda 期望返回/匿名函数体（Checker.kt:404/791/1129/1327 + Types.kt isAnyExpect）。实际侧（实参 Any 期望具体类型）仍严格
 
 ## 4 命题与证明（Prop.kt + Checker.kt + ArithProve.kt）
 - 规范化：PAtom 承载原子（0 元 `p`、参数化 `valid<7>`、比较 `$ == 7` → PAtom("==",[$,7])）；BinExpr 归一 ASCII⇄Unicode（`∈`→`in`、`<=`↔`≤`、`!=`↔`≠`）在命题层
 - Γ：allFacts 全域事实；分离 MP 闭包（`p ∧ (p → q)` 饱和产 q）；量词 ∀ 实例化（命题池全局供给）
-- axiom 语句注入对应作用域；`∵ … ∴ q` 证明义务（E-CANNOT-PROVE / E-PREMISE-UNPROVEN / W-PROP-UNBOUND）；`by [q]` 直接供给
+- axiom 语句注入对应作用域；`∵ … ∴ q` 证明义务（E-CANNOT-PROVE / E-PREMISE-UNPROVEN / W-PROP-UNBOUND）；`expr by [q]` 断言（t30：props 挂 pendingByAsserts 队列，包围语句/函数体检查完经 proveOrDeep 核对、证不出报 E-CANNOT-PROVE，不注入 Γ；免验证入口只剩 axiom）
 - 算术通道 ArithProve：差分图（`a ≤ b`→边）、常量折叠、等式链代换（`= 双向边 + 传递`）
 - 激进模式（CLI 标志）：命题维实例化（`∀p` 的 p 分派命题池穷举）
 
@@ -57,10 +58,10 @@
 - 脚本模式：.subs 每文件独立执行（互不共享、无需 main）；工程模式 = 目录即模块（根 / 扫全树）
 
 ## 8 模块与工具链
-- CLI（Main.kt 402 行）：子命令 = parse / tokens / check <文件|目录>（目录=模块全树）/ compile <文件|目录> [-o out] / run-script <路径|目录>（先 .subs 后工程回退）/ explain <CODE>；**没有 `run` 子命令**（误输入回退 USAGE、退出码 2；工程执行走 run-script 目录回退或 compile+node）；`-p <处理器>>`、`-A key=value`、`-v`（诊断+supplement）、aggressive 标志（激进证明）
+- CLI（Main.kt 402 行）：子命令 = parse / tokens / check <文件|目录>（目录=模块全树）/ compile <文件|目录> [-o out] / run-script <路径|目录>（先 .subs 后工程回退）/ explain <CODE>；**没有 `run` 子命令**（误输入回退 USAGE、退出码 2；工程执行走 run-script 目录回退或 compile+node）；`-p <处理器>>`、`-A key=value`、`-v`（诊断+supplement）、aggressive 标志（激进证明）；t35：`--target=node|browser|wasm`（默认 node）——非 node 目标 S-1 装载模型（产物导出 globalThis.__subl.main、不自执行；平台调用走宿主桥 __subl.d(op,args)），wasm 拒同步 IO（E-PLATFORM-UNAVAILABLE）
 - 注解处理器（annotationproc）：AnnotationScanner 扫描 + 改写流水线（AndroidViewEdits 等）；@allMut 等 APT 引入注解先于 B/C 检查跑；**内建处理器目录是 cwd 相对路径 `annotation processer/`（注意拼写）——换工作目录即静默失效**
 - 标准库 core/：logic（list/set/map/optional/result/typeclass/real…）、classic、async、mutex、flow 等 .subl
-- 诊断体系：E-（错误）/W-（警告）/D-（提示）三族；cli 有全量 explain 表；关键码如 E-IMMUT-ASSIGN、E-CANNOT-PROVE、E-PREMISE-UNPROVEN、W-PROP-UNBOUND、E-MAIN-PARAMS、E-RETURN-OUT-OF-BLOCK 等
+- 诊断体系：E-（错误）/W-（警告）/D-（提示）三族；cli 有全量 explain 表；关键码如 E-IMMUT-ASSIGN、E-CANNOT-PROVE、E-PREMISE-UNPROVEN、W-PROP-UNBOUND、E-MAIN-PARAMS、E-PLATFORM-UNAVAILABLE（t35：--target 拒绝）、E-RETURN-OUT-OF-BLOCK 等
 - 测试规模：frontend 65、compiler 536、interpreter 52、cli/language-service 各若干；examples 由 ParserTest/CheckerTest/E2E 引用
 
 ## 9 待补（抽取代理若回报则覆盖本表）

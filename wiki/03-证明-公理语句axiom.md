@@ -71,7 +71,7 @@ axiom ∃! y. y = 1                    // 唯一存在
 | axiom 语句 | `axiom p1, p2` | 命题直接注入 Γ，免证明（本条目） |
 | `unchecked <语句>` | `unchecked var x = 1` | 包裹**单条**语句，uncheckedDepth++ 放开可变赋值等闸门（Checker.kt:767）；公理改写后它与 axiom 无关 |
 | `@axiom` 注解 | `@axiom fun f(): <…>` | 函数级「签名即公理」：下文由作者声明、编译器信任，跳过 E-POST-UNPROVEN（Checker.kt:408-413） |
-| `by [q]` | `f() by [q]` / `by [q]` 语句 | 语句级直接供给，带 D-BY 留痕（Checker.kt:762-766） |
+| `by [q]` | `expr by [q]` | t30 后：表达式位**断言**（proveOrDeep 核对，证不出报 E-CANNOT-PROVE）；语句式 `by [q]` 已移除（E-BY-REMOVED），免验证供给只留本条目的 axiom |
 
 ## 示例
 

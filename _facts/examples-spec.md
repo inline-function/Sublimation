@@ -15,7 +15,7 @@
 | 9 | Optional与Result.subl | map/getOrElse/unwrapOr/when 解构/Err 传播 |
 | 10 | 集合标准库.subl | List/Set/Map+fold/map/filter/sortBy/zip/toSet |
 | 11 | 命题基础.subl | 原子/蕴含 →/等价 <->/<p ∨ ¬p>/量词 ∀∃ |
-| 12 | 手动证明.subl | ∵∴ 链/多前提逗号/by [q]/不可证报错演示 |
+| 12 | 手动证明.subl | ∵∴ 链/多前提逗号/by [q] 断言（t30 后语义）/不可证报错演示 |
 | 13 | 公理化.subl | axiom 语句(顶层+函数内)/∀ 实例化/弥散 |
 | 14 | 自动证明.subl | 算术通道(≤/=/传递)/激进模式命题维 |
 | 15 | 上下文弥散.subl | 上文/下文/$/$n/companion |

@@ -39,7 +39,7 @@ fun run(f: @impure () => Null): Null { f() }       // 函数类型位注解（�
 |---|---|---|
 | `@impure fun f` | 函数声明 | 声明「我有副作用」，体按非纯检查；效应沿调用链向上传播 |
 | `unchecked <语句>` | 单条语句 | 一次性豁免该语句的可变性/纯度/停机闸（uncheckedDepth++） |
-| `axiom pure<f>` / `by [pure<f>]` | 命题层 | 向 Γ 供给 `pure<f>`，使对应非纯调用在纯作用域合法 |
+| `axiom pure<f>` | 命题层 | 向 Γ 供给 `pure<f>`，使对应非纯调用在纯作用域合法（t30 后唯一免验证供给；`by [pure<f>]` 语句式已删，后缀式改为断言不供给） |
 
 ## 语义
 
@@ -125,7 +125,7 @@ fun main(): Null {
     side()                                 // 放行 1：调用方自身非纯
     pureCaller()                           // 放行 2：上文由上一条 axiom 供给
     run({ => side() })                     // 放行 3：lambda 喂给借用形参
-    by [pure<side>]                        // 供给 2：by 直接供给
+    axiom pure<side>                       // 供给 2（t30 后）：旧 by [pure<side>] 供给已删，改用 axiom
     side()
     unchecked print("done")                // 供给 3 的反面：unchecked 一次性豁免
 }
@@ -179,7 +179,7 @@ print("ok")
 
 - **`@impure` 不是 `unchecked`**：`unchecked` 只豁免它包住的那一条语句，不改变函数身份；实测 `unchecked var f = { => side() }` 之后，`f()` 仍报 E-IMPURE-CALL。反过来，`@impure` 不豁免任何检查——它只是声明，纯函数调用它仍报错，须自己声明、`unchecked` 或供给 `pure<f>`。
 - **局部函数不能标 `@impure`**：函数体内 `@impure fun local(…)` 直接语法错（parseStmt 不通）；要写非纯局部函数只能靠外层函数标 `@impure` 或 `unchecked` 包裹。局部函数体目前也不进声明体检查通道（实测类型错漏检），别把效应审查寄托在它身上（待核：后续版本行为）。
-- **`pure<f>` 是欠债，不是免单**：把 `<pure<f>>` 写进上文只是把证明义务转嫁给调用方——实测调用方不供给即报 E-PRE-UNPROVEN。三层逃逸（`axiom` / `by` / 弥散来的事实）都得在调用方作用域里真正成立。
+- **`pure<f>` 是欠债，不是免单**：把 `<pure<f>>` 写进上文只是把证明义务转嫁给调用方——实测调用方不供给即报 E-PRE-UNPROVEN。两层逃逸（`axiom` 供给 / 弥散来的事实）都得在调用方作用域里真正成立（t30 后旧 `by [pure<f>]` 供给通道删除）。
 - **`@mut` 参数强制 `@impure`，且只此一家**：E-IMPURE-REQUIRED 只认 `MutType` 参数；`@ref` 不能写在类型位（类型位只有 @mut/@atomic/@impure），可变形参语义一律走 `@mut T`。
 - **impure 结果不进等式推理**：`var x = one()` 不注入 `x = one()`，`∵ x = 1` 之类的目标对 impure 源证不出；但作者**声明的下文** `<$ = 1>` 照常弥散（一个靠自动事实，一个靠声明信任，两条通道别混）。
 - **同名异模块保守拦截**：某名字在任一可见模块有 `@impure` 定义，则跨模块的 `pure<f>` 整名不注册——裸名调用一律按非纯拦下，编译器不猜你调的是哪一个。

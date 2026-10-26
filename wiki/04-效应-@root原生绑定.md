@@ -74,7 +74,7 @@ $$\frac{\texttt{name} \in \text{dom}(\texttt{builtinimpure} \cup \texttt{builtin
 
 $$\frac{\texttt{root} \in ann(f) \qquad \texttt{impure} \notin ann(f)}{\Gamma \vdash \text{纯作用域调用 } f \text{ 不触发 E-IMPURE-CALL}} \ (\text{R-GATE-USER}) \qquad \frac{\texttt{async} \notin ann(f)}{\text{调用点不登记挂起点，不插 await}} \ (\text{R-ASYNC-USER})$$
 
-即：白名单内的非纯内建，若用户声明漏写 `@impure`，纯函数里也能调用（实测 `@root fun delay(ms: Nat): Null` 在纯 `main` 中通过检查）。注册侧用表、闸门侧用声明，两处不同源——这是 @root 机制最大的语义不对称，也是多数陷阱的根源。`pure<f>` 供给放行（`axiom pure<f>` 或 `by [pure<f>]`）在 @root 声明上同样有效：因为闸门读用户声明，若用户未写 @impure，根本无需供给。
+即：白名单内的非纯内建，若用户声明漏写 `@impure`，纯函数里也能调用（实测 `@root fun delay(ms: Nat): Null` 在纯 `main` 中通过检查）。注册侧用表、闸门侧用声明，两处不同源——这是 @root 机制最大的语义不对称，也是多数陷阱的根源。`pure<f>` 供给放行（`axiom pure<f>`；t30 后旧 `by [pure<f>]` 供给已删）在 @root 声明上同样有效：因为闸门读用户声明，若用户未写 @impure，根本无需供给。
 
 ### 签名与体内检查
 

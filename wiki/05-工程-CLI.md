@@ -43,7 +43,7 @@ java -jar sublimation.jar explain <诊断码>
 | `-v` | 布尔 | check 同时输出补充级诊断（类型推导结果等）；run-script 会把它过滤丢弃 |
 | `-o out.js` | 仅 compile | JS 写入文件（父目录自动创建）；省略则打印到标准输出 |
 | `--global-inference` | 仅 run-script | 开全局类型推导（显式标注 > 构造点 > 使用点 > 默认 Any）；编译模式不受影响 |
-| `--prover=aggressive` | 仅 compile/check | 激进证明开关（无中间档） |
+| `--target=node\|browser\|wasm` | compile/check | 编译目标（默认 node 向后兼容）。node=自执行脚本；browser/wasm=S-1 装载模型——产物导出 `globalThis.__subl.main`（宿主 eval 后调用、不自执行），平台调用走宿主桥单入口 `globalThis.__subl.d(op, args)`；wasm 无同步宿主通道，`readFile` 等同步 IO 与 core/io 模块编译期拒绝（E-PLATFORM-UNAVAILABLE）。-A/SfA 安卓路线默认 node，不受影响 |
 | `--prove-verbose` | 激进模式 | 提高进度输出频率 |
 | `--prove-dump=<路径>` | 激进模式 | 诊断报告路径，默认 `sublimation-prover-dump.md`，仅中断时写（USAGE；未实测——待核） |
 | `--prove-interval=<2s/500ms>` | 激进模式 | 进度节流间隔，默认 5 秒；源码 parseIntervalMs 另接受 `m` 后缀与裸数字 |
