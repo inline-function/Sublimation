@@ -1473,6 +1473,24 @@ class CheckerTest {
         val src = "@theorem fun Triv[p]: Null <p> { axiom p }\n@impure fun main() { ∴ p }"
         assertTrue(ok(src), "@theorem 显式标注登记定理；∴ 榜前/合一应证明")
     }
+    // t39（P0 崩溃修复回归）：termUnifies 缺终止保护——定理 theory 参数与用户变量同名时 env 自引用 → StackOverflowError
+    @Test
+    fun `t39 定理参数与用户变量同名 divides self 精确场景`() {
+        val src = "@theorem fun `divides self`[n]: Null <divides<n, n>>\n@impure fun main() { var n : Nat = 4\n∴ divides<n, n> }"
+        assertTrue(ok(src), "t39：stdlib divides self 的 n 对用户同名变量 n，定理搜索应正常命中（occurs/自引用终止），不 StackOverflowError")
+    }
+
+    @Test
+    fun `t39 变体 不同名定理参数同名用户变量`() {
+        val src = "@theorem fun `drefl`[m]: Null <drefl<m, m>>\n@impure fun main() { var m : Nat = 7\n∴ drefl<m, m> }"
+        assertTrue(ok(src), "t39 变体：换名 m 的自反定理对同名用户变量 m 同样命中")
+    }
+
+    @Test
+    fun `t39 变体 绑定链成环多参数`() {
+        val src = "@theorem fun `cyc`[x, y]: Null <cyc<x, y, x>>\n@impure fun main() { var x : Nat = 1\nvar y : Nat = 2\nvar w : Nat = 3\n∴ cyc<y, x, w> }"
+        assertTrue(ok(src), "t39 变体：x/y 交叉绑定后成环（env 链回到自身）应终止并命中，不 StackOverflowError")
+    }
 
     @Test
     fun `@theorem 值级调用解封不再警告`() {

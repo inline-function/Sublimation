@@ -382,16 +382,28 @@ private fun postUnifies(post: Prop, q: Prop, vars: Set<String>, env: MutableMap<
         else -> false
     }
 
-private fun termUnifies(a: Expr, b: Expr, vars: Set<String>, env: MutableMap<String, Expr>): Boolean {
+/** 结构项合一（t39 加终止保护：occurs/自引用 + 绑定链成环均不再递归）。*/
+private fun termUnifies(
+    a: Expr, b: Expr, vars: Set<String>, env: MutableMap<String, Expr>,
+    seen: Set<String> = emptySet(),
+): Boolean {
     if (a is NameRef && a.name in vars) {
-        val prev = env[a.name]
-        if (prev == null) { env[a.name] = b; return true }
-        return termUnifies(prev, b, vars, env)
+        val name = a.name
+        // t39（P0 崩溃修复）：定理 theory 参数与用户变量同名（如 stdlib divides 的 n 对目标 divides<n, n>）
+        // 时，b 就是同名元变量——视为同一元变量直接成功，不写入 env 造成自引用。
+        if (b is NameRef && b.name == name) return true
+        val prev = env[name]
+        if (prev == null) { env[name] = b; return true }
+        // t39：prev 已与 b 同项，或绑定链回到本名（含 env 链成环 x→y→x）→ 终止，不递归。
+        if (prev === b) return true
+        if (prev is NameRef && prev.name == name) return true
+        if (name in seen) return true
+        return termUnifies(prev, b, vars, env, seen + name)
     }
     if (a is NameRef && b is NameRef) return a.name == b.name
     if (a is IntLit && b is IntLit) return a.value == b.value
     if (a is FieldExpr && b is FieldExpr)
-        return a.name == b.name && termUnifies(a.target, b.target, vars, env)
+        return a.name == b.name && termUnifies(a.target, b.target, vars, env, seen)
     return a.toStr() == b.toStr()
 }
 

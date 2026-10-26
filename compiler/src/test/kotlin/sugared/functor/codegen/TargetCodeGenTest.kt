@@ -14,7 +14,7 @@ import kotlin.test.assertTrue
  * 三目标基线：
  *  - node：自执行脚本、require('fs') 直连（既有行为不变，向后兼容）
  *  - browser：S-1 装载模型——导出 globalThis.__subl.main、不自执行、平台调用走宿主桥
- *    globalThis.__subl.d(op, args)；println 直连 console.log（宿主有 console）
+ *    globalThis.__subl.call(op, args)；println 直连 console.log（宿主有 console）
  *  - wasm：同 S-1 装载模型；同步 IO 等平台调用编译期拒绝（E-PLATFORM-UNAVAILABLE）
  */
 class TargetCodeGenTest {
@@ -78,7 +78,7 @@ class TargetCodeGenTest {
 
     @Test fun `browser 基线 导出 main 不自执行 IO 走宿主桥`() {
         val js = gen(ioSrc, Target.BROWSER)
-        assertTrue(js.contains("__subl.d(\"readFile\""), "browser readFile 应走宿主桥: $js")
+        assertTrue(js.contains("__subl.call(\"readFile\""), "browser readFile 应走宿主桥: $js")
         assertTrue(js.contains("(globalThis.__subl"), "browser 应导出 globalThis.__subl: $js")
         assertFalse(js.contains("require('fs')"), "browser 不应直连 node fs")
         assertFalse(js.contains("main();"), "browser 不应自执行 main")
@@ -87,7 +87,7 @@ class TargetCodeGenTest {
     @Test fun `browser println 直连 console getArgs 走宿主桥`() {
         val js = gen("@impure fun main() { print(\"hi\")\nprint(getArgs()) }", Target.BROWSER)
         assertTrue(js.contains("console.log("), "browser println 应直连 console.log: $js")
-        assertTrue(js.contains("__subl.d(\"getArgs\""), "browser getArgs 应走宿主桥: $js")
+        assertTrue(js.contains("__subl.call(\"getArgs\""), "browser getArgs 应走宿主桥: $js")
     }
 
     // ---------- wasm 基线（S-1 装载 + 同步 IO 编译期拒绝） ----------
@@ -95,7 +95,7 @@ class TargetCodeGenTest {
     @Test fun `wasm 无 IO 程序 导出 main 不自执行`() {
         // print/println 在 wasm 下一律经桥（宿主未必提供 console）；单文件 builtin 回退签名不含 println，故用 print
         val js = gen("@impure fun main() { print(\"hi\") }", Target.WASM)
-        assertTrue(js.contains("__subl.d(\"println\""), "wasm println 应走宿主桥（无 console 保证）: $js")
+        assertTrue(js.contains("__subl.call(\"println\""), "wasm println 应走宿主桥（无 console 保证）: $js")
         assertTrue(js.contains("(globalThis.__subl"), "wasm 应导出 globalThis.__subl: $js")
         assertFalse(js.contains("main();"), "wasm 不应自执行 main")
     }
@@ -107,8 +107,8 @@ class TargetCodeGenTest {
 
     @Test fun `wasm sleep 与 getArgs 走宿主桥`() {
         val js = gen("@impure fun main() { sleep(10)\nprint(getArgs()) }", Target.WASM)
-        assertTrue(js.contains("__subl.d(\"sleep\""), "wasm sleep 应走宿主桥: $js")
-        assertTrue(js.contains("__subl.d(\"getArgs\""), "wasm getArgs 应走宿主桥: $js")
+        assertTrue(js.contains("__subl.call(\"sleep\""), "wasm sleep 应走宿主桥: $js")
+        assertTrue(js.contains("__subl.call(\"getArgs\""), "wasm getArgs 应走宿主桥: $js")
     }
 
     // ---------- 用户函数优先（桥不劫持同名用户定义） ----------
@@ -117,7 +117,7 @@ class TargetCodeGenTest {
         // 用户自己实现的 sleep（非 builtin 占位）——wasm 下不应被宿主桥劫持、也不直连 fs
         val src = "@impure fun sleep(ms: Nat): Null { print(\"slept\") }\n@impure fun main() { sleep(10) }"
         val jsWasm = gen(src, Target.WASM)
-        assertFalse(jsWasm.contains("__subl.d(\"readFile\""), "用户 readFile 不应被桥劫持")
+        assertFalse(jsWasm.contains("__subl.call(\"readFile\""), "用户 readFile 不应被桥劫持")
         assertFalse(jsWasm.contains("require('fs')"), "用户 readFile 不应直连 fs")
     }
 }

@@ -1066,14 +1066,14 @@ private fun needEqPreScan(file: FileAst): Boolean {
         return if (name in Platform.BRIDGE_OPS) PlatformOp.BRIDGE else PlatformOp.NODE_DIRECT
     }
 
-    /** 宿主桥调用：globalThis.__subl.d("<op>", [args...])——宿主按 op 名实现平台能力（t35）。
+    /** 宿主桥调用：globalThis.__subl.call("<op>", [args...])——宿主按 op 名实现平台能力（t35）。
      *  Result 型 IO 与 node 分支同构（try/catch 包 Ok/Err）；sleep 经 awaited 保持挂起语义。 */
     private fun bridgeCall(e: CallExpr, name: String): String {
         val op = if (name == "print") "println" else name
         val args = if (name == "println" || name == "print")
             e.args.joinToString(", ") { "__dshtoStr(${expr(it)})" }
         else e.args.joinToString(", ") { expr(it) }
-        val call = "globalThis.__subl.d(\"" + op + "\", [" + args + "])"
+        val call = "globalThis.__subl.call(\"" + op + "\", [" + args + "])"
         return when (name) {
             "readFile", "readLine", "writeFile", "appendFile", "readDir" ->
                 awaited(e, "(() => { try { return core_collection__Ok(" + call + "); } catch (x) { return core_collection__Err(x.message); } })()")
@@ -1182,7 +1182,7 @@ private fun needEqPreScan(file: FileAst): Boolean {
         }
         // t35（SfW Phase 1）：平台分派——非 node 目标的平台调用走宿主桥或（wasm）编译期拒绝。
         // node 分支（require('fs') 直连、process.argv、setTimeout 等）一律保持不变，向后兼容。
-        // 宿主桥单入口：globalThis.__subl.d("<op>", [args...])——宿主按 op 实现（op 表见 Target.kt 的 Platform）。
+        // 宿主桥单入口：globalThis.__subl.call("<op>", [args...])——宿主按 op 实现（op 表见 Target.kt 的 Platform）。
         // 与安卓桥同层约定：本模块有同名用户定义函数时让位（用户函数优先）。
         when (platformOp(name)) {
             PlatformOp.NODE_DIRECT -> { /* 落回下面的 node 原生实现 */ }

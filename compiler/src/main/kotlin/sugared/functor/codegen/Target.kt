@@ -9,12 +9,14 @@ package sugared.functor.codegen
  *    有 main 时末尾自执行 main()。
  *  - --target=browser：S-1 装载模型——抑制 main() 自执行，把入口导出到
  *    globalThis.__subl.main（宿主已实现兼容路径）；平台调用走宿主桥单入口
- *    globalThis.__subl.d(op, args)。
+ *    globalThis.__subl.call(op, args)。
  *  - --target=wasm：同 S-1 装载模型；同步 IO（readFile 等）在编译期拒绝
  *    （E-PLATFORM-UNAVAILABLE——wasm 单线程无同步宿主调用通道），其余平台调用走宿主桥。
  *
- * 宿主桥单入口 d 的命名是 t35 落地用的临时约定：若三线（SfA/SfG/SfW）宿主与处理器
- * 白名单统一命名空间，须由队长统筹三线联动修改，编译器侧再跟进（t35 任务约束）。
+ * 宿主桥 ABI（t37 队长裁决，见 docs/宿主桥ABI规范.md）：单入口 dispatch 为唯一入口，
+ * 禁止宿主挂裸名——插件框架与注解处理器白名单只认 __subl.call 统一拦截点。
+ * 版本协商入口 __subl.ver() 为预留形态（宿主返回正整数 ABI 版本，当前 1），
+ * 编译器暂不生成该调用。
  *
  * 安卓侧既有行为不受影响：-A/SfA 路线不传 --target（默认 node），core/android
  * 等模块按 MODULE_AVAILABILITY 允许。
@@ -39,7 +41,7 @@ enum class Target(val cliName: String) {
 
 /**
  * 平台能力与可用性表（t35）：
- *  - BRIDGE_OPS：走宿主桥 globalThis.__subl.d(op, args) 的平台调用名；
+ *  - BRIDGE_OPS：走宿主桥 globalThis.__subl.call(op, args) 的平台调用名；
  *  - WASM_REJECTED：wasm 下编译期直接拒绝的平台调用（同步 IO 等）；
  *  - MODULE_AVAILABILITY：模块级 target 可用性表（core 子包到可用 target 集合；未列 = 全 target 可用）。
  */
