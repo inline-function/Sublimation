@@ -101,9 +101,8 @@ class LspAnalysisTest {
         if (!androidStd.isDirectory) return
         val a = LspAnalysis()
         if (coreDir != null) a.loadPrelude(coreDir)
-        a.setAndroidStdlibDir(androidStd)
-        a.setAndroidStdlibEnabled(true)
-        a.setAndroidProcsDir(java.io.File(androidStd.parentFile, "procs"))
+        a.registerExtension(SimpleLspExtension("android", androidStd,
+            java.io.File(androidStd.parentFile, "procs"), enabled = true))
         val src = "// 用药助手 —— 添加：药名 + 剂量 + 当前时间；列表展示；柱状图统计\n@impure\nfun main(): Null {\n    onCreate {\n        unchecked log(\"medready started\", 2)\n    }\n    onStart {\n        layout(content)\n    }\n}\n\n@composable\nfun content(): Box {\n    @mut var nameField = TextField(placeholder = \"药名\")\n    @mut var amountField = TextField(placeholder = \"剂量，如 1 片\")\n    @mut var status = Text(text = \"共 0 条\")\n    @mut var rows = rowsView(emptyList())\n    @mut var chart = chartView(emptyList())\n    @mut var meds: List[Str] = emptyList()\n    @mut var curTime: Str = \"\"\n    return Box(modifier = Plain()) {\n        Box(modifier = Plain()) {\n            Text(text = \"用药助手\", size = 22, bold = true)\n        }\n        Box(modifier = Plain()) { nameField }\n        Box(modifier = Plain()) { amountField }\n        Box(modifier = Plain(), orientation = \"horizontal\") {\n            Button(onClick = {\n                unchecked curTime = nowStr()\n                meds = makeDose(meds, nameField.text, amountField.text, curTime)\n                unchecked storagePut(\"meds\", joinSemicolon(meds))\n                status.text = concat(concat(\"共 \", toStr(size(meds))), \" 条\")\n                rows = rowsView(meds)\n                chart = chartView(meds)\n                nameField.text = \"\"\n                amountField.text = \"\"\n            }) {\n                Text(text = \"＋ 添加\")\n            }\n            Button(onClick = {\n                meds = emptyList()\n                unchecked storagePut(\"meds\", \"\")\n                status.text = \"共 0 条\"\n                rows = rowsView(emptyList())\n                chart = chartView(emptyList())\n            }) {\n                Text(text = \"清空\")\n            }\n        }\n        Box(modifier = Plain()) { status }\n        Box(modifier = Plain()) { rows }\n        Box(modifier = Plain()) { chart }\n    }\n}\n\n@composable fun chartView(meds: List[Str]): Chart = Chart(points = chartPoints(meds), labels = chartLabels(meds), kind = \"bar\")\n\nfun makeDose(cur: List[Str], name: Str, amount: Str, t: Str): List[Str] =\n    cons(concat(concat(concat(name, \" | \"), amount), concat(\" | \", t)), cur)\n\nfun chartPoints(meds: List[Str]): List[Rat] = map(meds) { m => 1.0 }\n\nfun chartLabels(meds: List[Str]): List[Str] = map(meds) { m =>\n    substring(m, 0, if (length(m) < 2) length(m) else 2)\n}\n\nfun joinSemicolon(xs: List[Str]): Str = when(xs) {\n    Nil => \"\"\n    is Cons(h, Nil) => h\n    is Cons(h, t) => concat(concat(h, \";\"), joinSemicolon(t))\n}\n\nfun reverse(xs: List[Str]): List[Str] = when(xs) {\n    Nil => Nil()\n    is Cons(h, t) => append(reverse(t), cons(h, Nil()))\n}\n\n@composable fun rowsView(meds: List[Str]): Box = Box(modifier = Plain()) {\n    rowsBody(reverse(meds))\n}\n\n@composable fun rowsBody(xs: List[Str]): Any = when(xs) {\n    Nil => Box(modifier = Plain()) {}\n    is Cons(m, rest) => Box(modifier = Plain(), orientation = \"vertical\") {\n        Text(text = m, size = 15)\n        rowsBody(rest)\n    }\n}\n\n@impure fun nowStr(): Str {\n    unchecked var ms = timeNow()\n    var s = fmtTime(ms)\n    return s\n}\n"
         a.openDocument("file:///med.subl", src)
         val ds = a.diagnosticsFor("file:///med.subl")
@@ -119,9 +118,18 @@ class LspAnalysisTest {
         for (view in listOf("Box", "Text", "TextField", "Button", "Chart")) {
             assertTrue(tree.contains("\"name\":\"$view\""), "布局树缺视图节点 $view")
         }
+        // 状态变量不进预览树（@mut var nameField = TextField(...) 只是依赖，不显示）
+        // 状态变量不作为顶层节点列出：顶层 children 第一个就是返回的 Box
+        assertTrue(tree.contains("\"children\":[{\"name\":\"Box\""), "顶层应是 Box: $tree")
+        // 节点带源码区间（预览页精确写回用）
+        assertTrue(tree.contains("\"span\":["), "预览树节点缺 span")
         // @composable 调用节点（@rowsView/@chartView）也进树
         assertTrue(tree.contains("\"name\":\"@rowsView\""), tree)
         assertTrue(tree.contains("\"name\":\"@chartView\""), tree)
+        // when 表达式体的 composable 也要能取到视图树（F 组）
+        val rowsTree = a.composableTreeJson("file:///med.subl", sugared.functor.lsp.Position(82, 1))
+        assertNotNull(rowsTree, "composableTreeJson 未找到 rowsBody(when 体)")
+        assertTrue(rowsTree!!.contains("\"name\":\"rowsBody\""), rowsTree)
     }
 
     // ───────── hover ─────────
@@ -132,15 +140,174 @@ class LspAnalysisTest {
         java.io.File(std, "log.subl").writeText("@android @impure fun log(msg: Str, level: Int = 2): Null\n")
         val a = LspAnalysis()
         if (coreDir != null) a.loadPrelude(coreDir)
-        a.setAndroidStdlibDir(std)
-        a.setAndroidStdlibEnabled(true)
+        a.registerExtension(SimpleLspExtension("android", std, null, enabled = true))
         a.openDocument("file:///t.subl", "@composable\nfun card(): Box {\n  unchecked log(\"hi\")\n  return Box()\n}\n")
         val ds = a.diagnosticsFor("file:///t.subl")
         // log("hi") 用默认参不该报实参不足；Box 不该报未定义
         assertTrue(ds.none { it.message.contains("实参") }, ds.joinToString("\n") { it.message })
         assertTrue(ds.none { it.message.contains("Box") && it.message.contains("未") }, ds.joinToString("\n") { it.message })
     }
+    @Test fun `扩展未生效时 stdl 不并入检查（Box 仍报未定义）`() {
+        val std = java.io.File(System.getProperty("java.io.tmpdir"), "lsp-ext-stdlib")
+        std.deleteRecursively(); std.mkdirs()
+        java.io.File(std, "Box.subl").writeText("@android struct Box\n")
+        val a = LspAnalysis()
+        if (coreDir != null) a.loadPrelude(coreDir)
+        a.registerExtension(SimpleLspExtension("android", std, null, enabled = false))
+        a.openDocument("file:///t.subl", "@composable\nfun card(): Box {\n  return Box()\n}\n")
+        val ds = a.diagnosticsFor("file:///t.subl")
+        assertTrue(ds.any { it.message.contains("Box") && it.message.contains("未") }, "未生效扩展不该把 Box 并入检查")
+    }
 
+    @Test fun `definitionOfWord 兜底到生效扩展的 stdl 符号`() {
+        val std = java.io.File(System.getProperty("java.io.tmpdir"), "lsp-ext-stdlib2")
+        std.deleteRecursively(); std.mkdirs()
+        java.io.File(std, "Box.subl").writeText("@android struct Box\n")
+        val a = LspAnalysis()
+        a.registerExtension(SimpleLspExtension("android", std, null, enabled = true))
+        val loc = a.definitionOfWord("file:///t.subl", "Box")
+        assertNotNull(loc, "Box 应定位到扩展 stdl 文件")
+        val u = loc?.uri ?: ""
+        assertTrue(u.startsWith("file:") && u.endsWith(".subl"), "扩展 stdl 定位应是 .subl file URI，实际: " + u)
+    }
+
+    @Test fun `注册与注销扩展按生效状态切换分析行为`() {
+        val std = java.io.File(System.getProperty("java.io.tmpdir"), "lsp-ext-stdlib3")
+        std.deleteRecursively(); std.mkdirs()
+        // ping 非编译器内建（log 是安卓内建，禁用扩展后仍可见，不适合验证切换）
+        java.io.File(std, "ping.subl").writeText("@impure fun ping(msg: Str): Null\n")
+        val src = "fun go(): Null {\n  unchecked ping(\"hi\")\n  return null\n}\n"
+        val a = LspAnalysis()
+        a.registerExtension(SimpleLspExtension("android", std, null, enabled = true))
+        a.openDocument("file:///t.subl", src)
+        val on = a.diagnosticsFor("file:///t.subl")
+        assertTrue(on.none { it.message.contains("没找到函数") && it.message.contains("ping") }, "生效扩展的 ping 应可见")
+        a.unregisterExtension("android")
+        a.openDocument("file:///t.subl", src)
+        val off = a.diagnosticsFor("file:///t.subl")
+        assertTrue(off.any { it.message.contains("没找到函数") && it.message.contains("ping") }, "注销扩展后 ping 应回到未定义")
+    }
+
+
+
+    // ───────── 插件框架（LspPlugin：清单/加载/贡献点）─────────
+
+    /** 造一个插件目录：root/<name>/plugin.json + stdlib/greet.subl */
+    private fun makePlugin(root: java.io.File, name: String, extraManifest: String = "", enabled: Boolean? = null): java.io.File {
+        val p = java.io.File(root, name)
+        p.mkdirs()
+        java.io.File(p, "stdlib").mkdirs()
+        java.io.File(java.io.File(p, "stdlib"), "greet.subl").writeText("@impure fun greet(name: Str): Str\n")
+        val en = if (enabled != null) ", \"enabled\": $enabled" else ""
+        java.io.File(p, "plugin.json").writeText(
+            "{\"id\":\"$name\",\"version\":\"1.2.0\",\"displayName\":\"Plugin $name\",\"stdlibDir\":\"stdlib\",\"processorsDir\":\"procs\"$en$extraManifest}",
+        )
+        return p
+    }
+
+    private fun pluginsRoot(name: String): java.io.File {
+        val root = java.io.File(System.getProperty("java.io.tmpdir"), name)
+        root.deleteRecursively(); root.mkdirs()
+        return root
+    }
+
+    @Test fun `插件清单解析并注册为扩展`() {
+        val root = pluginsRoot("lsp-plugin-load")
+        makePlugin(root, "demo")
+        val a = LspAnalysis()
+        val loaded = a.loadPlugins(root)
+        assertEquals(1, loaded.size, "应加载 1 个插件，实际: ${loaded.map { it.name }}")
+        assertEquals("demo", loaded[0].name)
+        val mf = a.pluginManifests()["demo"]!!
+        assertEquals("1.2.0", mf.version)
+        assertEquals("Plugin demo", mf.displayName)
+        // 插件 stdlib 并入检查：greet 可见、无未定义报错
+        a.openDocument("file:///t.subl", "fun go(): Str {\n  unchecked var s = greet(\"x\")\n  return s\n}\n")
+        val ds = a.diagnosticsFor("file:///t.subl")
+        assertTrue(ds.none { it.message.contains("没找到函数") && it.message.contains("greet") }, ds.joinToString("\n") { it.message })
+    }
+
+    @Test fun `清单非法或缺 id 的插件目录被跳过且不影响其它插件`() {
+        val root = pluginsRoot("lsp-plugin-skip")
+        makePlugin(root, "good")
+        // 非法 JSON
+        val bad1 = java.io.File(root, "bad-json"); bad1.mkdirs()
+        java.io.File(bad1, "plugin.json").writeText("{not json at all")
+        // 清单缺 id
+        val bad2 = java.io.File(root, "no-id"); bad2.mkdirs()
+        java.io.File(bad2, "plugin.json").writeText("{\"version\":\"1.0\"}")
+        // 无清单的普通目录
+        java.io.File(root, "no-manifest").mkdirs()
+        val a = LspAnalysis()
+        val loaded = a.loadPlugins(root)
+        assertEquals(1, loaded.size, "只应加载 good，实际: ${loaded.map { it.name }}")
+    }
+
+    @Test fun `minCoreVersion gate 掉不兼容插件`() {
+        val root = pluginsRoot("lsp-plugin-gate")
+        makePlugin(root, "legacy", extraManifest = ", \"minCoreVersion\": \"2.0\"")
+        val a = LspAnalysis()
+        assertEquals(0, a.loadPlugins(root, coreVersion = "1.1").size, "1.1 < 2.0 应被 gate")
+        a.unregisterExtension("legacy")
+        assertEquals(1, a.loadPlugins(root, coreVersion = "2.5").size, "2.5 >= 2.0 应通过")
+    }
+
+    @Test fun `插件 stdlib 顶层声明进入补全`() {
+        val root = pluginsRoot("lsp-plugin-completion")
+        makePlugin(root, "demo")
+        val a = LspAnalysis()
+        a.loadPlugins(root)
+        a.openDocument("file:///t.subl", "fun go(): Str {\n  unchecked var s = greet(\"x\")\n  return s\n}\n")
+        val items = a.completionFor("file:///t.subl", Position(0, 0)).items
+        assertTrue(items.any { it.label == "greet" }, "补全应含插件符号 greet，实际: ${items.map { it.label }.take(40)}")
+    }
+
+    @Test fun `插件 stdlib 符号的悬停与签名兜底`() {
+        val root = pluginsRoot("lsp-plugin-hover")
+        makePlugin(root, "demo")
+        val a = LspAnalysis()
+        a.loadPlugins(root)
+        a.openDocument("file:///t.subl", "fun go(): Str {\n  unchecked var s = greet(\"x\")\n  return s\n}\n")
+        // hover 落在 greet 调用上（行 1，greet 的 g 处）
+        val hover = a.hoverFor("file:///t.subl", Position(1, 24))
+        assertNotNull(hover, "greet 应有悬停")
+        val c = hover!!.contents as? MarkupContent
+        assertNotNull(c)
+        assertTrue(c!!.value.contains("greet(name: Str)"), "悬停应含签名，实际: ${c.value}")
+        // signatureHelp：光标在 greet( 实参位（行 1 的 ( 内、x 上）
+        val help = a.signatureHelpFor("file:///t.subl", Position(1, 27))
+        assertNotNull(help, "greet 应有签名提示")
+        assertTrue(help!!.signatures.first().label.startsWith("greet("), help.signatures.first().label)
+    }
+
+    @Test fun `未生效插件不贡献补全与悬停`() {
+        val root = pluginsRoot("lsp-plugin-disabled")
+        makePlugin(root, "demo", enabled = false)
+        val a = LspAnalysis()
+        a.loadPlugins(root)
+        a.openDocument("file:///t.subl", "fun go(): Str {\n  unchecked var s = greet(\"x\")\n  return s\n}\n")
+        val items = a.completionFor("file:///t.subl", Position(0, 0)).items
+        assertTrue(items.none { it.label == "greet" }, "未生效插件不该贡献补全")
+        assertNull(a.hoverFor("file:///t.subl", Position(1, 24)), "未生效插件不该贡献悬停")
+    }
+
+    @Test fun `端到端 initialize 的 pluginsDir 加载插件并参与补全`() {
+        val root = pluginsRoot("lsp-plugin-e2e")
+        makePlugin(root, "demo")
+        val dir = root.absolutePath.replace('\\', '/')
+        val input =
+            lspFrame("""{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{},"initializationOptions":{"pluginsDir":"$dir","coreVersion":"1.1"}}}""") +
+            lspFrame("""{"jsonrpc":"2.0","method":"initialized"}""") +
+            lspFrame("""{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///t.subl","languageId":"subl","version":1,"text":"fun go(): Str {\n  unchecked var s = greet(\"x\")\n  return s\n}\n"}}}""") +
+            lspFrame("""{"jsonrpc":"2.0","id":2,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///t.subl"},"position":{"line":0,"character":0}}}""") +
+            lspFrame("""{"jsonrpc":"2.0","method":"exit"}""")
+        val output = java.io.ByteArrayOutputStream()
+        LspServer.start(java.io.ByteArrayInputStream(input.toByteArray(Charsets.UTF_8)), output)
+        val frames = parseFrames(output.toString(Charsets.UTF_8))
+        val completion = frames.firstOrNull { it.contains("\"id\":2") }
+        assertNotNull(completion, "应有 completion 响应")
+        assertTrue(completion!!.contains("greet"), "端到端补全应含插件符号 greet，实际: " + completion.take(300))
+    }
     @Test fun `stdlib 诊断行号平移后不泄漏到本文件行范围`() {
         // 脚本模式：stdlib 与本文件合并检查；本文件诊断的行号必须落在本文件行数内，
         // stdlib 内部诊断的行号已被平移到本文件行数之外（LspAnalysis.offsetStdlibPositions）
@@ -741,6 +908,16 @@ fun card(): Box {
         val newText = a.formatDocument("file:///t.subl")!!.first().newText
         assertTrue(newText.contains("fun main() {"), "左括号应与声明同行，实际:\n" + newText)
         assertTrue(newText.contains("    var x = 1;"), "块内应缩进 4 空格，实际:\n" + newText)
+    }
+
+    @Test fun `formatting mut var 逐行`() {
+        // G 组：块内多个 @mut var 语句不能压一行；类型应用 List[Str] 中间不加空格
+        val a = opened("""fun g() {
+@mut var a = 1
+@mut var b = 2
+}""")
+        val newText = a.formatDocument("file:///t.subl")!!.first().newText
+        assertTrue(newText.contains("    @mut var a = 1\n    @mut var b = 2"), "@mut var 应逐行换行，实际:\n" + newText)
     }
 
     @Test fun `formatting 空块合并`() {

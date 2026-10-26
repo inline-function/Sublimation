@@ -46,9 +46,9 @@ class LspAnalysis {
     // stdlibDir 默认 File("core)，与 Interpreter(stdlibDir) 一致；loadPrelude 时同步覆盖
     private var stdlibDir: java.io.File? = java.io.File("core")
     private var scriptStdlibCache: List<Entry>? = null
-    // 安卓标准库目录（IDE 释放的 android/stdlib）：@android/@composable 声明的只读跳转目标
-    private var androidStdlibDir: java.io.File? = null
-    private var androidStdlibCache: Map<String, Triple<String, String, String>>? = null
+    // 扩展点（插件机制，见 LspExtension 契约）：第三方宿主注册的附加 stdlib/处理器目录；
+    // 语言服务侧不内置任何平台（Android/WASM/…）专属分支
+    private val extensions = LspExtensionRegistry(coreStdlibDir = { stdlibDir })
     // 脚本模式：全局类型推导（省略标注时填充类型/可变性/效应，见 wiki/全局类型推导.md）
     private val scriptGlobalInference = true
 
@@ -62,28 +62,110 @@ class LspAnalysis {
     }
 
     fun updateDocument(uri: String, source: String) {
-        val state = analyze(uri, source)
-        docs[uri] = state
+        // 增量守卫：正文与上次完全一致就跳过整轮解析（IDE 高频事件复用后台已分析的文档）
+        val prev = docs[uri]
+        if (prev != null && prev.source == source && prev.ast != null) return
+        docs[uri] = analyze(uri, source)
     }
 
+    // ───────── 扩展点（插件机制，见 LspExtension 契约）─────────
+    // 语言服务不内置任何平台专属分支；宿主（如 CandyIDE 安卓插件）注册扩展即可注入
+    // 「附加 stdlib 目录 + 处理器目录 + 生效开关」，行为与原平台硬编码分支等价。
+
+    /** 注册语言服务扩展：附加 stdlib 目录 / 处理器目录 / 生效开关（见 LspExtension） */
+    fun registerExtension(extension: LspExtension): LspExtension? {
+        val old = extensions.register(extension)
+        pluginContributionCache.clear()
+        return old
+    }
+
+    /** 按名字注销扩展；被移除扩展的缓存与贡献立即失效。 */
+    fun unregisterExtension(name: String): LspExtension? {
+        val old = extensions.unregister(name)
+        loadedManifests.remove(name)
+        pluginContributionCache.clear()
+        return old
+    }
+
+    /** 已注册扩展（注册顺序；供宿主/测试查询）。 */
+    fun registeredExtensions(): List<LspExtension> = extensions.all()
+
+    // ───────── 插件（清单形态的扩展，见 LspPlugin 契约）─────────
+
     /**
-     * 载入 prelude（幂等）：内建类型 + 内建函数 + 可选 stdlib 顶层符号。
-     * 供补全与悬停使用（不参与 definition/references，避免虚假位置）。
+     * 从插件根目录发现并加载全部插件（每个子目录一份 plugin.json），注册为同名扩展。
+     * coreVersion 非 null 时按清单 minCoreVersion gate 掉不兼容插件（跳过原因记 stderr）。
+     * 重复调用 = 重新发现并刷新（同 id 插件被替换，缓存失效）。
      */
-    /** 设置安卓标准库目录（IDE 端释放的 android/stdlib），供 @android 声明的只读跳转 */
-    /** 安卓标准库是否并入 Checker 输入：仅安卓工程（SfA 链路）开启，
-     *  否则工程模式会把 Box/Text/log 等安卓内建报成未定义；普通 JS 工程开了会与用户声明冲突 */
-    private var androidStdlibEnabled = false
-    private var androidStdlibEntriesCache: List<sugared.functor.ast.Entry>? = null
+    fun loadPlugins(rootDir: java.io.File, coreVersion: String? = null): List<LspExtension> {
+        val result = LspPluginLoader.load(rootDir, coreVersion)
+        for ((dir, reason) in result.skipped)
+            System.err.println("[sublimation-ls] 插件 $dir 跳过: $reason")
+        for (p in result.loaded) {
+            registerExtension(p.extension)
+            loadedManifests[p.manifest.id] = p.manifest
+        }
+        return result.loaded.map { it.extension }
+    }
 
-    fun setAndroidStdlibDir(dir: java.io.File?) { androidStdlibDir = dir }
+    /** 已加载插件的清单（id → manifest；宿主展示插件名/版本用） */
+    fun pluginManifests(): Map<String, LspPluginManifest> = loadedManifests
 
-    /** 安卓处理器脚本目录（android/procs：allMut/android/composable/view 等 .subs）；
-     *  编辑期把用户 AST 先过处理器再检查（与编译链同构，否则 @mut 字段赋值等会误报） */
-    private var androidProcsDir: java.io.File? = null
-    private var androidProcsCache: List<sugared.functor.annotationproc.AnnotationProcessor>? = null
+    /**
+     * 插件 stdlib 派生的只读贡献（生效插件）：补全项 / 悬停文档 / 签名兜底。
+     * 按扩展名缓存（与注册表 name 槽对齐）；注册/注销/重载即整体失效。
+     * 变更插件目录内容须 loadPlugins 重载——与扩展的对象身份缓存语义一致。
+     */
+    private class PluginContributions(
+        val completionItems: List<CompletionItem>,
+        val hoverDocs: Map<String, String>,
+        val funs: Map<String, sugared.functor.ast.FunDecl>,
+    )
 
-    fun setAndroidProcsDir(dir: java.io.File?) { androidProcsDir = dir }
+    private val loadedManifests = HashMap<String, LspPluginManifest>()
+    private val pluginContributionCache = HashMap<String, PluginContributions>()
+
+    /** 生效插件的派生贡献（注册序；先注册者优先——与扩展符号索引语义一致） */
+    private fun enabledPluginContributions(): List<PluginContributions> =
+        extensions.enabled().mapNotNull { contributionsOf(it.name) }
+
+    private fun contributionsOf(name: String): PluginContributions? {
+        pluginContributionCache[name]?.let { return it }
+        val ext = extensions.all().find { it.name == name } ?: return null
+        val dir = ext.stdlibDir
+        if (dir == null || !dir.isDirectory) {
+            val empty = PluginContributions(emptyList(), emptyMap(), emptyMap())
+            pluginContributionCache[name] = empty
+            return empty
+        }
+        val items = mutableListOf<CompletionItem>()
+        val hoverDocs = HashMap<String, String>()
+        val funs = HashMap<String, sugared.functor.ast.FunDecl>()
+        for (f in dir.walkTopDown().filter { it.isFile && it.name.endsWith(".subl") }.sortedBy { it.path }) {
+            val src = runCatching { f.readText() }.getOrNull() ?: continue
+            val ast = runCatching { parseSource(src, f.name) }.getOrNull() ?: continue
+            runCatching {
+                val (decls, _) = collectAst(ast, src)
+                for (d in decls.filter { it.topLevel }) {
+                    if (d.name !in hoverDocs) {
+                        items += CompletionItem(label = d.name, kind = kindOf(d.variety), detail = d.detail)
+                        hoverDocs[d.name] = "```subl\n" + d.detail + "\n```"
+                    }
+                }
+            }
+            for (entry in ast.entries) if (entry is sugared.functor.ast.DeclEntry) {
+                when (val d = entry.decl) {
+                    is sugared.functor.ast.FunDecl -> funs.putIfAbsent(d.name, d)
+                    is sugared.functor.ast.ImplDecl -> for (m in d.members) funs.putIfAbsent(m.name, m)
+                    is sugared.functor.ast.ClassDecl -> for (m in d.members) funs.putIfAbsent(m.name, m)
+                    else -> {}
+                }
+            }
+        }
+        val out = PluginContributions(items, hoverDocs, funs)
+        pluginContributionCache[name] = out
+        return out
+    }
 
     /** 条目的声明名（用于处理器结果后把 stdl 与用户条目分回两侧） */
     private fun entryDeclName(e: sugared.functor.ast.Entry): String? {
@@ -99,50 +181,11 @@ class LspAnalysis {
         }
     }
 
-    private fun androidProcessors(): List<sugared.functor.annotationproc.AnnotationProcessor> {
-        androidProcsCache?.let { return it }
-        val dir = androidProcsDir
-        val out = if (dir != null && dir.isDirectory)
-            dir.listFiles { f -> f.isFile && f.name.endsWith(".subs") }?.sortedBy { it.name }?.map { f ->
-                val name = f.name.removeSuffix(".subs")
-                val txt = f.readText()
-                val extra = Regex("@interested\\s+([A-Za-z0-9_, ]+)").find(txt)?.groupValues?.get(1)
-                    ?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
-                sugared.functor.annotationproc.ScriptProcessor(
-                    name = name,
-                    interestedAnnotations = setOf(name) + extra,
-                    scriptSource = txt,
-                    scriptFileName = f.path,
-                    stdlibDir = stdlibDir ?: java.io.File("core"),
-                )
-            } ?: emptyList()
-        else emptyList()
-        androidProcsCache = out
-        return out
-    }
 
-    /** 安卓工程开 / 非 LS 工程关：开的项目里 android/stdlib 的声明并入检查 */
-    fun setAndroidStdlibEnabled(enabled: Boolean) {
-        if (androidStdlibEnabled == enabled) return
-        androidStdlibEnabled = enabled
-    }
-
-    /** android/stdlib（递归 .subl）解析出的条目；缓存（目录内容不变） */
-    private fun androidStdlibEntries(): List<sugared.functor.ast.Entry> {
-        androidStdlibEntriesCache?.let { return it }
-        val out = mutableListOf<sugared.functor.ast.Entry>()
-        val dir = androidStdlibDir
-        if (dir == null || !dir.isDirectory) { androidStdlibEntriesCache = out; return out }
-        val files = dir.walkTopDown().filter { it.isFile && it.extension == "subl" }.toList()
-        for (f in files) {
-            runCatching {
-                out += parseSource(f.readText(), f.name).entries
-            }
-        }
-        androidStdlibEntriesCache = out
-        return out
-    }
-
+    /**
+     * 载入 prelude（幂等）：内建类型 + 内建函数 + 可选 stdlib 顶层符号。
+     * 供补全与悬停使用（不参与 definition/references，避免虚假位置）。
+     */
     fun loadPrelude(stdlibDir: java.io.File? = null) {
         if (preludeLoaded) return
         preludeLoaded = true
@@ -246,33 +289,6 @@ class LspAnalysis {
         stdlibIndexCache = out
         return out
     }
-/** 安卓标准库符号索引（android/stdlib）：@android 平台声明的只读跳转目标 */
-    private fun androidStdlibSymbolIndex(): Map<String, Triple<String, String, String>> {
-        androidStdlibCache?.let { return it }
-        val out = HashMap<String, Triple<String, String, String>>()
-        val dir = androidStdlibDir ?: return out
-        if (dir.isDirectory) {
-            for (f in dir.walkTopDown().filter { it.isFile && it.name.endsWith(".subl") }.sortedBy { it.path }) {
-                val text = try { f.readText() } catch (e: Exception) { continue }
-                val ast = try { parseSource(text, f.name) } catch (e: Exception) { continue }
-                for (entry in ast.entries) {
-                    val d = (entry as? DeclEntry)?.decl ?: continue
-                    when (d) {
-                        is FunDecl -> out.putIfAbsent(d.name, Triple(f.toURI().toString(), d.pos, text))
-                        is StructDecl -> out.putIfAbsent(d.name, Triple(f.toURI().toString(), d.pos, text))
-                        is EnumDecl -> out.putIfAbsent(d.name, Triple(f.toURI().toString(), d.pos, text))
-                        is ClassDecl -> {
-                            out.putIfAbsent(d.name, Triple(f.toURI().toString(), d.pos, text))
-                            for (m in d.members) out.putIfAbsent(m.name, Triple(f.toURI().toString(), m.pos, text))
-                        }
-                        else -> {}
-                    }
-                }
-            }
-        }
-        androidStdlibCache = out
-        return out
-    }
 
         private fun scriptStdlib(): List<Entry> {
         scriptStdlibCache?.let { return it }
@@ -370,8 +386,8 @@ class LspAnalysis {
         var inferredVars: Map<String, Type>? = null
         // 处理器诊断（用户源码位置）：bag 建好后汇入
         var pendingProcDiags: List<sugared.functor.checker.Diag> = emptyList()
-        // 安卓 stdl 条目（可能已被处理器注入 @mut 视图字段）：合并进 Checker 输入
-        var androidStlPart: List<sugared.functor.ast.Entry> = emptyList()
+        // 扩展注入的 stdl 条目（可能已被处理器改写，如视图字段 @mut 注入）：合并进 Checker 输入
+        var extraStlPart: List<sugared.functor.ast.Entry> = emptyList()
 
         if (bag == null && ast != null) {
             try {
@@ -383,29 +399,27 @@ class LspAnalysis {
                     userFinal = inferred
                     inferNotes = notes
                 } else {
-                    // 安卓工程：用户 AST 与 android stdl 一起过注解处理器（编译链两者同模块同处理——
-                    // 视图字段 @mut 注入会改 stdl 的 @view 结构体本体），再按声明名分回两侧；
+                    // 扩展工程（如安卓）：用户 AST 与扩展 stdl 一起过注解处理器（编译链两者同模块同处理——
+                    // 处理器可改写 stdl 声明本体，如 @view 结构体的 @mut 字段注入），再按声明名分回两侧；
                     // 处理器诊断（用户位置）延迟到 bag 建好后汇入
                     var userEntries = ast!!.entries
-                    androidStlPart = if (androidStdlibEnabled) androidStdlibEntries() else emptyList()
-                    if (androidStdlibEnabled) {
-                        val procs = androidProcessors()
-                        if (procs.isNotEmpty() && androidStlPart.isNotEmpty()) runCatching {
-                            val userNames = userEntries.mapNotNull { entryDeclName(it) }.toSet()
-                            val stlNames = androidStlPart.mapNotNull { entryDeclName(it) }.toSet()
-                            val engine = sugared.functor.annotationproc.ProcessorEngine(maxRounds = 5)
-                            procs.forEach { engine.addProcessor(it) }
-                            val r = engine.run(
-                                inputAst = FileAst(userEntries + androidStlPart),
-                                symbols = null, typeOf = { null }, emit = {}, recheck = null, options = emptyMap(),
-                            )
-                            // 名字属于 stdl 且用户未声明同名 → stdl 侧（含被处理器注入 @mut 字段的视图结构体）；
-                            // 其余（用户原有 + 处理器新增的 recomposion$X$N 等）→ 用户侧
-                            userEntries = r.ast.entries.filter { e -> entryDeclName(e) !in stlNames || entryDeclName(e) in userNames }
-                            androidStlPart = r.ast.entries.filter { e -> entryDeclName(e) in stlNames && entryDeclName(e) !in userNames }
-                            // 只保留带位置（用户源码位点）的处理器诊断：无位置的处理器错误落到 0:0 会变成噪音
-                            pendingProcDiags = r.diagnostics.filter { it.pos.isNotEmpty() }
-                        }
+                    extraStlPart = extensions.enabledStdlibEntries()
+                    val procs = extensions.enabledProcessors()
+                    if (extraStlPart.isNotEmpty() && procs.isNotEmpty()) runCatching {
+                        val userNames = userEntries.mapNotNull { entryDeclName(it) }.toSet()
+                        val stlNames = extraStlPart.mapNotNull { entryDeclName(it) }.toSet()
+                        val engine = sugared.functor.annotationproc.ProcessorEngine(maxRounds = 5)
+                        procs.forEach { engine.addProcessor(it) }
+                        val r = engine.run(
+                            inputAst = FileAst(userEntries + extraStlPart),
+                            symbols = null, typeOf = { null }, emit = {}, recheck = null, options = emptyMap(),
+                        )
+                        // 名字属于 stdl 且用户未声明同名 → stdl 侧（含被处理器改写的声明）；
+                        // 其余（用户原有 + 处理器新增的 recomposion$X$N 等）→ 用户侧
+                        userEntries = r.ast.entries.filter { e -> entryDeclName(e) !in stlNames || entryDeclName(e) in userNames }
+                        extraStlPart = r.ast.entries.filter { e -> entryDeclName(e) in stlNames && entryDeclName(e) !in userNames }
+                        // 只保留带位置（用户源码位点）的处理器诊断：无位置的处理器错误落到 0:0 会变成噪音
+                        pendingProcDiags = r.diagnostics.filter { it.pos.isNotEmpty() }
                     }
                     userFinal = FileAst(userEntries)
                     inferNotes = emptyList()
@@ -418,9 +432,9 @@ class LspAnalysis {
                 // stdlib 条目位置整体平移到用户文件行数之外，确保 diagnosticsFor 的行号过滤能精确剔除
                 // stdlib 自身的诊断（平移量大于任何用户文件可能的行数；诊断行号超过用户行数即判 stdlib）
                 val userLineCount = source.split("\n").size
-                // 安卓工程时把 android/stdlib 并进来（Box/Text/log 等内建在编辑期才可见）；
+                // 扩展生效时把扩展注入的 stdl 并进来（如安卓工程的 Box/Text/log）；
                 // 与 core 一起平移行号到本文件之外
-                val stdEntries = scriptStdlib() + androidStlPart
+                val stdEntries = scriptStdlib() + extraStlPart
                 val checkedAst = FileAst(userFinal.entries + offsetStdlibPositions(stdEntries, userLineCount))
                 val checker = Checker(checkedAst, scriptMode = isScript)
                 bag = checker.run()
@@ -827,6 +841,10 @@ class LspAnalysis {
         val props: Map<String, String> = emptyMap(),
         val children: List<ViewNode> = emptyList(),
         val args: List<String> = emptyList(),
+        /** 文案来自哪个具名参数（text/placeholder），写回时改对应参数 */
+        val textKey: String = "",
+        /** 该视图构造在源码中的字符区间 [start,end)：预览页据此做精确补丁 */
+        val span: IntArray? = null,
     )
 
     /** 光标所属的 @composable 函数：词名精确命中优先；nameOnly=true 时只按名命中（避免 hover 变量误触）。 */
@@ -839,8 +857,14 @@ class LspAnalysis {
             if ("composable" !in fn.annotations) continue
             if (fn.name == word) { cands.add(fn); continue }
             if (nameOnly) continue
-            // 光标在函数体行范围内（声明行 ~ 下一个顶层声明行）
-            val startLine = fn.pos.substringBefore(':').toIntOrNull() ?: continue
+            // 光标在函数体行范围内（注解行 ~ 下一个顶层声明行）
+            var startLine = fn.pos.substringBefore(':').toIntOrNull() ?: continue
+            // 紧贴声明上方的注解行（@composable 等）也算本函数：长按注解行要能命中
+            while (startLine > 1) {
+                val prev = state.lineStarts.getOrNull(startLine - 2) ?: break
+                val next = state.lineStarts.getOrNull(startLine - 1) ?: break
+                if (state.source.substring(prev, next).trimStart().startsWith('@')) startLine-- else break
+            }
             if (curLine >= startLine && curLine < nextDeclLine(ast, fn)) cands.add(fn)
         }
         if (cands.isEmpty()) return null
@@ -850,7 +874,7 @@ class LspAnalysis {
     /** @composable 视图树预览 hover：光标处的词是 composable 函数名时，展示其布局出的视图树轮廓 */
     private fun composableTreeHover(state: DocState, source: String, offset: Int, word: String?): Hover? {
         val fn = composableAt(state, offset, word, nameOnly = true) ?: return null
-        val nodes = collectViewNodes(state.ast ?: return null, fn.body, 0)
+        val nodes = collectViewNodes(state.ast ?: return null, fn.body, 0, source, state.lineStarts)
         if (nodes.isEmpty()) return null
         val sb = StringBuilder()
         sb.append("```\n@composable " + fn.name + " 布局预览\n")
@@ -867,7 +891,7 @@ class LspAnalysis {
         val offset = positionToOffset(source, position, state.lineStarts) ?: return null
         if (inStringOrComment(source, offset)) return null
         val fn = composableAt(state, offset, wordAtOffset(source, offset)) ?: return null
-        val nodes = collectViewNodes(state.ast ?: return null, fn.body, 0)
+        val nodes = collectViewNodes(state.ast ?: return null, fn.body, 0, source, state.lineStarts)
         if (nodes.isEmpty()) return null
         val start = fn.pos.substringBefore(':').toIntOrNull() ?: 0
         val end = nextDeclLine(state.ast!!, fn).let { if (it == Int.MAX_VALUE) start + 9999 else it - 1 }
@@ -876,12 +900,79 @@ class LspAnalysis {
             ",\"children\":[" + nodes.joinToString(",") { nodeJson(it) } + "]}"
     }
 
+    /** AST 的 "line:col"（1-based）位置 → 字符偏移；预览树 span 用 */
+    private fun posToOffset(source: String, pos: String, lineStarts: IntArray): Int? {
+        val parts = pos.split(":")
+        if (parts.size != 2) return null
+        val l = parts[0].toIntOrNull() ?: return null
+        val c = parts[1].toIntOrNull() ?: return null
+        val ls = lineStarts.getOrNull(l - 1) ?: return null
+        return (ls + c - 1).coerceIn(0, source.length)
+    }
+
+    /** 视图构造表达式的结束偏移：吃掉参数括号 + 可选尾随 lambda。
+     *  字符串字面量内的括号/大括号不计入深度（预览树里常见 Text(text = ")")）。 */
+    private fun exprEnd(source: String, start: Int): Int? {
+        val n = source.length
+        var i = start
+        while (i < n && source[i] != '(' && source[i] != '\n' && source[i] != '=') i++
+        if (i >= n || source[i] != '(') return null
+        var depth = 0
+        var inStr = false
+        var j = i
+        while (j < n) {
+            val c = source[j]
+            if (inStr) {
+                if (c == '\\') { j += 2; continue }
+                if (c == '"') inStr = false
+            } else when (c) {
+                '"' -> inStr = true
+                '(' -> depth++
+                ')' -> { depth--; if (depth == 0) { j++; break } }
+            }
+            j++
+        }
+        if (depth != 0) return null
+        var k = j
+        while (k < n && (source[k] == ' ' || source[k] == '\t' || source[k] == '\r' || source[k] == '\n')) k++
+        if (k < n && source[k] == '{') {
+            var bd = 0
+            var inS = false
+            var m = k
+            while (m < n) {
+                val c = source[m]
+                if (inS) {
+                    if (c == '\\') { m += 2; continue }
+                    if (c == '"') inS = false
+                } else when (c) {
+                    '"' -> inS = true
+                    '{' -> bd++
+                    '}' -> { bd--; if (bd == 0) { m++; break } }
+                }
+                m++
+            }
+            if (bd != 0) return null
+            return m
+        }
+        return j
+    }
+
+    /** 取视图构造的源码区间：失败给 null（预览页只做能精确定位的写回） */
+    private fun viewSpan(source: String, pos: String?, lineStarts: IntArray): IntArray? {
+        if (pos.isNullOrEmpty()) return null
+        val s = posToOffset(source, pos, lineStarts) ?: return null
+        val e = exprEnd(source, s) ?: return null
+        return intArrayOf(s, e)
+    }
+
     private fun jsonStr(s: String): String = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
     private fun nodeJson(n: ViewNode): String {
         val sb = StringBuilder("{").append("\"name\":").append(jsonStr(n.name))
         if (n.text.isNotEmpty()) sb.append(",\"text\":").append(jsonStr(n.text))
+        if (n.textKey.isNotEmpty()) sb.append(",\"textKey\":").append(jsonStr(n.textKey))
         if (n.props.isNotEmpty()) sb.append(",\"props\":{").append(n.props.entries.joinToString(",") { (k, v) -> jsonStr(k) + ":" + jsonStr(v) }).append("}")
+        if (n.span != null) sb.append(",\"span\":[").append(n.span[0]).append(",").append(n.span[1]).append("]")
         if (n.children.isNotEmpty()) sb.append(",\"children\":[").append(n.children.joinToString(",") { nodeJson(it) }).append("]")
         if (n.args.isNotEmpty()) sb.append(",\"args\":[").append(n.args.joinToString(",") { jsonStr(it) }).append("]")
         return sb.append("}").toString()
@@ -903,7 +994,11 @@ class LspAnalysis {
      *  视图结构体构造 = StructCtorExpr（Text(...)）；Box(...) {} 解析为 CallExpr(callee=StructCtorExpr, args=[尾 lambda])。
      *  @composable 调用展开一层（显示 @函数名 + 其视图树），深度 ≤ 4 防无限递归。
      */
-    private fun collectViewNodes(ast: FileAst, e: sugared.functor.ast.Expr?, depth: Int): List<ViewNode> {
+    private fun collectViewNodes(
+        ast: FileAst, e: sugared.functor.ast.Expr?, depth: Int, src: String, ls: IntArray,
+        /** 函数体内可见的状态变量（var x = 视图构造）：按名内联进布局，不作为顶层节点 */
+        vars: Map<String, ViewNode> = emptyMap(),
+    ): List<ViewNode> {
         if (e == null || depth > 4) return emptyList()
         val out = mutableListOf<ViewNode>()
         when (e) {
@@ -911,8 +1006,8 @@ class LspAnalysis {
                 // 无尾 lambda 的视图构造（裸 Text(...) 等）；若已过注解处理器，
                 // children = listOf(...) 承载子视图（android doc §3.2 改写后的形态）
                 val kidsAssign = e.assigns.firstOrNull { it.first == "children" }
-                val kids = if (kidsAssign != null) collectChildrenExpr(ast, kidsAssign.second, depth) else emptyList()
-                out += nodeOf(e.struct, e.assigns, kids)
+                val kids = if (kidsAssign != null) collectChildrenExpr(ast, kidsAssign.second, depth, src, ls, vars) else emptyList()
+                out += nodeOf(e.struct, e.assigns, kids, viewSpan(src, e.pos, ls))
             }
             is sugared.functor.ast.CallExpr -> {
                 val callee = e.callee
@@ -924,26 +1019,39 @@ class LspAnalysis {
                     target != null -> {
                         // 捕获调用的实参摘要（简单字面量/名字可原样再生成，如 rowsView(meds)）
                         val argSum = e.args.map { exprSummary(it) }.filter { it.isNotEmpty() }
-                        out += ViewNode("@" + name!!, "", emptyMap(), collectViewNodes(ast, target.body, depth + 1), argSum)
+                        out += ViewNode("@" + name!!, "", emptyMap(), collectViewNodes(ast, target.body, depth + 1, src, ls, vars), argSum, span = viewSpan(src, e.pos, ls))
                     }
                     // 视图结构体 + 尾随 lambda 体（Box(...) { 子视图 }）：尾 lambda 即 children
                     ctor != null -> {
                         val kids = mutableListOf<ViewNode>()
-                        for (a in e.args) if (a is sugared.functor.ast.LambdaExpr) kids += collectViewNodes(ast, a.body, depth + 1)
-                        out += nodeOf(ctor.struct, ctor.assigns, kids)
+                        for (a in e.args) if (a is sugared.functor.ast.LambdaExpr) kids += collectViewNodes(ast, a.body, depth + 1, src, ls, vars)
+                        out += nodeOf(ctor.struct, ctor.assigns, kids, viewSpan(src, e.pos, ls))
                     }
                     // 普通调用：参数内视图构造平铺
-                    else -> for (a in e.args) out += collectViewNodes(ast, a, depth)
+                    else -> for (a in e.args) out += collectViewNodes(ast, a, depth, src, ls, vars)
                 }
             }
             is sugared.functor.ast.BlockExpr -> {
-                for (s in e.stmts) out += viewNodesOfStmt(ast, s, depth)
-                e.tailExpr?.let { out += collectViewNodes(ast, it, depth) }
+                // 状态变量（@mut var x = TextField(...)）只作为内联来源，不作为顶层节点列出
+                val vmap = HashMap(vars)
+                for (s in e.stmts) {
+                    if (s is sugared.functor.ast.VarStmt) {
+                        val ns = collectViewNodes(ast, s.value, depth, src, ls, vars)
+                        if (ns.size == 1) vmap[s.name] = ns[0]
+                    }
+                }
+                for (s in e.stmts) out += viewNodesOfStmt(ast, s, depth, src, ls, vmap)
+                e.tailExpr?.let { out += collectViewNodes(ast, it, depth, src, ls, vmap) }
             }
-            is sugared.functor.ast.LambdaExpr -> out += collectViewNodes(ast, e.body, depth)
-            is sugared.functor.ast.IfExpr -> {
-                out += collectViewNodes(ast, e.thenBlock, depth)
-                e.elseBlock?.let { out += collectViewNodes(ast, it, depth) }
+            // 名字引用（Box { nameField }）：内联成对应状态变量的视图节点
+            is sugared.functor.ast.NameRef -> vars[e.name]?.let { out += it }
+            is sugared.functor.ast.LambdaExpr -> out += collectViewNodes(ast, e.body, depth, src, ls, vars)
+            is sugared.functor.ast.WhenExpr -> {
+                // when(xs) { ... } 每个分支的 body 都可能产视图：全部收集（构建期静态展开）
+                for (arm in e.arms) out += collectViewNodes(ast, arm.body, depth, src, ls, vars)
+            }            is sugared.functor.ast.IfExpr -> {
+                out += collectViewNodes(ast, e.thenBlock, depth, src, ls, vars)
+                e.elseBlock?.let { out += collectViewNodes(ast, it, depth, src, ls, vars) }
             }
             else -> {}
         }
@@ -951,28 +1059,39 @@ class LspAnalysis {
     }
 
     /** children 字段表达式（listOf(...) / Nil / 空串占位）→ 子视图节点 */
-    private fun collectChildrenExpr(ast: FileAst, e: sugared.functor.ast.Expr?, depth: Int): List<ViewNode> {
+    private fun collectChildrenExpr(
+        ast: FileAst, e: sugared.functor.ast.Expr?, depth: Int, src: String, ls: IntArray,
+        vars: Map<String, ViewNode> = emptyMap(),
+    ): List<ViewNode> {
         if (e == null) return emptyList()
         return when (e) {
             // listOf(...)：参数即各子视图（递归按处理后形态继续展开）
-            is sugared.functor.ast.CallExpr -> e.args.flatMap { collectViewNodes(ast, it, depth + 1) }
-            else -> collectViewNodes(ast, e, depth)
+            is sugared.functor.ast.CallExpr -> e.args.flatMap { collectViewNodes(ast, it, depth + 1, src, ls, vars) }
+            else -> collectViewNodes(ast, e, depth, src, ls, vars)
         }
     }
 
-    private fun nodeOf(struct: String, assigns: List<Pair<String, sugared.functor.ast.Expr>>, kids: List<ViewNode>): ViewNode {
-        val text = exprSummary(assigns.firstOrNull { it.first == "text" || it.first == "placeholder" }?.second)
-        val props = assigns.filter { it.first in PROP_KEYS && it.first !in listOf("text", "placeholder") }
+    private fun nodeOf(struct: String, assigns: List<Pair<String, sugared.functor.ast.Expr>>, kids: List<ViewNode>, span: IntArray? = null): ViewNode {
+        // text/placeholder 取其一，并记住是哪个具名参数（写回时要改对应的参数）
+        val textPair = assigns.firstOrNull { it.first == "text" || it.first == "placeholder" }
+        val text = exprSummary(textPair?.second)
+        val textKey = if (text.isNotEmpty()) (textPair?.first ?: "text") else ""
+        val props = assigns.filter { it.first in PROP_KEYS && it.first !in listOf("text", "placeholder", "modifier") }
             .mapNotNull { (k, v) -> val s = exprSummary(v); if (s.isEmpty()) null else k to s }.toMap()
-        return ViewNode(struct, text, props, kids)
+        return ViewNode(struct, text, props, kids, textKey = textKey, span = span)
     }
 
-    private fun viewNodesOfStmt(ast: FileAst, s: sugared.functor.ast.Stmt, depth: Int): List<ViewNode> = when (s) {
-        is sugared.functor.ast.ExprStmt -> collectViewNodes(ast, s.expr, depth)
-        is sugared.functor.ast.VarStmt -> collectViewNodes(ast, s.value, depth)
-        is sugared.functor.ast.AssignStmt -> collectViewNodes(ast, s.value, depth)
-        is sugared.functor.ast.UncheckedStmt -> viewNodesOfStmt(ast, s.inner, depth)
-        is sugared.functor.ast.ReturnStmt -> s.expr?.let { collectViewNodes(ast, it, depth) } ?: emptyList()
+
+    private fun viewNodesOfStmt(
+        ast: FileAst, s: sugared.functor.ast.Stmt, depth: Int, src: String, ls: IntArray,
+        vars: Map<String, ViewNode> = emptyMap(),
+    ): List<ViewNode> = when (s) {
+        is sugared.functor.ast.ExprStmt -> collectViewNodes(ast, s.expr, depth, src, ls, vars)
+        // 状态变量（var/@mut var）不进预览树：预览只显示组合出的布局（用户规则）
+        is sugared.functor.ast.VarStmt -> emptyList()
+        is sugared.functor.ast.AssignStmt -> collectViewNodes(ast, s.value, depth, src, ls, vars)
+        is sugared.functor.ast.UncheckedStmt -> viewNodesOfStmt(ast, s.inner, depth, src, ls, vars)
+        is sugared.functor.ast.ReturnStmt -> s.expr?.let { collectViewNodes(ast, it, depth, src, ls, vars) } ?: emptyList()
         else -> emptyList()
     }
 
@@ -1043,6 +1162,12 @@ class LspAnalysis {
             return Hover(contents = MarkupContent(kind = "markdown", value = preludeDoc))
         }
 
+        // 插件 stdlib 贡献的悬停（生效插件的顶层声明签名）
+        val pluginDoc = enabledPluginContributions().firstNotNullOfOrNull { it.hoverDocs[word] }
+        if (pluginDoc != null) {
+            return Hover(contents = MarkupContent(kind = "markdown", value = pluginDoc))
+        }
+
         return null
     }
 
@@ -1065,8 +1190,8 @@ class LspAnalysis {
         val source = docs[uri]?.source
         val symbol = collectSymbols(uri).find { it.name == word }
         if (symbol != null && source != null) return Location(uri, diagPosToRange(symbol.pos, source))
-        // 兜底：用户文件没有的名字去 core 标准库找（stdlib 函数/类型也能转到定义）
-        val std = stdlibSymbolIndex()[word] ?: androidStdlibSymbolIndex()[word] ?: return null
+        // 兜底：用户文件没有的名字去 core 标准库 / 生效扩展的 stdl 找（只读跳转目标）
+        val std = stdlibSymbolIndex()[word] ?: extensions.enabledSymbolIndex()[word] ?: return null
         return Location(std.first, diagPosToRange(std.second, std.third))
     }
 
@@ -1155,7 +1280,10 @@ class LspAnalysis {
                 }
             }
         }
-        return stdlibFuns[name]
+        stdlibFuns[name]?.let { return it }
+        // 插件 stdlib 的函数声明兜底（生效插件）
+        for (c in enabledPluginContributions()) c.funs[name]?.let { return it }
+        return null
     }
 
     private fun countTopLevelCommas(source: String, parenStart: Int, cursor: Int): Int {
@@ -2372,6 +2500,10 @@ class LspAnalysis {
                     prev = tk
                 }
                 Kind.AT -> {
+                    // 注解与前一 token 不同行（块内 @mut var 语句等）：先断行避免堆叠
+                    if (prev != null && prev.line != tk.line && prev.kind != Kind.LBRACE && prev.kind != Kind.SEMI) {
+                        if (out.isNotEmpty() && out.last() != '\n') newline()
+                    }
                     emit("@", prev != null && spaceBetween(prev, tk))
                     if (ti + 1 < tokens.size && tokens[ti + 1].kind == Kind.IDENT) {
                         out.append(tokens[ti + 1].text)
@@ -2416,6 +2548,8 @@ class LspAnalysis {
         if (ak == Kind.RANGE || bk == Kind.RANGE) return false
         if (bk == Kind.RPAREN || bk == Kind.RBRACKET || bk == Kind.COMMA || bk == Kind.SEMI ||
             bk == Kind.DOT || bk == Kind.COLON || bk == Kind.COLON2) return false
+        // 类型应用 List[Str] 中间不加空格
+        if (ak == Kind.IDENT && bk == Kind.LBRACKET) return false
         if (ak == Kind.LPAREN || ak == Kind.LBRACKET || ak == Kind.AT || ak == Kind.DOT || ak == Kind.COLON2) return false
         if (bk == Kind.LPAREN) {
             return !(ak == Kind.IDENT || ak == Kind.RPAREN || ak == Kind.RBRACKET)
@@ -2502,6 +2636,14 @@ class LspAnalysis {
             if (prefix.isEmpty() || item.label.startsWith(prefix, ignoreCase = true)) {
                 val mrank = if (item.label == prefix) "0" else "1"
                 items += item.copy(sortText = mrank + "2_" + item.label)
+            }
+        }
+
+        // 插件 stdlib 贡献的补全项（生效插件；排在 prelude 之后）
+        for (item in enabledPluginContributions().flatMap { it.completionItems }) {
+            if (prefix.isEmpty() || item.label.startsWith(prefix, ignoreCase = true)) {
+                val mrank = if (item.label == prefix) "0" else "1"
+                items += item.copy(sortText = mrank + "3_" + item.label)
             }
         }
 
@@ -2695,6 +2837,59 @@ class LspAnalysis {
         // ───────── prelude 静态数据 ─────────
 
         /** 诊断 code → 中文说明（供 IDE 悬停提示展示原因与修法） */
+        /** 诊断短名（诊断页卡片标题用）：code → 一短语标题；未收录返回 null */
+        val DIAG_TITLES: Map<String, String> = mapOf(
+            "E-ARITY" to "实参数量不符", "E-TYPE-MISMATCH" to "类型不匹配",
+            "E-UNBOUND-NAME" to "名字未定义", "E-RETURN-TYPE" to "返回类型不符",
+            "E-MISSING-RETURN" to "缺少 return", "E-RETURN-OUTSIDE" to "return 位置非法",
+            "E-DUP-DECL" to "重复声明", "E-DUP-FIELD" to "字段重复",
+            "E-FIELD-MISSING" to "构造缺字段", "E-NO-METHOD" to "方法不存在",
+            "E-NO-INSTANCE" to "缺类型类实例", "E-IMPL-INCOMPLETE" to "impl 未补全",
+            "E-IMPL-EXTRA" to "impl 多余方法", "E-IMPL-MISMATCH" to "impl 签名不符",
+            "E-NAMED-ARG" to "命名实参非法", "E-NEED-ASYNC" to "需要 async",
+            "E-NO-SELF" to "缺 self", "E-NOT-MUT" to "类型不可变",
+            "E-IMMUT-ASSIGN" to "不可变赋值", "E-ASSIGN-TARGET" to "赋值目标非法",
+            "E-TUPLE-ARITY" to "元组数量不符", "E-TUPLE-DESTRUCT" to "元组解构不符",
+            "E-DESTRUCT" to "解构不匹配", "E-KIND-MISMATCH" to "种类不匹配",
+            "E-NON-PATTERN-HKT" to "高阶类型非模式", "E-TYPE-MISSING" to "缺类型标注",
+            "E-ANY-CALL" to "Any 类型调用", "E-ANY-STRUCT" to "Any 类型构造",
+            "E-DEFAULT-PARAM" to "默认参数非法", "E-FUN-NO-BODY" to "函数无函数体",
+            "E-MAIN-PARAMS" to "main 参数非法", "E-PARAM-REF" to "参数序号引用非法",
+            "E-PARAM-REF-IN-BODY" to "体内参数序号引用", "E-CHANNEL-CLOSED" to "信道已关闭",
+            "E-NOT-STARTED" to "未启动", "E-FUTURE-FUN" to "future 函数非法",
+            "E-IMPURE-CALL" to "不纯函数调用", "E-IMPURE-REQUIRED" to "需要 @impure",
+            "E-PRE-UNPROVEN" to "前置命题未证", "E-POST-UNPROVEN" to "后置命题未证",
+            "E-CTX-UNPROVEN" to "上下文命题未证", "E-CONSTRAINT-VIOLATED" to "约束被违反",
+            "E-PREMISE-UNPROVEN" to "前提未证明", "E-QUANT-UNPROVEN" to "存在引入失败",
+            "E-CANNOT-PROVE" to "结论证不出", "E-STRATEGY-FAILED" to "策略证明失败",
+            "E-DEEP-SATURATION" to "证明器饱和", "E-THEOREM-SEARCH-DEPTH" to "定理搜索超深",
+            "E-BY-UNBOUND" to "by 引用不存在", "E-PROP-AMBIGUOUS" to "命题参数歧义",
+            "E-PROP-UNBOUND" to "命题未供给", "E-IF-CONCLUSION-MISMATCH" to "if 结论不一致",
+            "E-NON-SEALED-MATCH" to "匹配非密封类型", "E-NON-STRUCTURAL-REC" to "非结构归纳",
+            "E-STRUCT-MUT-PROP" to "命题引 @mut 字段", "E-STRUCT-PROP-UNPROVEN" to "结构体命题未证",
+            "E-CIRCULAR-MOUNT" to "挂载成环", "E-PARSE" to "语法错误",
+            "E-PARSE-SETTINGS" to "设置文件语法错", "E-ROOT-NOT-ALLOWED" to "@root 名字非法",
+            "E-AMBIGUOUS-INSTANCE" to "实例歧义", "E-NEED-CLASSIC" to "需要 @classic",
+            "D-AUTO-AWAIT" to "自动 await", "D-AXIOM-POST" to "公理声明",
+            "D-BTS" to "因为-所以成立", "E-BY-REMOVED" to "by 语句已移除",
+            "E-PLATFORM-UNAVAILABLE" to "目标平台不支持",
+            "D-DEEP-COPY" to "深拷贝", "D-EXIST-INTRO" to "存在引入成立",
+            "D-LOCAL-FUN" to "局部函数登记", "D-METHOD-SUGAR" to "方法糖展开",
+            "D-NAT-PROP" to "自然命题注入", "D-STRATEGY" to "策略证明成功",
+            "D-TYPE-INFERRED" to "类型已推导", "D-WHEN-PROP" to "分支结论合并",
+            "D-TRAILING" to "尾随 lambda",
+            "H-AMBIGUOUS-CTOR" to "构造子歧义", "H-ARITH-PRECEDENCE" to "算术优先级",
+            "H-ANDROID-BUILTIN" to "内建 @android", "E-ANDROID-NOT-ALLOWED" to "禁止的 @android",
+            "H-EMPTY-DECL" to "空结构体", "H-FIELD-SHADOW" to "字段遮蔽",
+            "H-PARAM-REF" to "参数序号可读性", "H-ROOT-BUILTIN" to "内建 @root",
+            "W-CONSTRAINT-UNPROVEN" to "约束未证出", "W-DIV-ZERO" to "除数可能为零",
+            "W-NON-EXHAUSTIVE" to "分支未覆盖", "W-PROP-UNBOUND" to "前提不在上下文",
+            "W-UNREACHABLE" to "不可达代码", "W-UNUSED" to "变量未使用",
+            "W-WHEN-NO-COMMON" to "无共同结论",
+        )
+
+        /** 诊断短名：未收录 code 返回 null */
+        fun diagTitleOf(code: String): String? = DIAG_TITLES[code]
         val DIAG_DOCS: Map<String, String> = mapOf(
             "E-ARITY" to "实参个数与函数声明的形参个数不一致。实参多了可以删（IDE 灯泡有删多余实参的快速修正）；少了就补上，或用命名实参按名字传入。",
             "E-TYPE-MISMATCH" to "表达式的类型与预期不符。消息会指明哪一处：函数声明返回 A 但体是 B、实参 A 与形参 B 不符、或结构体字段类型对不上。若是字面量/构造子给错类型就改表达式；若是声明写错就改返回类型或形参类型。",
@@ -2734,17 +2929,17 @@ class LspAnalysis {
             "E-FUTURE-FUN" to "方法过于复杂没有可值的完美函数类型：简化方法签名或改用自由函数",
             "E-IMPURE-CALL" to "在纯上下文调用了非纯调用：给函数标 @impure，或改用 pure<过程> 声明纯度",
             "E-IMPURE-REQUIRED" to "参数是 @mut 可变类型，函数必须标注 @impure",
-            "E-PRE-UNPROVEN" to "调用前必须先证明函数的上文（前置命题）：补上证明或用 by 策略",
+            "E-PRE-UNPROVEN" to "调用前必须先证明函数的上文（前置命题）：补上证明、用 witness<命题>() 显式供给，或用 axiom 语句声明公理",
             "E-POST-UNPROVEN" to "函数声明了返回后的保证（下文）但函数体没证出：检查 return 是否满足",
             "E-CTX-UNPROVEN" to "调用函数值前须证明上下文命题：补上上下文证明",
             "E-CONSTRAINT-VIOLATED" to "调用违反约束命题：检查实参是否满足调用约束",
             "E-PREMISE-UNPROVEN" to "前提命题未被证明：先证出前提再使用",
             "E-QUANT-UNPROVEN" to "∃ 引入失败：给出的实例不满足想证的存在性质",
-            "E-CANNOT-PROVE" to "结论证不出：检查命题是否成立，或用 by 策略辅助",
+            "E-CANNOT-PROVE" to "结论证不出：检查命题是否成立，或用 ∵ 前提/axiom 语句供给事实",
             "E-STRATEGY-FAILED" to "指定的策略无法证明目标：换策略或补充前提",
             "E-DEEP-SATURATION" to "证明义务太复杂，自动证明器走满深度：把大结论拆成几步引理",
             "E-THEOREM-SEARCH-DEPTH" to "定理搜索超过深度限制：把目标分解为更小的子命题",
-            "E-BY-UNBOUND" to "by 策略引用的域或字段不存在：检查 self 与字段名",
+            "E-BY-UNBOUND" to "by 委托引用的字段不存在：检查 impl C for T by field 的字段名",
             "E-PROP-AMBIGUOUS" to "命题参数有多个 0 元候选：用 <...> 显式传入命题消除歧义",
             "E-PROP-UNBOUND" to "命题参数作用域无 0 元命题供给：用 <...> 显式传入",
             "E-IF-CONCLUSION-MISMATCH" to "if 两个分支的结论不一致：让两分支推出同一结论",
@@ -2761,7 +2956,8 @@ class LspAnalysis {
             "D-AUTO-AWAIT" to "该调用是异步的，已自动 await：无需也不能手写 await 关键字",
             "D-AXIOM-POST" to "函数标了 @axiom：下文签名即公理，编译器信任而不做自动证明",
             "D-BTS" to "因为-所以规则证出该结论:命题已成立",
-            "D-BY" to "by 策略注入了辅助命题:这些命题可用作证明依据",
+            "E-BY-REMOVED" to "语句式 by 的免验证命题注入已移除（by 只保留委托语义）：供给命题改用 axiom 语句，断言改用后缀式 expr by [q]",
+            "E-PLATFORM-UNAVAILABLE" to "编译目标（--target）不支持该平台调用：wasm 无同步宿主通道（readFile 等同步 IO 被拒绝），改用 --target=node 或 --target=browser 走宿主桥",
             "D-DEEP-COPY" to "绑定涉及 @mut 类型,发生深拷贝:该变量是独立副本,改它不影响源",
             "D-EXIST-INTRO" to "存在量词引入成立:给出的实例满足该存在性质",
             "D-LOCAL-FUN" to "局部函数已登记为局部定理(全称引入)",

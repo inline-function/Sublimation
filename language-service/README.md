@@ -10,6 +10,8 @@ Sublimation 的 Language Server Protocol 实现，零第三方依赖，仅复用
 | `LspProtocol.kt` | LSP 协议数据类型（JSON-RPC + Position/Range/Diagnostic/Hover/Completion/DocumentSymbol/Highlight/SignatureHelp/FoldingRange/TextEdit 等）与位置换算 |
 | `LspAnalysis.kt` | 桥接层：每次 didOpen/didChange 重新 tokenize→parse→check，缓存 AST + 诊断；向上暴露诊断、符号索引、hover、definition、completion、references、highlight、signatureHelp、foldingRange、rename、workspaceSymbol |
 | `LspServer.kt` | JSON-RPC stdio 服务器：Content-Length 分帧、极简 JSON 解析/序列化（`Json`）、请求/通知分发 |
+| `LspExtension.kt` | 扩展点：第三方（如安卓插件）注册「附加 stdlib 目录 + 处理器目录 + 开关」，语言服务据此并入检查/补全/跳转，自身不含任何平台专属硬编码 |
+| `LspPlugin.kt` | 插件框架：plugin.json 清单（id/version/minCoreVersion…）+ 插件根目录发现加载 + 极简 JSON 解析（MiniJson） |
 
 ## 已支持能力
 
@@ -30,6 +32,44 @@ Sublimation 的 Language Server Protocol 实现，零第三方依赖，仅复用
 - **灯泡** `textDocument/codeAction`（全角符号 → 半角，如 `（`→`(`）
 - **实现跳转** `textDocument/implementation`（光标在类型名 → 所有 `impl ... for 该类型`）
 - **内联提示** `textDocument/inlayHint`（调用点的参数名提示，如 `f(1)` → `f(a: 1)`）
+
+## 扩展点（LSP Extension）
+
+第三方插件（如 CandyIDE 的安卓工程支持）通过统一扩展点向语言服务贡献平台能力，语言服务核心不再出现任何平台专属硬编码：
+
+- **接口**（`LspExtension`）：`name`（唯一标识，用于注销与缓存归属）、`stdlibDir`（附加标准库目录，递归收录 `.subl`）、`processorsDir`（注解处理器目录，收录 `.subs`）、`isEnabled()`（是否生效；不生效则一切贡献都不并入）。
+- **注册**：宿主侧编程式注册——`LspAnalysis.registerExtension(ext)` / `unregisterExtension(name)` / `registeredExtensions()`；LSP 客户端也可在 `initialize` 的 `initializationOptions.extensions` 里声明（`{name, stdlibDir, processorsDir, enabled}` 数组），服务器启动时自动注册。
+- **生命周期**：注册/注销即时生效——下一次 didOpen/didChange 全量重分析时按最新生效集合装配。每个扩展在注册表内按 `name` 拥有独立缓存槽（stdlib 条目 / 符号索引 / 处理器实例），同一 `name` 重复注册会替换旧实例并丢弃其缓存；注销即释放。
+- **贡献语义**：生效扩展的 stdlib 条目并入 Checker 输入（与编译链「跑处理器后检查」同构）、`definition` 兜底定位、补全符号；处理器目录按 `@interested` 声明运行，多轮（maxRounds=5）合并/回拆。
+
+## 插件框架（LspPlugin）
+
+在 LspExtension 扩展点之上的**清单形态**插件层（V1）：「一个插件 = 一个目录 + 一份 `plugin.json`」。
+安卓/SfW 等平台支持由插件方（如 SfA）产出与维护，语言服务核心不绑定任何平台。
+
+- **清单（plugin.json）**：`id`（唯一标识 = 扩展名）、`version`（独立 semver）、`displayName`、`author`/`description`（可选展示）、
+  `minCoreVersion`（语言核心最低版本，宿主据此 gate 不兼容插件）、`stdlibDir`/`processorsDir`（相对插件目录或绝对路径）、
+  `enabled`（缺省 true）、`apiVersion`（缺省 1，超过 `CURRENT_API_VERSION` 拒绝）、`contributes`（保留字段，V1 解析但不解释）。
+  未知键保留在 `raw` 中向前兼容。
+- **加载与发现**：`LspPluginLoader.load(插件根目录, coreVersion?)` 扫描各子目录，按目录名排序（结果确定）；
+  清单缺失/非法 JSON/id 空/apiVersion 过高/minCoreVersion 不达标的目录**跳过并记 stderr**（容错降级：一个坏插件不影响其它）。返回
+  `LspPluginManifest` + `LspExtension`，经 `LspAnalysis.loadPlugins` 注册。进程外宿主经 LSP `initialize` 的
+  `initializationOptions.pluginsDir`（配 `coreVersion`）加载。
+- **生命周期与缓存**：加载即注册（同名替换，沿用扩展注册表按 name 的槽缓存；stdlib 条目/符号索引/处理器）；
+  注销（`unregisterExtension(id)`）立即丢弃缓存。插件目录内容变更须**重新 `loadPlugins`** 刷新。
+- **线程模型**：与 LSP 服务器一致，单线程 stdio 循环内加载/注册/访问；插件贡献是纯数据快照，无并发问题。
+- **V1 贡献点（纯数据、无代码执行）**：生效插件的 stdlib 顶层声明 → ① 并入 Checker 输入（与编译链同构）
+  ② definition 兜底定位 ③ 补全项 ④ 悬停签名（markdown 代码块）⑤ signatureHelp 签名兜底。
+  处理器目录的 `.subs` 一样跑注解处理器引擎（但执行由注解处理器宿主承担，与编译链职责一致）。
+- **V2+ 路线（未实现）**：`contributes.diagnosticFilters`（按诊断码/消息过滤，如安卓工程抑制特定告警）、
+  插件级 hover 长文档、进程外插件宿主（IPC）。按需求再上，避免过度设计。
+
+清单示例：
+
+```json
+{ "id": "android", "version": "1.0.0", "displayName": "Sublimation for Android",
+  "minCoreVersion": "1.1", "stdlibDir": "stdlib", "processorsDir": "procs", "enabled": true }
+```
 
 ## 关键设计
 
@@ -63,4 +103,5 @@ java -cp build/libs/sublimation.jar sugared.functor.lsp.LspServerKt
 ## 测试
 
 `src/test/kotlin/sugared/functor/lsp/LspAnalysisTest.kt` —— 覆盖诊断转换、JSON 往返、符号索引、
-hover/definition/completion、references/highlight、signatureHelp、foldingRange、rename、workspaceSymbol。
+hover/definition/completion、references/highlight、signatureHelp、foldingRange、rename、workspaceSymbol、
+扩展点注册/注销与生效切换、插件清单解析/加载与贡献点（补全/悬停/签名兜底）。

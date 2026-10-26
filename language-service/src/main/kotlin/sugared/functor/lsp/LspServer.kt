@@ -179,7 +179,10 @@ object LspServer {
     /** 处理请求；结果 null 序列化为 JSON null（如 shutdown、无匹配 hover/definition 等） */
     private fun handleRequest(method: String, params: Map<*, *>): Any? {
         return when (method) {
-            "initialize" -> mapOf(
+            "initialize" -> {
+                // 进程外宿主的插件通道：initialize 的 initializationOptions.extensions注册扩展
+                applyInitializationOptions(params)
+                mapOf(
                 "capabilities" to mapOf(
                     "positionEncoding" to "utf-16",
                     "textDocumentSync" to mapOf("openClose" to true, "change" to 1),
@@ -219,6 +222,7 @@ object LspServer {
                 ),
                 "serverInfo" to mapOf("name" to "sublimation-ls", "version" to "0.1.0"),
             )
+            }
 
             "shutdown" -> null
 
@@ -383,6 +387,42 @@ object LspServer {
             }
 
             else -> UNKNOWN_METHOD
+        }
+    }
+
+    /**
+     * initialize 的 initializationOptions：进程外宿主注册语言服务扩展/插件的通道（见 LspExtension/LspPlugin 契约）。
+     *
+     * 形如：
+     * {
+     *   "initializationOptions": {
+     *     "pluginsDir": ".../plugins",         // 插件根目录：自动发现各子目录 plugin.json 插件
+     *     "coreVersion": "1.1",                // 可选：插件清单 minCoreVersion gate 用
+     *     "extensions": [
+     *       { "name": "android", "stdlibDir": ".../android/stdlib", "processorsDir": ".../android/procs", "enabled": true },
+     *       { "name": "wasm", "stdlibDir": ".../wasm/stdlib", "enabled": true }
+     *     ]
+     *   }
+     * }
+     *
+     * pluginsDir 先于 extensions 加载——使宿主显式注册的 extension 可按 id 覆盖/替换插件；
+     * 每项构造 SimpleLspExtension 注册；缺名字的项跳过，目录不可读不影响服务器启动。
+     * 进程内宿主请直接 LspAnalysis.registerExtension / loadPlugins。
+     */
+    private fun applyInitializationOptions(params: Map<*, *>) {
+        val opts = params["initializationOptions"] as? Map<*, *> ?: return
+        // 插件根目录：发现并加载 plugin.json 插件（清单非法者跳过并记 stderr）
+        (opts["pluginsDir"] as? String)?.let { 
+            analysis.loadPlugins(java.io.File(it), opts["coreVersion"] as? String)
+        }
+        @Suppress("UNCHECKED_CAST")
+        val exts = opts["extensions"] as? List<Map<String, Any?>> ?: return
+        for (e in exts) {
+            val name = e["name"] as? String ?: continue
+            val stdlibDir = (e["stdlibDir"] as? String)?.let { java.io.File(it) }
+            val processorsDir = (e["processorsDir"] as? String)?.let { java.io.File(it) }
+            val enabled = (e["enabled"] as? Boolean) ?: false
+            analysis.registerExtension(SimpleLspExtension(name, stdlibDir, processorsDir, enabled))
         }
     }
 
