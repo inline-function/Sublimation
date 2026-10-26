@@ -157,7 +157,7 @@ class Evaluator(
         else -> v
     }
 
-    private fun evalStmt(stmt: Stmt, frame: ScriptFrame): ScriptValue {
+    private fun evalStmt(stmt: Stmt, frame: ScriptFrame, tail: Boolean = false): ScriptValue {
         return when (stmt) {
             is VarStmt -> {
                 val v = evalExpr(stmt.value, frame)
@@ -183,7 +183,7 @@ class Evaluator(
                 }
                 ScriptValue.Null
             }
-            is ExprStmt -> evalExpr(stmt.expr, frame)
+            is ExprStmt -> evalExpr(stmt.expr, frame, tail)
             is ReturnStmt -> {
                 val v = stmt.expr?.let { evalExpr(it, frame) } ?: ScriptValue.Null
                 throw ReturnException(v)
@@ -193,12 +193,12 @@ class Evaluator(
             is ByStmt -> ScriptValue.Null
             is IfPropStmt -> ScriptValue.Null
             is ExistIntroStmt, is ExistsElimStmt -> ScriptValue.Null
-            is UncheckedStmt -> evalStmt(stmt.inner, frame)
+            is UncheckedStmt -> evalStmt(stmt.inner, frame, tail)
             is FunStmt -> ScriptValue.Null
         }
     }
 
-    private fun evalExpr(expr: Expr, frame: ScriptFrame): ScriptValue {
+    private fun evalExpr(expr: Expr, frame: ScriptFrame, tail: Boolean = false): ScriptValue {
         return when (expr) {
             is IntLit -> {
                 val n = expr.value.toLongOrNull()
@@ -218,11 +218,11 @@ class Evaluator(
             }
             is BinExpr -> evalBin(expr.op, expr.left, expr.right, frame, expr.pos)
             is UniExpr -> evalUni(expr.op, expr.operand, frame)
-            is CallExpr -> evalCall(expr, frame)
+            is CallExpr -> evalCall(expr, frame, tail)
             is SymbolCallExpr -> evalSymCall(expr, frame)
-            is BlockExpr -> evalBlock(expr, frame)
-            is IfExpr -> evalIf(expr, frame)
-            is WhenExpr -> evalWhen(expr, frame)
+            is BlockExpr -> evalBlock(expr, frame, tail)
+            is IfExpr -> evalIf(expr, frame, tail)
+            is WhenExpr -> evalWhen(expr, frame, tail)
             is LambdaExpr -> evalLambda(expr, frame)
             is AnonFunExpr -> evalAnonFun(expr, frame)
             is IsPatExpr -> throw InterpreterError("IsPatExpr 只应出现在 when 模式里，不应作为表达式求值")
@@ -439,7 +439,7 @@ class Evaluator(
     }
     // ============ 调用 ============
 
-    private fun evalCall(c: CallExpr, frame: ScriptFrame): ScriptValue {
+    private fun evalCall(c: CallExpr, frame: ScriptFrame, tail: Boolean = false): ScriptValue {
         val callee = c.callee
         if (callee is FieldExpr) {
             val target = evalExpr(callee.target, frame)
@@ -496,7 +496,7 @@ class Evaluator(
                 return callFunValue(asVar.fn, argVals, c.pos)
             }
             val argVals = c.args.map { evalExpr(it, frame) }
-            return callFunction(name, argVals, frame, c.pos, c.namedArgs.mapValues { (_, ex) -> evalExpr(ex, frame) })
+            return callFunction(name, argVals, frame, c.pos, c.namedArgs.mapValues { (_, ex) -> evalExpr(ex, frame) }, tail)
         }
         val fnVal = evalExpr(c.callee, frame)
         if (fnVal is ScriptValue.Fun) {
@@ -506,7 +506,7 @@ class Evaluator(
         throw InterpreterError("不可调用: " + c.callee)
     }
 
-    private fun callFunction(name: String, args: List<ScriptValue>, frame: ScriptFrame, pos: String, namedArgs: Map<String, ScriptValue> = emptyMap()): ScriptValue {
+    private fun callFunction(name: String, args: List<ScriptValue>, frame: ScriptFrame, pos: String, namedArgs: Map<String, ScriptValue> = emptyMap(), tail: Boolean = false): ScriptValue {
         // P51：in 为普通函数——中缀 a in b 解析为 in(a, b)；内建实现=区间/列表成员（evalIn）
         if (name == "in" && args.size == 2) return evalIn(args[0], args[1], pos)
         // listOf/setOf 内建特判：core 标准库二者的 body 是占位，编译模式 codegen 同名特判打包（§决策 61）
@@ -521,7 +521,10 @@ class Evaluator(
         val fns = frame.lookupFunctions(name)
         if (fns.isNotEmpty()) {
             val fn = pickOverload(fns, args)
-            return invokeFunDecl(fn, applyNamedArgs(fn, args, namedArgs), frame)
+            val applied = applyNamedArgs(fn, args, namedArgs)
+            // t46：尾位直接调用抛重定向请求（invokeFunDecl 的 TCO 循环捕获），避免解释器递归随调用链线性增长
+            if (tail && fn.body != null) throw TailCallException(fn, applied)
+            return invokeFunDecl(fn, applied, frame)
         }
         // v4（core 标准库）：自由形态的类型类方法（`fold(xs, 0, f)`）。core 把 fold/map 等声明在类型类 impl 里，
         // 同名自由函数不存在时按首参运行时 tag 走字典分发——HKT 方法首形参即接收者（fa），剩余实参按序。
@@ -583,18 +586,33 @@ class Evaluator(
         return acc
     }
 
-    /** 以子帧绑定形参并执行 FunDecl 体 */
+    /** t46 TCO：尾位直接调用的重定向请求（消费方为 invokeFunDecl 的重绑循环）。
+     *  以异常承载而非返回值：须穿透 eval* 家族的 ScriptValue 返回类型直达循环，且只可能发自尾位求值路径。 */
+    private class TailCallException(val fn: FunDecl, val args: List<ScriptValue>) : RuntimeException() {
+        override fun fillInStackTrace(): Throwable = this
+    }
+
+    /** 以子帧绑定形参并执行 FunDecl 体。
+     *  t46（t40 出入2 残余）：尾调用优化——函数体按尾位语义求值，体内尾位的直接调用不重建解释器递归，
+     *  而是返回 TailCall 由本循环重绑形参复用同一逻辑层帧，把 JVM 栈耗用从 O(调用链长) 降为 O(1)。 */
     private fun invokeFunDecl(fn: FunDecl, args: List<ScriptValue>, frame: ScriptFrame): ScriptValue {
-        val child = ScriptFrame(frame)
-        fn.params.forEachIndexed { i, p ->
-            val av = if (i < args.size) args[i] else ScriptValue.Null
-            val mutable = "mut" in p.annotations
-            child.declareVar(p.name, av, mutable)
+        var curFn = fn
+        var curArgs = args
+        while (true) {
+            val child = ScriptFrame(frame)
+            curFn.params.forEachIndexed { i, p ->
+                val av = if (i < curArgs.size) curArgs[i] else ScriptValue.Null
+                val mutable = "mut" in p.annotations
+                child.declareVar(p.name, av, mutable)
+            }
+            child.declareFunction(curFn)
+            val body = curFn.body ?: return ScriptValue.Null
+            val r = try {
+                evalExpr(body, child, tail = true)
+            } catch (tc: TailCallException) { curFn = tc.fn; curArgs = tc.args; continue }
+            catch (e: ReturnException) { return e.value }
+            return r
         }
-        child.declareFunction(fn)
-        return try {
-            fn.body?.let { evalExpr(it, child) } ?: ScriptValue.Null
-        } catch (e: ReturnException) { e.value }
     }
 
     /** 类型类字典查找：按接收者运行时类型 tag 找同名方法。多候选立即报消歧错误（P4）。
@@ -687,22 +705,23 @@ class Evaluator(
 
     // ============ 控制流 ============
 
-    private fun evalBlock(b: BlockExpr, frame: ScriptFrame): ScriptValue {
+    private fun evalBlock(b: BlockExpr, frame: ScriptFrame, tail: Boolean = false): ScriptValue {
         val child = ScriptFrame(frame)
         var last: ScriptValue = ScriptValue.Null
-        for (s in b.stmts) {
-            last = evalStmt(s, child)
+        // t46：仅末条语句承尾位（其值即块值）；其余语句按非尾位求值
+        for ((i, s) in b.stmts.withIndex()) {
+            last = evalStmt(s, child, tail && i == b.stmts.size - 1)
         }
         return last
     }
 
-    private fun evalIf(e: IfExpr, frame: ScriptFrame): ScriptValue {
+    private fun evalIf(e: IfExpr, frame: ScriptFrame, tail: Boolean = false): ScriptValue {
         val cond = evalExpr(e.cond, frame)
-        return if (truthy(cond)) evalExpr(e.thenBlock, frame)
-        else e.elseBlock?.let { evalExpr(it, frame) } ?: ScriptValue.Null
+        return if (truthy(cond)) evalExpr(e.thenBlock, frame, tail)
+        else e.elseBlock?.let { evalExpr(it, frame, tail) } ?: ScriptValue.Null
     }
 
-    private fun evalWhen(e: WhenExpr, frame: ScriptFrame): ScriptValue {
+    private fun evalWhen(e: WhenExpr, frame: ScriptFrame, tail: Boolean = false): ScriptValue {
         // whenFrame：主题绑定与各分支都限定在 when 作用域内（不污染/遮蔽外层）
         val whenFrame = ScriptFrame(frame)
         val subject = e.subject?.let { evalExpr(it, whenFrame) }
@@ -720,7 +739,7 @@ class Evaluator(
             } else if (!matchPattern(arm.pattern, subject!!, armFrame)) continue
             val guard = arm.guard
             if (guard != null && !truthy(evalExpr(guard, armFrame))) continue
-            return evalExpr(arm.body, armFrame)
+            return evalExpr(arm.body, armFrame, tail)
         }
         return ScriptValue.Null   // 不可判穷尽 → Null（语言语义：不可判穷尽的 when 固定返回 Null，不抛异常）
     }
