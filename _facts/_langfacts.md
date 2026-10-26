@@ -58,7 +58,7 @@
 - 脚本模式：.subs 每文件独立执行（互不共享、无需 main）；工程模式 = 目录即模块（根 / 扫全树）
 
 ## 8 模块与工具链
-- CLI（Main.kt 402 行）：子命令 = parse / tokens / check <文件|目录>（目录=模块全树）/ compile <文件|目录> [-o out] / run-script <路径|目录>（先 .subs 后工程回退）/ explain <CODE>；**没有 `run` 子命令**（误输入回退 USAGE、退出码 2；工程执行走 run-script 目录回退或 compile+node）；`-p <处理器>>`、`-A key=value`、`-v`（诊断+supplement）、aggressive 标志（激进证明）；t35：`--target=node|browser|wasm`（默认 node）——非 node 目标 S-1 装载模型（产物导出 globalThis.__subl.main、不自执行；平台调用走宿主桥 __subl.d(op,args)），wasm 拒同步 IO（E-PLATFORM-UNAVAILABLE）
+- CLI（Main.kt 402 行）：子命令 = parse / tokens / check <文件|目录>（目录=模块全树）/ compile <文件|目录> [-o out] / run-script <路径|目录>（先 .subs 后工程回退）/ explain <CODE>；**没有 `run` 子命令**（误输入回退 USAGE、退出码 2；工程执行走 run-script 目录回退或 compile+node）；`-p <处理器>>`、`-A key=value`、`-v`（诊断+supplement）、aggressive 标志（激进证明）；t35：`--target=node|browser|wasm`（默认 node）——非 node 目标 S-1 装载模型（产物导出 globalThis.__subl.main、不自执行；平台调用走宿主桥 __subl.call(op,args)），wasm 拒同步 IO（E-PLATFORM-UNAVAILABLE）
 - 注解处理器（annotationproc）：AnnotationScanner 扫描 + 改写流水线（AndroidViewEdits 等）；@allMut 等 APT 引入注解先于 B/C 检查跑；**内建处理器目录是 cwd 相对路径 `annotation processer/`（注意拼写）——换工作目录即静默失效**
 - 标准库 core/：logic（list/set/map/optional/result/typeclass/real…）、classic、async、mutex、flow 等 .subl
 - 诊断体系：E-（错误）/W-（警告）/D-（提示）三族；cli 有全量 explain 表；关键码如 E-IMMUT-ASSIGN、E-CANNOT-PROVE、E-PREMISE-UNPROVEN、W-PROP-UNBOUND、E-MAIN-PARAMS、E-PLATFORM-UNAVAILABLE（t35：--target 拒绝）、E-RETURN-OUT-OF-BLOCK 等

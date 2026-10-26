@@ -30,7 +30,7 @@ const val USAGE = """sublimationc — Sublimation 编译器（M1 词法 + M2 语
   compile <file.subl> [-o out.js] [-p ...]   语义通过后生成 JS（默认打印到标准输出）
   --target=node|browser|wasm  编译目标（默认 node 向后兼容）：node=自执行脚本；
              browser/wasm=S-1 装载模型——产物导出 globalThis.__subl.main（宿主 eval 后调用，不自执行），
-             平台调用走宿主桥 globalThis.__subl.d(op, args)；wasm 无同步宿主通道，
+             平台调用走宿主桥 globalThis.__subl.call(op, args)；wasm 无同步宿主通道，
              readFile 等同步 IO 编译期拒绝（E-PLATFORM-UNAVAILABLE）
   run-script <file.subs> [<file2.subs> ...]  脚本模式解释执行：顶层语句直接运行（无需 main）；多条脚本互不共享
   run-script <dir>            运行目录下所有 .subs 脚本（每个独立运行）；无 .subs 时按 .subl 工程(main)执行
@@ -156,7 +156,7 @@ val EXPLAIN: Map<String, String> = mapOf(
     "E-NON-PATTERN-HKT" to "错误：类型参数嵌套了类型构造子（如 `F[G[Nat]]`）。类型构造子的实参必须是具体类型。",
     "E-PARAM-REF" to "错误：匿名函数参数引用越界。函数只有 N 个形参，你却引用了第 N+1 个（如 '$1', '$2' 等）。",
     "E-PARAM-REF-IN-BODY" to "错误：函数体里用了非法的匿名参数引用。用参数名代替。",
-    "E-PLATFORM-UNAVAILABLE" to "错误：编译目标不支持该平台调用。--target=wasm 无同步宿主调用通道（readFile 等同步 IO 被拒绝）；改用 --target=node，或 --target=browser 走宿主桥 globalThis.__subl.d(op, args)。模块级可用性见 Target.kt 的 Platform 表。",
+    "E-PLATFORM-UNAVAILABLE" to "错误：编译目标不支持该平台调用。--target=wasm 无同步宿主调用通道（readFile 等同步 IO 被拒绝）；改用 --target=node，或 --target=browser 走宿主桥 globalThis.__subl.call(op, args)。模块级可用性见 Target.kt 的 Platform 表。",
     "E-PROP-AMBIGUOUS" to "错误：命题有歧义，编译器无法唯一确定。给命题加括号或显式类型标注。",
     "E-PROP-UNBOUND" to "错误：前提命题不在当前已知事实里。先用 `∵` 或 `∃` 引入它。",
     "E-QUANT-UNPROVEN" to "错误：`∃` 引入的实例满足不了目标性质。检查实例能否推出目标命题。",
