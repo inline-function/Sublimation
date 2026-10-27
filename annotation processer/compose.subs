@@ -1,0 +1,84 @@
+// compose.subs —— @compose 视图 → Kotlin Compose 源码处理器（SfA「生成 .kt + Gradle 编译」通路）
+//
+// 职责：把每个 @compose 视图结构体发成 @Composable fun <Name>(...) 的 .kt 源码，写到
+//   <outDir>/<Name>.kt（outDir 缺省 = 工作目录下 build/generated/compose，即 <工程>/build/generated/compose）。
+// 真正的 AST 遍历与翻译在框架原语里完成（.subs 只有名字级查询、拿不到表达式 AST）：
+//   composeViewNames()           视图清单："<name>|<字段数>|<注解逗号表>|<内容调用序列>"
+//   composeFields(name)          视图参数表："<字段>|<声明类型>"
+//   composeKotlin(name, pkg, im) 整份 .kt 源码（package/import/@Composable fun）
+//   composeComponents(name)      "<view>|<组件数>|<组件 FQN 逗号表>"
+//   joinPath(parts, sep)         拼路径
+// 编译参数（-A key=value）：
+//   composeOutDir   输出目录（缺省 build/generated/compose）
+//   composePackage  生成包名（缺省 app.compose；给空值时输出默认包）
+//   composeImports  额外 import 的 FQN，逗号分隔（SfA 宿主工程用）
+//   composeOptIns   额外 @file:OptIn 的注解 FQN，逗号分隔（框架已按用到的实验 API 自动收集——
+//                   用到 AlertDialog/TopAppBar/BottomSheet → ExperimentalMaterial3Api、Box(wrap=true)
+//                   → ExperimentalLayoutApi；SfA 需要 candy.compose 的实验 API 时在此追加，如
+//                   candy.compose.CandyExperimental）
+// 幂等：writeFile 同内容重写不改变 AST（本处理器不改 AST）→ 引擎零轮收敛。
+
+fun viewNames(xs: List[Str]): List[Str] =
+    when (xs) {
+        Nil => Nil
+        is Cons(line, rest) => Cons(nth(strSplit(line, "|"), 0), viewNames(rest))
+        else => Nil
+    }
+
+// List[Str] 按下标取（0 基）。
+fun nth(xs: List[Str], i: Nat): Str =
+    when (xs) {
+        Nil => ""
+        is Cons(h, rest) => if (i == 0) h else nth(rest, i - 1)
+        else => ""
+    }
+
+fun overlaps(xs: List[Str], ys: List[Str]): Bool =
+    when (xs) {
+        Nil => false
+        is Cons(h, rest) => if (contains(ys, h)) true else overlaps(rest, ys)
+        else => false
+    }
+
+// 视图重名：同名 @view / @composable 会与生成的函数撞名 → 报错定位。
+fun checkClash(name: Str): Null {
+    var views: List[Str] = structsWithAnnotation("view");
+    var comps: List[Str] = funsWithAnnotation("composable");
+    var fns: List[Str] = Cons(name, Nil);
+    if (overlaps(fns, views)) processorError("@compose 视图 " + name + " 与 @view 结构体重名：生成的 @Composable 函数会撞名")
+    else if (overlaps(fns, comps)) processorError("@compose 视图 " + name + " 与 @composable 函数重名：生成的 @Composable 函数会撞名")
+    else null
+}
+
+fun emitOne(name: Str, dir: Str, pkg: Str, imps: Str, opts: Str): Null {
+    var src: Str = composeKotlin(name, pkg, imps, opts);
+    var path: Str = dir + sep() + name + ".kt";
+    writeFile(path, src);
+    var comps: List[Str] = composeComponents(name);
+    processorInfo("@compose 视图 " + name + " -> " + path + "（" + nth(comps, 0) + "）");
+    null
+}
+
+fun emitAll(xs: List[Str], dir: Str, pkg: Str, imps: Str, opts: Str): Null =
+    when (xs) {
+        Nil => null
+        is Cons(n, rest) => {
+            checkClash(n);
+            emitOne(n, dir, pkg, imps, opts);
+            emitAll(rest, dir, pkg, imps, opts)
+        }
+        else => null
+    }
+
+// 路径分隔符：宿主是 Windows（SfA 的 Gradle 构建在桌面）用 \\，其余用 /。
+fun sep(): Str = pathSeparator(0)
+
+fun runCompose(): Null {
+    var dir: Str = optionOr("composeOutDir", projectDir(0) + sep() + "build" + sep() + "generated" + sep() + "compose");
+    var pkg: Str = optionOr("composePackage", "app.compose");
+    var imps: Str = optionOr("composeImports", "");
+    var opts: Str = optionOr("composeOptIns", "");
+    emitAll(viewNames(composeViewNames(0)), dir, pkg, imps, opts)
+}
+
+runCompose()

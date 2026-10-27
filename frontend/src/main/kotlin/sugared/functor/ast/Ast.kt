@@ -60,6 +60,10 @@ data class StructDecl(
     val annotations: List<String> = emptyList(),
     /** v3.0 特性 1：结构体伴生命题 `struct Test(n: Nat) <n ≠ 0>`（构造时证明，参数位自动注入） */
     val props: List<Expr> = emptyList(),
+    /** @compose 视图内容（SfA 生成 Kotlin Compose 源码用）：
+     *  `struct Home2 { Title(text = "x") … }` 的块体（语句序列，ExprStmt 的 CallExpr(StructCtorExpr(…), [])）
+     *  或 `struct Home3(path: Str) = Home2()` 的单表达式。非 @compose 结构体恒为 null。 */
+    val body: Expr? = null,
     override val pos: String = "",
 ) : Decl
 

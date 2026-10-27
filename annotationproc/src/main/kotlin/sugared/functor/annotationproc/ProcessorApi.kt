@@ -1,6 +1,12 @@
 package sugared.functor.annotationproc
 
+import sugared.functor.ast.BlockExpr
+import sugared.functor.ast.CallExpr
 import sugared.functor.ast.DeclEntry
+import sugared.functor.ast.Expr
+import sugared.functor.ast.ExprStmt
+import sugared.functor.ast.NameRef
+import sugared.functor.ast.StructCtorExpr
 import sugared.functor.ast.FileAst
 import sugared.functor.ast.FunDecl
 import sugared.functor.ast.StructDecl
@@ -187,6 +193,69 @@ object ProcessorApi {
             }
         }
 
+        // ---------- @compose 视图 → Kotlin Compose 源码发射（SfA） ----------
+        // 视图清单：每行 "<name>|<字段数>|<注解逗号表>|<内容调用序列 "C1,C2,…">"，供脚本编排。
+        interp.register("composeViewNames", retType = ScriptType.ListT(ScriptType.Str)) { _ ->
+
+            structs.filter { it.isCompose() }.map { st ->
+                st.name + "|" + st.fields.size + "|" + st.annotations.joinToString(",") + "|" +
+                    composeCallSequence(st).joinToString(",")
+            }
+        }
+        interp.register("structHasBody", "name" to ScriptType.Str, retType = ScriptType.Bool) { args ->
+            structByName(args[0] as String)?.body != null
+        }
+        // 字段表：每行 "<名称>|<声明类型文本>"（@compose 视图的参数表）。
+        interp.register("composeFields", "name" to ScriptType.Str,
+            retType = ScriptType.ListT(ScriptType.Str)) { args ->
+            val st = structByName(args[0] as String)
+            val ps = st?.fields ?: emptyList()
+            ps.filter { it.name !in COMPOSE_RESERVED_FIELDS }.map { it.name + "|" + it.type.render() }
+        }
+        // 一个 @compose 视图 → 整份 Kotlin 源码（含 package/import/@Composable fun）。
+        interp.register(
+            "composeKotlin",
+            "name" to ScriptType.Str,
+            "packageName" to ScriptType.Str,
+            "imports" to ScriptType.Str,
+            "optIns" to ScriptType.Str,
+            retType = ScriptType.Str,
+        ) { args ->
+            val st = structByName(args[0] as String)
+            if (st == null || !st.isCompose()) {
+                diags += Diag(Severity.WARN, "W-PROCESSOR-COMPOSE", "",
+                    "@compose 视图不存在：" + (args[0] as String))
+                ""
+            } else {
+                ComposeEmitter.emitStruct(
+                    st, args[1] as String, splitCsv(args[2] as String), splitCsv(args[3] as String),
+                ).source
+            }
+        }
+        // 组件清单：每行 "<view>|<组件数>|<组件 FQN 逗号表>"（脚本据此汇报/校验映射）。
+        interp.register("composeComponents", "name" to ScriptType.Str,
+            retType = ScriptType.ListT(ScriptType.Str)) { args ->
+            val st = structByName(args[0] as String)
+            if (st == null || !st.isCompose()) emptyList() else {
+                val r = ComposeEmitter.emitStruct(st, "", emptyList())
+                listOf(r.view + "|" + r.components.size + "|" + r.components.joinToString(","))
+            }
+        }
+        // 连接串：脚本拼路径用（按分隔符连接字符串列表，跳过空串）。
+        interp.register("joinPath", "parts" to ScriptType.ListT(ScriptType.Str), "sep" to ScriptType.Str,
+            retType = ScriptType.Str) { args ->
+            @Suppress("UNCHECKED_CAST")
+            val parts = args[0] as List<String>
+            parts.filter { it.isNotEmpty() }.joinToString(args[1] as String)
+        }
+        // 宿主路径分隔符（Windows = 反斜杠，其余 = /）；宿主工程根（编译工作目录）。
+        interp.register("pathSeparator", retType = ScriptType.Str) { _ ->
+            java.io.File.separator
+        }
+        interp.register("projectDir", retType = ScriptType.Str) { _ ->
+            java.io.File(".").absoluteFile.normalize().path
+        }
+
 // ---------- 安卓视图处理器支撑（android doc/安卓标准库.md） ----------
         interp.register("fieldDeclText", "name" to ScriptType.Str, "field" to ScriptType.Str,
             retType = ScriptType.Str) { args ->
@@ -302,6 +371,36 @@ object ProcessorApi {
         }
     }
 }
+
+/** @compose 视图结构体上不属于「视图参数」的编译期字段（与 view 注入同名单，见 AndroidViewEdits）。 */
+private val COMPOSE_RESERVED_FIELDS = setOf("children", "recomposion", "__ord")
+
+/** 结构体是否 @compose 视图。 */
+internal fun StructDecl.isCompose(): Boolean = "compose" in annotations
+
+/** @compose 视图内容里的调用序列（组件名），块体调用 + 单表达式视图名；供脚本清单展示。 */
+internal fun composeCallSequence(st: StructDecl): List<String> {
+    val out = ArrayList<String>()
+    fun walk(e: Expr?) {
+        when (e) {
+            null -> {}
+            is CallExpr -> {
+                val ctor = e.callee as? StructCtorExpr
+                if (ctor != null) { out += ctor.struct; ctor.assigns.forEach { walk(it.second) } }
+                else { (e.callee as? NameRef)?.let { out += it.name }; e.args.forEach { walk(it) } }
+            }
+            is StructCtorExpr -> out += e.struct
+            is BlockExpr -> e.stmts.forEach { s -> if (s is ExprStmt) walk(s.expr) }
+            else -> {}
+        }
+    }
+    walk(st.body)
+    return out
+}
+
+/** 逗号分隔串 → 列表（去空、去重保序）。 */
+private fun splitCsv(s: String): List<String> =
+    s.split(",").map { it.trim() }.filter { it.isNotEmpty() }.distinct()
 
 /** FileAst 里某类声明的列表（声明序）。 */
 private inline fun <reified D : sugared.functor.ast.Decl> declsOf(ast: FileAst): List<D> =

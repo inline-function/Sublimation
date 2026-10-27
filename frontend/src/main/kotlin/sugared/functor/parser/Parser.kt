@@ -45,6 +45,9 @@ private var ifIsCond: Boolean = false
     }
 
     companion object {
+        /** @compose 视图结构体注解（SfA：生成 Kotlin Compose 源码）。带它时 struct 可有内容体
+         *  （大括号调用序列 / `= 表达式`），见 [parseStruct]。 */
+        const val COMPOSE_ANNOTATION = "compose"
         // 指导思路：`=` 命题等式、`:` 类型测（均可中缀）；`==` `!=` 是 Bool 函数，
         // v1.1 Kotlin 化：EQ/NEQ 允许中缀（a == b / a != b，值相等），前缀 ==(a,b) 仍保留。
         val binops = setOf(
@@ -894,18 +897,62 @@ private var ifIsCond: Boolean = false
         at(Kind.STRUCT)
         val name = nameToken()
         val theory = if (peek(Kind.LBRACKET)) parseTheory() else emptyList()
-        // O3（决策 69）：struct 体是圆括号参数列表；大括号明确拒绝并给出改写指引
-        if (peek(Kind.LBRACE))
+        // O3（决策 69）：struct 体是圆括号参数列表，大括号明确拒绝（带指向性文案）。
+        // 唯一例外是 @compose 视图结构体（SfA：生成 Kotlin Compose 源码）：
+        // `@compose struct Home { Text(text = "x") }` 大括号写调用序列内容，
+        // `@compose struct Home(p: Str) = Home2()` 的 = 写单表达式内容。
+        val isCompose = COMPOSE_ANNOTATION in anns
+        if (peek(Kind.LBRACE) && !isCompose)
             throw ParseFailure(fileName, cur(), "struct 体是参数列表，请改写为 $name(字段: 类型 = 默认值)")
         // P3（v2.1）：无字段 struct 可省略参数括号 `struct P`，等价 `struct P()`
         if (!peek(Kind.LPAREN)) {
+            if (isCompose && peek(Kind.LBRACE))
+                return StructDecl(name, theory, emptyList(), anns, emptyList(), parseComposeBlock())
+            // `= 表达式` 单表达式视图。`=` 是中缀 token：吃 token 后看表达式起点，不匹配回退。
+            if (isCompose && cur().kind == Kind.ASSIGN) {
+                val save = pos
+                next()
+                if (exprStarts()) return StructDecl(name, theory, emptyList(), anns, emptyList(), parseExpr(angle = false))
+                pos = save
+            }
             // v3.0 特性 1：伴生命题 `struct P <p>`（无字段也可有命题）
             return StructDecl(name, theory, emptyList(), anns, if (peek(Kind.LT)) parseAngleList() else emptyList())
         }
         val fields = parseParams()
         // v3.0 特性 1：结构体伴生命题 `struct Test(n: Nat) <n ≠ 0>`——声明位 `<...>`（同 fun 下文位识别）
         val props = if (peek(Kind.LT)) parseAngleList() else emptyList()
+        // @compose 视图内容：块体（调用序列）或 `= 表达式` 单表达式视图
+        if (isCompose && peek(Kind.LBRACE)) return StructDecl(name, theory, fields, anns, props, parseComposeBlock())
+        if (isCompose && cur().kind == Kind.ASSIGN) {
+            val save = pos
+            next()
+            if (exprStarts()) return StructDecl(name, theory, fields, anns, props, parseExpr(angle = false))
+            pos = save
+        }
         return StructDecl(name, theory, fields, anns, props)
+    }
+
+    /**
+     * @compose 视图的块体：块内每条语句是「调用序列」——`Title(text = "x")` 解析为
+     * `CallExpr(StructCtorExpr(Title, assigns), [])` 的语法糖，代表在当前位置调用对应组件；
+     * 普通语句（var/赋值/return 等）按常规解析。返回 BlockExpr。
+     */
+    private fun parseComposeBlock(): Expr {
+        at(Kind.LBRACE)
+        val stmts = ArrayList<Stmt>()
+        while (!peek(Kind.RBRACE) && !peek(Kind.EOF)) {
+            stmts += parseStmt()
+        }
+        at(Kind.RBRACE)
+        return BlockExpr(stmts)
+    }
+
+    /** 下一个 token 是否可能是表达式起点（@compose 视图 `= 表达式` 体的判定；只排除明显非表达式）。 */
+    private fun exprStarts(): Boolean = when (cur().kind) {
+        Kind.IDENT, Kind.STR, Kind.INT, Kind.FLOAT, Kind.SYMBOL, Kind.LPAREN, Kind.LBRACKET, Kind.LBRACE,
+        Kind.MINUS, Kind.BANG, Kind.LNOT, Kind.IF, Kind.WHEN, Kind.FUN,
+        -> true
+        else -> false
     }
 
     private fun parseEnum(): EnumDecl {
