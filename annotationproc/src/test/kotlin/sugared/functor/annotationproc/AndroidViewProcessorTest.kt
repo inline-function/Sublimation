@@ -164,4 +164,67 @@ class AndroidViewProcessorTest {
             assertFalse(bag.hasError, "混排 Any 子视图不应报错，实际:\n" + bag.report())
         } finally { dir.deleteRecursively() }
     }
+
+    /** R5（t58）：裸调用 `Box() { 子视图 }`——空括号经解析器不成命名构造（CallExpr(NameRef(Box), [lambda])），
+     *  旧版改写不匹配 → 尾随 lambda 在检查期按位置错配首字段（E-TYPE-MISMATCH「实参 (…)=>… 与字段 … 不符」），
+     *  SfA 契约 §7 最简写法因此不可用。改写扩展后同样产出 children/recomposion/__ord。 */
+    private val bareSrc =
+        "@view struct Box(modifier: Any = 0)\n" +
+        "@view struct Text(text: Str = \"\")\n" +
+        "\n" +
+        "@android @impure\n" +
+        "fun androidRecompose(view: Str, ordinal: Nat, v: Any): Null\n" +
+        "\n" +
+        "@composable\n" +
+        "fun root(): Any = Box() { Text(text = \"a\") }\n"
+
+    @Test
+    fun bare_ctor_site_collected_and_rewritten() {
+        val r = runView(bareSrc)
+        dump("bare", r)
+        val root = funOf(r.ast, "root")
+        val body = root.body as? StructCtorExpr
+        assertNotNull(body, "root 体应为 Box 构造")
+        assertEquals("Box", body.struct)
+        // 无命名实参 → 只补 children/recomposion/__ord；modifier 走声明默认值
+        assertEquals(listOf("children", "recomposion", "__ord"), body.assigns.map { it.first })
+        val recom = body.assigns.first { it.first == "recomposion" }.second as? NameRef
+        assertNotNull(recom, "recomposion 位应是 NameRef")
+        assertEquals("recomposion\$Box\$1", recom.name)
+        val kids = body.assigns.first { it.first == "children" }.second as? CallExpr
+        assertNotNull(kids, "children 应是 listOf 调用")
+        val kid = kids.args[0] as? StructCtorExpr
+        assertNotNull(kid, "子视图应为 Text 构造")
+        assertEquals(listOf("text", "children", "recomposion", "__ord"), kid.assigns.map { it.first })
+        // 与命名构造形态同一算法：recomposion$Box$N 名字与站点清单一致（次序不漂）
+        assertNotNull(funOf(r.ast, "recomposion\$Box\$1"))
+        assertNotNull(funOf(r.ast, "recomposion\$Text\$1"))
+        assertFalse(r.loopDetected, "处理器未收敛")
+    }
+
+    @Test
+    fun bare_ctor_full_pipeline_checks() {
+        val dir = Files.createTempDirectory("subl-r5bare").toFile()
+        try {
+            File(dir, "main.subl").writeText(bareSrc)
+            // 挂 core 标准库（listOf/Nil 由 core 提供）
+            val coreSrc = File("core")
+            val coreDst = File(dir, "core"); coreDst.mkdirs()
+            for (f in coreSrc.walkTopDown().filter { it.isFile && it.name.endsWith(".subl") }) {
+                val rel = f.relativeTo(coreSrc).path
+                File(coreDst, rel).apply { parentFile?.mkdirs() }.writeText(f.readText())
+            }
+            val mm = MultiModule(dir)
+            val procs = BuiltinProcessors.loadFrom(BuiltinProcessors.DEFAULT_DIR)
+            val pbag = mm.processModules(ProcessorPipeline.builtinModuleTransformer(
+                ProcessorLoadResult(procs, emptyList()), emptyMap()))
+            val bag = mm.checkAll()
+            bag.absorb(pbag)
+            assertFalse(bag.hasError, "裸调用 Box() { … } 端到端不应报错，实际:\n" + bag.report())
+            val js = mm.generateJs()
+            // children 走位置实参（recomposion/__同理），不再出现「结构体值(lambda)」式垃圾调用
+            assertTrue(js.contains("children") || js.contains("__ord") || js.contains("recomposion"),
+                "生成的 JS 应含视图协议字段")
+        } finally { dir.deleteRecursively() }
+    }
 }

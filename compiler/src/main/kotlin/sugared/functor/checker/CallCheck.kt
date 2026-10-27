@@ -81,6 +81,11 @@ private fun unifySigType(sigT: Type, argT: Type, sub: MutableMap<String, Type>) 
 }
 
 internal fun Checker.checkCall(c: CallExpr, f: Frame, pure: Boolean): Type {
+    // R5（SfA《Compose 代码生成契约》§7）：命名构造 + 尾随 lambda（`A(x = 1) { … }`）——先于实参类型计算分发，
+    // 经 checkStructCtorCall 把 lambda 并入命名构造（否则 argTypes 与并入构造各检查一遍，诊断翻倍）
+    (c.callee as? StructCtorExpr)?.let { sc ->
+        if (c.args.size == 1 && c.args[0] is LambdaExpr) return checkStructCtorCall(sc, c, f, pure)
+    }
     val argTypes = c.args.map { checkExpr(it, f, pure) }
     // P0（M3/M5/M6）：跨模块限定调用 `core.gcd(...)` / `c.Point(...)` / `core.show(p)`
     if (c.callee is FieldExpr) {
@@ -651,25 +656,80 @@ internal fun Checker.checkCtorCall(ci: CtorInfo, name: String, c: CallExpr, argT
     return namedT(ci.enum.name, tps.map { inferred[it] ?: syntheticT("类型参数$it") })
 }
 
+/**
+ * R5（SfA《Compose 代码生成契约》§7，t58）：结构体构造的**尾随 lambda** 绑定函数型字段。
+ *
+ * `Box() { Text(...) }` 经解析器脱糖为 `CallExpr(NameRef(Box), [LambdaExpr])`（空括号不构成命名构造），
+ * 旧逻辑把实参与字段按位置压缩，lambda 错配到**首字段**（如 modifier: Str），报
+ * 「构造 Box 实参 (…)=>Text 与字段 Str 不符」。绑定规则（优先级，兼容既有行为）：
+ *  1. 位置位本就是函数型字段（`struct Task(run: () => Null)` 写作 `Task() {…}`）→ 保持位置式（旧行为）；
+ *  2. 位置位是 Any 字段（决策 59，旧逻辑本就放行任意实参）→ 保持位置式（旧行为）；
+ *  3. 最后一个字段是函数型且未被位置前缀占用 → 绑定最后字段（Kotlin 尾随 lambda 语义，SfA 的 body 模式）；
+ *  4. 未占位（>= lambda 位）的函数型字段恰一个 → 绑定它（任务约定：lambda 匹配函数型字段）；
+ *  5. 其余（无/多候选、位置位已吸收）→ 保持位置式（由既有 E-TYPE-MISMATCH 指出）。
+ *
+ * 重绑后其余未占位字段按声明默认值补齐（无默认值 → E-FIELD-MISSING）；并以 [Checker.namedArgOrder]
+ * 留痕重排后的全字段实参列表（P8 机制，JsCodeGen 已消费）。
+ */
+private fun Checker.rebindTrailingLambda(st: StructDecl, name: String, c: CallExpr, argTypes: List<Type>): Pair<List<Expr>, List<Type>> {
+    val args = c.args
+    if (args.isEmpty() || args.last() !is LambdaExpr) return args to argTypes
+    val lamIdx = args.lastIndex
+    val lam = args.last()
+    fun isFn(fp: Param): Boolean = syms.expand(fp.type) is FunType
+    val atSlot = st.fields.getOrNull(lamIdx)
+    // 规则 1/2：位置位能吸收 lambda（函数型 / Any）→ 保持位置式（旧行为）
+    if (atSlot != null && (isFn(atSlot) || (atSlot.type is NamedType && atSlot.type.name == "Any" && atSlot.type.args.isEmpty())))
+        return args to argTypes
+    // 规则 3/4：候选 = lambda 位及之后的函数型字段——优先最后字段（Kotlin 尾随语义），否则要求唯一
+    val lastIdx = st.fields.lastIndex
+    val cands = st.fields.mapIndexed { i, fp -> i to fp }.filter { (i, fp) -> i >= lamIdx && isFn(fp) }
+    val target = cands.lastOrNull { it.first == lastIdx } ?: cands.singleOrNull() ?: return args to argTypes
+    val fnIdx = target.first
+    // 重绑：位置前缀保留原位，未占位字段以声明默认值补齐，lambda 进 fnIdx
+    val effArgs = ArrayList<Expr>(st.fields.size)
+    val effTypes = ArrayList<Type>(st.fields.size)
+    for (i in st.fields.indices) when {
+        i < lamIdx -> { effArgs += args[i]; effTypes += argTypes[i] }
+        i == fnIdx -> { effArgs += lam; effTypes += argTypes[lamIdx] }
+        else -> {
+            val dflt = st.fields[i].default
+            if (dflt != null) {
+                effArgs += dflt
+                effTypes += syms.expand(st.fields[i].type)   // 默认值已在声明期核对类型（Symbols O3），此处直采字段类型
+            } else {
+                d.error("E-FIELD-MISSING", c.pos, "构造 $name 缺字段 ${st.fields[i].name} 且无默认值")
+                effArgs += NameRef("__missing", c.pos)
+                effTypes += syntheticT("缺实参")
+            }
+        }
+    }
+    namedArgOrder[c] = effArgs
+    return effArgs to effTypes
+}
+
 /** 结构体构造调用公共段（决策 69，O3）：位置式缺省尾部规则不变；限定/普通共用。 */
 internal fun Checker.checkStructCall(st: StructDecl, name: String, c: CallExpr, argTypes: List<Type>, modPath: String, f: Frame): Type {
     moduleHits[c.callee] = moduleJsName(modPath, name)
+    // R5（t58）：尾随 lambda 绑定函数型字段（重排实参与类型；未触发时原样返回，旧逻辑逐字保持）
+    val (effArgs, effTypes) = rebindTrailingLambda(st, name, c, argTypes)
     // HKT-2（《高阶类型.md》§7.2）：struct 泛型实参推断——与 enum 构造同逻辑（字段实参反推类型参数，
     // 如 Pair(1, "a") → Pair[Nat, Str]），HKT 构造子应用（Bifunctor for Pair[a,b]）依赖它拿到命名类型
     val tps = st.theory.filterIsInstance<TypeParam>().map { it.name }
     val inferred = LinkedHashMap<String, Type>()
     st.fields.forEachIndexed { i, fp ->
-        if (i < argTypes.size && !argTypes[i].isSynthetic())
-            extractTpBinding(fp.type, argTypes[i], tps.toSet(), inferred)
+        if (i < effTypes.size && !effTypes[i].isSynthetic())
+            extractTpBinding(fp.type, effTypes[i], tps.toSet(), inferred)
     }
     // O3（决策 69）：位置式允许缺省尾部——前提是尾部字段全有声明默认值
     // （命名字段构造 `A(name = e)` 由解析器产出独立节点 StructCtorExpr，走独立检查）
-    if (st.fields.size < argTypes.size)
-        d.error("E-TYPE-MISMATCH", c.pos, "构造 $name 期望 ${st.fields.size} 实参，实际 ${argTypes.size}")
-    else if (st.fields.size > argTypes.size &&
-        st.fields.drop(argTypes.size).any { it.default == null })
+    if (st.fields.size < effArgs.size)
+        d.error("E-TYPE-MISMATCH", c.pos, "构造 $name 期望 ${st.fields.size} 实参，实际 ${effArgs.size}")
+    else if (st.fields.size > effArgs.size &&
+        st.fields.drop(effArgs.size).any { it.default == null })
         d.error("E-FIELD-MISSING", c.pos, "构造 $name 缺尾部字段且无默认值")
-    else st.fields.zip(argTypes).forEach { (fp, at) ->
+    else st.fields.zip(effArgs).zip(effTypes).forEach { (p0, at) ->
+        val fp = p0.first
         val ft = syms.expand(fp.type).substT(inferred)   // P2：字段比较用解出后的类型（与 checkCtorCall 一致）
         val isTP = fp.type.name in tps && fp.type.args.isEmpty()   // 类型参数字段：跳过比较
         if (!isTP && !at.isSynthetic() && ft.isNominal() && !typeLooseEq(ft, at)) {
@@ -681,9 +741,44 @@ internal fun Checker.checkStructCall(st: StructDecl, name: String, c: CallExpr, 
     // v3.0 特性 1：结构体伴生命题——构造前证明（E-STRUCT-PROP-UNPROVEN / E-STRUCT-MUT-PROP）
     // 修复（#7）：位置式缺省字段以声明默认值替换进命题（否则默认值不会参与伴生命题证明）
     checkStructProps(st, f, c.pos, st.fields.mapIndexed { i, fp ->
-        fp.name to (c.args.getOrNull(i) ?: fp.default ?: NameRef("__missing"))
+        fp.name to (effArgs.getOrNull(i) ?: fp.default ?: NameRef("__missing"))
     }.toMap())
     return namedT(name, tps.map { inferred[it] ?: syntheticT("类型参数$it") })
+}
+
+/**
+ * R5（SfA 契约 §7，t58）：命名构造 + 尾随 lambda——`A(x = 1, …) { … }`。
+ *
+ * 解析器把 `A(x = 1)` 产出 StructCtorExpr、尾随 `{…}` 包成 `CallExpr(StructCtorExpr, [LambdaExpr])`。
+ * 旧逻辑只检查命名构造本体、把外层 lambda **静默丢弃**（结构体值不可调用，codegen 生成
+ * `A(…)(function…)` 垃圾调用）。现在：lambda 绑定到**唯一未占位的函数型字段**后整并成命名构造
+ * 交给 [checkStructCtor] 检查，并留痕 [Checker.mergedStructCtor] 供 codegen 生成合并后的命名构造。
+ * 无候选 / 多候选 → E-TYPE-MISMATCH（多候选提示改用命名实参）；其余形态维持旧行为。
+ */
+internal fun Checker.checkStructCtorCall(sc: StructCtorExpr, c: CallExpr, f: Frame, pure: Boolean): Type {
+    val st = syms.structs[sc.struct]
+    val lam = c.args.getOrNull(0) as? LambdaExpr
+    if (st == null || lam == null || c.args.size != 1) {
+        // 非单尾随 lambda 形态：维持旧行为——命名构造照常检查，外层调用按 synthetic 返回
+        val t = checkStructCtor(sc, f, pure)
+        return if (st == null) t else syntheticT("调用")
+    }
+    val taken = sc.assigns.map { it.first }.toSet()
+    val cands = st.fields.filter { it.name !in taken && syms.expand(it.type) is FunType }
+    when {
+        cands.isEmpty() -> d.error("E-TYPE-MISMATCH", c.pos,
+            "结构体 ${sc.struct} 没有未占位的函数型字段接收尾随 lambda（字段：${st.fields.joinToString { it.name }}）")
+        cands.size > 1 -> d.error("E-TYPE-MISMATCH", c.pos,
+            "尾随 lambda 有多个候选函数型字段（${cands.joinToString { it.name }}），请改命名实参 `${cands.first().name} = { … }`")
+    }
+    if (cands.size != 1) {
+        // 诊断归诊断：命名构造本体仍照常检查（lambda 已在 checkCall 入口检查过一遍，不再重复）
+        checkStructCtor(sc, f, pure)
+        return syntheticT("调用")
+    }
+    val merged = StructCtorExpr(sc.struct, sc.assigns + (cands[0].name to lam), sc.pos)
+    mergedStructCtor[c] = merged
+    return checkStructCtor(merged, f, pure)
 }
 
 /** 函数调用公共检查尾段（决策 54/59/60/65，O2）：纯度/参数核对/显式供给/前后文；限定/普通共用。 */

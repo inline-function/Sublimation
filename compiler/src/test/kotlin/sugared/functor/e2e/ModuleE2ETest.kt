@@ -1128,4 +1128,36 @@ class ModuleE2ETest {
         )
         assertEquals("gcd=4", runTree(spec))
     }
+
+    /** t54/t58（SfA 回报的真 bug）：xs.elementAt(i) 的实参表达式含名为 i 的变量时，
+     *  elementAt 快路径的内层绑定直接用固定名（const i）→ 生成 `const i = i`（TDZ ReferenceError）。
+     *  alpha 改名后内外互不遮蔽；用与 SfA 同名的 i 作回归变量。 */
+    @Test
+    fun `t58 elementAt 实参变量名 i 不再 TDZ 自引用`() {
+        assumeTrue(nodeAvailable())
+        val spec = coreSpec() + ("main.subl" to
+            "@impure fun main() {\n" +
+            "    var xs = Cons(10, Cons(20, Nil()))\n" +
+            "    var i = 1\n" +
+            "    when (xs.elementAt(i)) {\n" +
+            "        is Some(v) => print(v)\n" +
+            "        None => print(\"none\")\n" +
+            "    }\n" +
+            "}")
+        assertEquals("20", runTree(spec))
+    }
+
+    /** t58 同族护栏：head/last/indexOf 的内层固定名绑定也不与实参变量互相遮蔽。 */
+    @Test
+    fun `t58 head 与 indexOf 实参变量名不遮蔽内层绑定`() {
+        assumeTrue(nodeAvailable())
+        val spec = coreSpec() + ("main.subl" to
+            "@impure fun main() {\n" +
+            "    var a = Cons(3, Nil())\n" +
+            "    when (a.head()) { is Some(v) => print(v)  None => print(\"x\") }\n" +
+            "    var i = 3\n" +
+            "    when (a.indexOf(i)) { is Some(n) => print(n)  None => print(\"x\") }\n" +
+            "}")
+        assertEquals("3\n0", runTree(spec))
+    }
 }

@@ -54,9 +54,19 @@ private fun collectSitesInExpr(
                 out += ViewCtorSite(funName, ctor.struct, n)
                 collectSitesInExpr(e.args[0], funName, viewNames, ordinals, out)
             } else {
-                collectSitesInExpr(e.callee, funName, viewNames, ordinals, out)
-                e.args.forEach { collectSitesInExpr(it, funName, viewNames, ordinals, out) }
-                e.namedArgs.values.forEach { collectSitesInExpr(it, funName, viewNames, ordinals, out) }
+                // R5（t58）：裸形式 `X() { … }`——空括号经解析器不成命名构造（callee 是 NameRef）。
+                // X ∈ 视图结构体名时同样是构造点：登记并下钻 lambda 收集子站点
+                val bare = (e.callee as? NameRef)?.name
+                if (bare != null && bare in viewNames && e.args.size == 1 && e.args[0] is LambdaExpr) {
+                    val n = ordinals.getOrDefault(bare, 0) + 1
+                    ordinals[bare] = n
+                    out += ViewCtorSite(funName, bare, n)
+                    collectSitesInExpr(e.args[0], funName, viewNames, ordinals, out)
+                } else {
+                    collectSitesInExpr(e.callee, funName, viewNames, ordinals, out)
+                    e.args.forEach { collectSitesInExpr(it, funName, viewNames, ordinals, out) }
+                    e.namedArgs.values.forEach { collectSitesInExpr(it, funName, viewNames, ordinals, out) }
+                }
             }
         }
         is BinExpr -> { collectSitesInExpr(e.left, funName, viewNames, ordinals, out); collectSitesInExpr(e.right, funName, viewNames, ordinals, out) }
@@ -120,6 +130,9 @@ private fun collectSitesInStmt(
 }
 
 /** 改写所有视图构造点：X(args) { 子视图 } → X(args, children = listOf(子视图), recomposion = recomposion$X$N)。
+ * 覆盖两种 AST 形态：命名构造 `X(k = v) { … }`（CallExpr(StructCtorExpr, [lambda])）与
+ * 裸调用 `X() { … }`（CallExpr(NameRef(X), [lambda])——空括号不成命名构造，R5/t58 补）。
+ *
  *  body 被擦除；body 中构造的子视图成为 children 列表成员（android doc §3.2）。
  *  次序分配与 collectViewCtorSites 同一算法，保证脚本生成的 recomposion$X$N 名字一致；
  *  已改写过的构造点（无尾随 lambda 体）不匹配 → 幂等，多轮引擎自然收敛。
@@ -157,6 +170,23 @@ private fun rewriteExpr(
                 newAssigns += RECOMPOSION to NameRef(recomposionName(ctor.struct, n))
                 newAssigns += ORD to IntLit(n.toString())
                 return StructCtorExpr(ctor.struct, newAssigns, ctor.pos) to true
+            }
+            // R5（t58）：裸形式 `X() { … }`——空括号不成命名构造（callee 是 NameRef）；X ∈ 视图结构体名时
+            // 同算法改写为 X(children = listOf(子视图), recomposion = recomposion$X$N, __ord = N)，
+            // 其余字段交由 checker 按声明默认值处理。此前该形态不匹配改写，尾随 lambda 在检查期
+            // 被按位置错配到首字段（E-TYPE-MISMATCH），SfA §7 最简写法因此不可用。
+            val bare = (e.callee as? NameRef)?.name
+            if (bare != null && bare in viewNames && e.args.size == 1 && e.args[0] is LambdaExpr) {
+                val lam = e.args[0] as LambdaExpr
+                val n = ordinals.getOrDefault(bare, 0) + 1
+                ordinals[bare] = n
+                var kch = false
+                val kids = childViewExprs(lam.body).map { applyTo(it, viewNames, ordinals) { kch = true } }
+                val newAssigns = ArrayList<Pair<String, Expr>>()
+                if (kids.isNotEmpty()) newAssigns += CHILDREN to makeListOf(kids)
+                newAssigns += RECOMPOSION to NameRef(recomposionName(bare, n))
+                newAssigns += ORD to IntLit(n.toString())
+                return StructCtorExpr(bare, newAssigns, e.pos) to true
             }
             var ch = false
             val callee = applyTo(e.callee, viewNames, ordinals) { ch = true }

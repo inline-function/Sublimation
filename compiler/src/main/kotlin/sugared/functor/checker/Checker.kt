@@ -67,6 +67,10 @@ class Checker(
     internal val hktKindPosHits = java.util.IdentityHashMap<CallExpr, Int>()
     /** P8（决策 84）：命名参数规范化后的实参留痕（调用点实例 → 按形参声明顺序的实参列表），codegen 重排 */
     internal val namedArgOrder = java.util.IdentityHashMap<CallExpr, List<Expr>>()
+    /** R5（SfA 契约 §7）：命名构造 + 尾随 lambda（`A(x = 1) { … }`）的调用点 → 合并后的命名构造节点。
+     *  checker 把尾随 lambda 并进唯一未占位的函数型字段，codegen 据此生成合并后的命名构造调用
+     *  （否则会生成“结构体值(lambda)”的非法调用） */
+    internal val mergedStructCtor = java.util.IdentityHashMap<CallExpr, StructCtorExpr>()
     /** v1.1 集合方法糖留痕：`xs.map(f)` → 同名自由函数 `map(xs, f)`（接收者前置）。
      *  键 = 调用点实例，值 = 重排后的实参列表（接收者 + 原实参），codegen 依此生成。 */
     internal val methodSugarArgs = java.util.IdentityHashMap<CallExpr, List<Expr>>()

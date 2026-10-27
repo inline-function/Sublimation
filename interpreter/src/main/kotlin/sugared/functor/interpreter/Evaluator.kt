@@ -70,6 +70,8 @@ class Evaluator(
                         fieldTypes = linkedMapOf(*d.fields.map { it.name to ScriptType.Any }.toTypedArray()),
                         mutableFields = mutable,
                         fieldDefaults = defaults,
+                        // R5（t58）：记录函数型字段，供裸调用 `X() { … }` 的尾随 lambda 绑定（与 checker 同规则）
+                        funFields = d.fields.filter { it.type is FunType }.map { it.name }.toSet(),
                     )
                 }
                 is EnumDecl -> {
@@ -484,6 +486,24 @@ class Evaluator(
             // 结构体构造：空括号 / 位置实参 / 命名实参均可
             val struct = lookupStruct(name)
             if (struct != null) {
+                // R5（t58）：尾随 lambda 绑定函数型字段（与 checker rebindTrailingLambda 同规则）——
+                // 旧逻辑把 lambda 按位置压给首字段（裸调用 `Box() { … }` 落到 modifier）。位置位已是
+                // 函数字段时保持旧行为；否则最后字段是函数字段 → 绑之，未占位函数字段恰一个 → 绑之
+                val names = struct.fieldNames
+                val lamIdx = c.args.lastIndex
+                if (c.namedArgs.isEmpty() && c.args.isNotEmpty() && c.args[lamIdx] is LambdaExpr &&
+                    names.getOrNull(lamIdx) !in struct.funFields) {
+                    val fnField = when (val lastFn = names.lastOrNull { it in struct.funFields }) {
+                        names.lastOrNull() -> if (lamIdx < names.lastIndex) lastFn else null
+                        else -> names.drop(lamIdx).filter { it in struct.funFields }.singleOrNull()
+                    }
+                    if (fnField != null) {
+                        val pre = c.args.take(lamIdx).mapIndexed { i, ex ->
+                            (names.getOrElse(i) { "_$i" }) to ex
+                        }
+                        return evalStructCtor(StructCtorExpr(name, pre + listOf(fnField to c.args[lamIdx]) + c.namedArgs.toList(), c.pos), frame)
+                    }
+                }
                 val positional: List<Pair<String, Expr>> = c.args.indices.map { i ->
                     (struct.fieldNames.getOrElse(i) { "_$i" }) to c.args[i]
                 }
@@ -502,6 +522,18 @@ class Evaluator(
         if (fnVal is ScriptValue.Fun) {
             val argVals = c.args.map { evalExpr(it, frame) }
             return callFunValue(fnVal.fn, argVals, c.pos)
+        }
+        // R5（t58）：命名构造 + 尾随 lambda（`A(x = 1) { … }`）——并入唯一未占位函数型字段后求值；
+        // 此前该形态直接求值为结构体值再“不可调用”
+        val sc = c.callee as? StructCtorExpr
+        if (sc != null && c.args.size == 1 && c.args[0] is LambdaExpr) {
+            val info = lookupStruct(sc.struct)
+            if (info != null) {
+                val taken = sc.assigns.map { it.first }.toSet()
+                val cand = info.funFields.filter { it !in taken }.singleOrNull()
+                if (cand != null)
+                    return evalStructCtor(StructCtorExpr(sc.struct, sc.assigns + (cand to c.args[0]), sc.pos), frame)
+            }
         }
         throw InterpreterError("不可调用: " + c.callee)
     }
@@ -1008,6 +1040,8 @@ data class StructInfo(
     val annotations: List<Annotation> = emptyList(),
     /** 字段默认值（struct 声明里 字段: 类型 = 默认值）；构造时缺省字段按此求值（P12） */
     val fieldDefaults: Map<String, Expr> = emptyMap(),
+    /** R5（t58）：函数型字段名（尾随 lambda 绑定目标，与 checker 规则一致） */
+    val funFields: Set<String> = emptySet(),
 ) {
     val fieldNames: List<String> get() = fieldTypes.keys.toList()
 }

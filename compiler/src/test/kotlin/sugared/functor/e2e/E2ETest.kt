@@ -24,7 +24,7 @@ class E2ETest {
         val chk = Checker(ast)
         val bag = chk.run()
         assertEquals(false, bag.hasError, "语义检查应通过，实际:\n${bag.report()}")
-        val js = JsCodeGen().generate(ast, chk.dictHits, chk.moduleHits, chk.consHits, chk.dictSubHits, chk.namedArgOrder, chk.methodSugarArgs, chk.asyncAwaitHits, chk.channelUsed, chk.mutexUsed, chk.atomicUsed, chk.flowUsed, chk.rangeHits, chk.rangeUsed, chk.receiveSmartHits, chk.flowEmitHits, chk.hktKindPosHits, chk.funRefTargets, chk.funRefFree.keys, chk.lambdaDestructKeys, chk.delegatedImpls, chk.deepCopyHits)
+        val js = JsCodeGen().generate(ast, chk.dictHits, chk.moduleHits, chk.consHits, chk.dictSubHits, chk.namedArgOrder, chk.methodSugarArgs, chk.asyncAwaitHits, chk.channelUsed, chk.mutexUsed, chk.atomicUsed, chk.flowUsed, chk.rangeHits, chk.rangeUsed, chk.receiveSmartHits, chk.flowEmitHits, chk.hktKindPosHits, chk.funRefTargets, chk.funRefFree.keys, chk.lambdaDestructKeys, chk.delegatedImpls, chk.deepCopyHits, chk.listMethodHits, chk.mergedStructCtor)
         val f = File.createTempFile("subl-e2e-", ".js")
         f.writeText(js)
         return try {
@@ -798,5 +798,37 @@ class E2ETest {
             "    print(b.n)\n" +
             "}"
         assertEquals("1", run(src))
+    }
+
+    // ============ R5（t58，SfA 契约 §7）：结构体构造尾随 lambda ============
+
+    @Test
+    fun `R5 裸调用尾随 lambda 进 body 字段并保留 title 默认值`() {
+        assumeTrue(nodeAvailable())
+        // 旧 bug：`Box() { … }` 的 lambda 按位置压给首字段 title，codegen 生成 Box(<lambda>, …)
+        // 且检查期误报 E-TYPE-MISMATCH；修复后 title 取默认值、lambda 进 body
+        val src = "struct Box(title: Str = \"T\", body: () => Nat = fun(): Nat { 0 })\n" +
+            "fun callIt(f: () => Nat): Nat = f()\n" +
+            "@impure fun main() {\n" +
+            "  var b = Box() { 7 }\n" +
+            "  print(b.title)\n" +
+            "  print(callIt(b.body))\n" +
+            "}"
+        assertEquals("T\n7", run(src))
+    }
+
+    @Test
+    fun `R5 命名构造尾随 lambda 进唯一未占位函数字段`() {
+        assumeTrue(nodeAvailable())
+        // 旧 bug：`Box(title = \"T\") { … }` 的 lambda 被检查器静默丢弃、codegen 生成
+        // 「结构体值(lambda)」的非法调用（TypeError）；修复后并入 body 按命名构造生成
+        val src = "struct Box(title: Str = \"T\", body: () => Nat = fun(): Nat { 0 })\n" +
+            "fun callIt(f: () => Nat): Nat = f()\n" +
+            "@impure fun main() {\n" +
+            "  var b = Box(title = \"x\") { 9 }\n" +
+            "  print(b.title)\n" +
+            "  print(callIt(b.body))\n" +
+            "}"
+        assertEquals("x\n9", run(src))
     }
 }

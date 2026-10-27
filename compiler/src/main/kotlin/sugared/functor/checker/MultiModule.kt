@@ -7,6 +7,7 @@ import sugared.functor.ast.Expr
 import sugared.functor.ast.FileAst
 import sugared.functor.ast.FunDecl
 import sugared.functor.ast.Node
+import sugared.functor.ast.StructCtorExpr
 import sugared.functor.ast.VarStmt
 import sugared.functor.codegen.JsCodeGen
 import sugared.functor.codegen.Platform
@@ -181,6 +182,8 @@ class MultiModule(
         var rangeUsed = false
         val deepCopyHits = IdentityHashMap<Node, Boolean>()
         val listMethodHits = IdentityHashMap<CallExpr, String>()
+        // R5（SfA 契约 §7）：命名构造 + 尾随 lambda 的合并构造留痕（generate/generateUnits 末位参数）
+        val mergedStructCtorHits = IdentityHashMap<CallExpr, StructCtorExpr>()
         for (chk in checkers.values) {
             dictHits.putAll(chk.dictHits)
             funRefTargets.putAll(chk.funRefTargets)
@@ -203,9 +206,10 @@ class MultiModule(
             if (chk.rangeUsed) rangeUsed = true
             deepCopyHits.putAll(chk.deepCopyHits)
             listMethodHits.putAll(chk.listMethodHits)
+            mergedStructCtorHits.putAll(chk.mergedStructCtor)
         }
         // t35：按目标平台分派平台调用（node 保持原样）
-        return JsCodeGen(target).generateUnits(asts.toList(), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, mutexUsed, atomicUsed, flowUsed, rangeHits, rangeUsed, receiveSmarts, flowEmitHits, hktKindHits, funRefTargets, funRefFree.keys, lambdaDestructKeys, emptyMap(), deepCopyHits, listMethodHits)
+        return JsCodeGen(target).generateUnits(asts.toList(), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, mutexUsed, atomicUsed, flowUsed, rangeHits, rangeUsed, receiveSmarts, flowEmitHits, hktKindHits, funRefTargets, funRefFree.keys, lambdaDestructKeys, emptyMap(), deepCopyHits, listMethodHits, mergedStructCtorHits)
     }
 }
 
@@ -237,4 +241,5 @@ fun generateSingle(chk: Checker, ast: FileAst, target: Target = Target.NODE): St
     delegatedImpls = chk.delegatedImpls,
     deepCopyHits = chk.deepCopyHits,
     listMethodHits = chk.listMethodHits,
+    mergedStructCtorHits = chk.mergedStructCtor,
 )

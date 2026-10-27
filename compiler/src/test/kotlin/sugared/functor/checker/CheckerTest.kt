@@ -1917,4 +1917,89 @@ class CheckerTest {
         val src = "@impure fun main() { fun helper(a: Nat)<a = 1>: <a = 1> { }\n∴ b = 1 }"
         assertTrue(ok(src), "局部函数定义即 ∀ 引入，∴ b = 1 应搜索到 helper 命中")
     }
+    // ============ R5（t58，SfA 契约 §7）：结构体构造尾随 lambda 绑定函数型字段 ============
+    // 旧 bug：`Box() { … }` 脱糖为 CallExpr(NameRef(Box), [LambdaExpr])，纯位置压缩把 lambda 错配到
+    // 首字段（modifier: Str）→ 误报「构造 Box 实参 (…)=>Text 与字段 Str 不符」（lambda 体用纯表达式 null，
+    // 避免 impure 调用改变 lambda 的函数类型纯度标志）
+
+    @Test
+    fun `R5 裸调用尾随 lambda 绑定最后的函数型字段`() {
+        val src = "struct Box(modifier: Str = \"\", body: () => Null = fun(): Null { null })\n" +
+            "fun root(): Any = Box() { null }"
+        val e = errs(src)
+        assertTrue(e.isEmpty(), "R5 错误码: " + e.joinToString(", ") +
+            " | 全部诊断: " + checkFile(parseSource(src, "t")).diags.joinToString(" | ") { it.render() })
+    }
+
+    @Test
+    fun `R5 命名构造尾随 lambda 绑定唯一未占位函数型字段`() {
+        val src = "struct Box(modifier: Str = \"\", body: () => Null = fun(): Null { null })\n" +
+            "fun root(): Any = Box(modifier = \"x\") { null }"
+        val e = errs(src)
+        assertTrue(e.isEmpty(), "R5 错误码: " + e.joinToString(", ") +
+            " | 全部诊断: " + checkFile(parseSource(src, "t")).diags.joinToString(" | ") { it.render() })
+    }
+
+    @Test
+    fun `R5 首字段即函数型保持位置式旧行为`() {
+        assertTrue(ok("struct Task(run: () => Null)\nfun root(): Any = Task() { null }"))
+    }
+
+    @Test
+    fun `R5 Any 首字段保持旧行为吸收 lambda`() {
+        assertTrue(ok("struct A(x: Any)\nfun root(): Any = A() { null }"))
+    }
+
+    @Test
+    fun `R5 无函数型字段维持原位置式报错`() {
+        assertTrue(errs("struct A(p: Str)\nfun root(): Any = A() { null }").contains("E-TYPE-MISMATCH"))
+    }
+
+    @Test
+    fun `R5 重绑后缺无默认值字段报 E-FIELD-MISSING`() {
+        // title 无默认值、body 是最后的函数型字段 → 重绑成功但因 title 缺失报错
+        val src = "struct Box(title: Str, body: () => Null)\nfun root(): Any = Box() { null }"
+        assertTrue(errs(src).contains("E-FIELD-MISSING"))
+    }
+
+    @Test
+    fun `R5 函数型字段不参与名义比较保持放行`() {
+        // 结构体构造的字段核对有 isNominal 门：函数型字段（如 (Nat)=>Null）不与 lambda
+        // 逐字比较（既有行为），本测试锁定该门，防止 R5 改动误收紧
+        val src = "struct Box(body: (Nat) => Null)\nfun root(): Any = Box() { null }"
+        assertTrue(ok(src))
+    }
+
+    @Test
+    fun `R5 命名构造无候选函数字段报错`() {
+        val src = "struct A(p: Nat, q: Str = \"\")\nfun root(): Any = A(p = 1) { null }"
+        assertTrue(errs(src).contains("E-TYPE-MISMATCH"))
+    }
+
+    @Test
+    fun `R5 命名构造多候选函数字段报错并提示命名实参`() {
+        val src = "struct A(p: Nat, f: () => Null = fun(): Null { null }, g: () => Null = fun(): Null { null })\n" +
+            "fun root(): Any = A(p = 1) { null }"
+        val bag = checkFile(parseSource(src, "t"))
+        val msg = bag.diags.firstOrNull { it.code == "E-TYPE-MISMATCH" }?.message ?: ""
+        assertTrue(bag.hasError, "多候选应报错")
+        assertTrue(msg.contains("候选") && msg.contains("命名实参"), "错误信息应提示多候选与命名实参，实际: $msg")
+    }
+
+    @Test
+    fun `R5 纯命名实参路径不受影响`() {
+        val src = "struct Box(m: Str = \"\", body: () => Null = fun(): Null { null })\n" +
+            "fun root(): Any = Box(body = fun(): Null { null })"
+        assertTrue(ok(src))
+    }
+
+    @Test
+    fun `R5 位置前缀加尾随 lambda 前缀保留原位`() {
+        // Box("t") { … }：前缀进 title 位、padding 取默认、lambda 绑最后的 body 字段
+        val src = "struct Box(title: Str = \"\", padding: Nat = 0, body: () => Null = fun(): Null { null })\n" +
+            "fun root(): Any = Box(\"t\") { null }"
+        val e = errs(src)
+        assertTrue(e.isEmpty(), "R5 错误码: " + e.joinToString(", ") +
+            " | 全部诊断: " + checkFile(parseSource(src, "t")).diags.joinToString(" | ") { it.render() })
+    }
 }

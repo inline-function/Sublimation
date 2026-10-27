@@ -49,6 +49,8 @@ class JsCodeGen(val target: Target = Target.NODE) {
     private var dictSubArgs: Map<CallExpr, List<String>> = emptyMap()
     /** P8（决策 84）：命名参数规范化后的实参留痕（调用点实例 → 按形参声明顺序的实参列表） */
     private var namedArgOrders: Map<CallExpr, List<Expr>> = emptyMap()
+/** R5（SfA 契约 §7）：命名构造 + 尾随 lambda 的调用点 → checker 合并后的命名构造节点（call() 顶早退） */
+private var mergedStructCtor: Map<CallExpr, StructCtorExpr> = emptyMap()
     /** v1.1 集合方法糖留痕：调用点实例 → 重排实参（接收者前置），codegen 直接按此生成 */
     private var sugarArgs: Map<CallExpr, List<Expr>> = emptyMap()
     /** P0（M8）：全局引用的 JS 名留痕（键 = 引用表达式节点；限定方法调用 = MODULE_METHOD_MARKER） */
@@ -152,7 +154,8 @@ private var bridgeFnCounter = 0
         delegatedImpls: Map<ImplDecl, List<FunDecl>> = emptyMap(),
         deepCopyHits: Map<Node, Boolean> = emptyMap(),
         listMethodHits: Map<CallExpr, String> = emptyMap(),
-    ): String = generateUnits(listOf("" to file), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, mutexUsed, atomicUsed, flowUsed, rangeHits, rangeUsed, receiveSmartHits, flowEmitHits, hktKindPosHits, funRefTargets, funRefFree, lambdaDestructKeys, delegatedImpls, deepCopyHits, listMethodHits)
+        mergedStructCtorHits: Map<CallExpr, StructCtorExpr> = emptyMap(),
+    ): String = generateUnits(listOf("" to file), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, mutexUsed, atomicUsed, flowUsed, rangeHits, rangeUsed, receiveSmartHits, flowEmitHits, hktKindPosHits, funRefTargets, funRefFree, lambdaDestructKeys, delegatedImpls, deepCopyHits, listMethodHits, mergedStructCtorHits)
 
     /** M8：全部模块合成一个 JS（顶层名字带模块前缀，根无前缀） */
     fun generateUnits(
@@ -179,6 +182,7 @@ private var bridgeFnCounter = 0
         delegatedImpls: Map<ImplDecl, List<FunDecl>> = emptyMap(),
         deepCopyHits: Map<Node, Boolean> = emptyMap(),
         listMethodHits: Map<CallExpr, String> = emptyMap(),
+        mergedStructCtorHits: Map<CallExpr, StructCtorExpr> = emptyMap(),
     ): String {
         dicts = dictHits
         this.moduleHits = moduleHits
@@ -186,6 +190,7 @@ private var bridgeFnCounter = 0
         dictSubArgs = dictSubHits
         this.delegatedImpls = delegatedImpls
         namedArgOrders = namedArgHits
+        mergedStructCtor = mergedStructCtorHits
         sugarArgs = sugarHits
         this.awaitHits = awaitHits
         this.channelUsed = channelUsed
@@ -1120,6 +1125,9 @@ private fun needEqPreScan(file: FileAst): Boolean {
     }
 
     private fun call(e: CallExpr): String {
+        // R5（SfA 契约 §7）：命名构造 + 尾随 lambda（`A(x = 1) { … }`）——checker 已把 lambda 并入命名构造
+        // （mergedStructCtor 留痕）；直接生成合并后的命名构造调用，不再产出“结构体值(lambda)”的非法调用
+        mergedStructCtor[e]?.let { return structCtorJs(it) }
         // 供给尖括号已在 InstExpr 擦除；此处 callee 可能是 NameRef 或已擦除的 InstExpr
         val callee = e.callee
         val name = when (callee) {
@@ -1339,8 +1347,11 @@ private fun needEqPreScan(file: FileAst): Boolean {
         if (name == "toStr" && e.args.size == 1)
             // v3.0：枚举值 = 纯 tag 对象（{tag: 'D'}，单键）→ 取 tag 名成串（__dshtoStr 顶层 helper，await 表达式安全）
             return "__dshtoStr(${expr(e.args[0])})"
-        if (name == "parseNat" && e.args.size == 1)
-            return "(() => { const m = String(${expr(e.args[0])}).match(/^(0|[1-9][0-9]*)$/); return m ? Some(Number(m[0])) : None(); })()"
+        if (name == "parseNat" && e.args.size == 1) {
+            // t58：内层 const m 与实参变量 m 互遮（TDZ）——alpha 改名
+            val n = subjCounter++
+            return "(() => { const __m$n = String(${expr(e.args[0])}).match(/^(0|[1-9][0-9]*)$/); return __m$n ? Some(Number(__m$n[0])) : None(); })()"
+        }
         // v2.0 标准库补全：字符串扩展——JS 原生映射（strSplit 返回 JS 数组 = 数组化 List[Str]）
         if (name == "strUpper" && e.args.size == 1) return "(${expr(e.args[0])}).toUpperCase()"
         if (name == "strLower" && e.args.size == 1) return "(${expr(e.args[0])}).toLowerCase()"
@@ -1351,16 +1362,20 @@ private fun needEqPreScan(file: FileAst): Boolean {
             return "((${expr(e.args[0])}).split(${expr(e.args[1])})).join(${expr(e.args[2])})"
         if (name == "strSplit" && e.args.size == 2) return "(${expr(e.args[0])}).split(${expr(e.args[1])})"
         if (name == "strIndexOf" && e.args.size == 2) {
-            val s = expr(e.args[0]); val p = expr(e.args[1])
-            return "(() => { const i = ($s).indexOf($p); return i === -1 ? None() : Some(i); })()"
+            // t58：内层 const i 与实参变量 i 互遮（TDZ）——同族 alpha 改名
+            val s = expr(e.args[0]); val p = expr(e.args[1]); val n = subjCounter++
+            return "(() => { const __ix$n = ($s).indexOf($p); return __ix$n === -1 ? None() : Some(__ix$n); })()"
         }
         // P10 浮点数 Rat（决策 86，候选 A：IEEE double via JS Number）：JS 原生映射
         if (name == "toRat" && e.args.size == 1)
             return "Number(${expr(e.args[0])})"
         if (name == "toReal" && e.args.size == 1)
             return "Number(${expr(e.args[0])})"
-        if (name == "parseRat" && e.args.size == 1)
-            return "(() => { const v = Number(String(${expr(e.args[0])})); return Number.isNaN(v) ? None() : Some(v); })()"
+        if (name == "parseRat" && e.args.size == 1) {
+            // t58：同族 alpha 改名（const v 与实参变量 v 互遮）
+            val n = subjCounter++
+            return "(() => { const __v$n = Number(String(${expr(e.args[0])})); return Number.isNaN(__v$n) ? None() : Some(__v$n); })()"
+        }
         if (name == "abs" && e.args.size == 1) return "Math.abs(${expr(e.args[0])})"
                 if (name == "floor" && e.args.size == 1) return "Math.floor(${expr(e.args[0])})"
         if (name == "ceil" && e.args.size == 1) return "Math.ceil(${expr(e.args[0])})"
@@ -1378,15 +1393,17 @@ private fun needEqPreScan(file: FileAst): Boolean {
         // v2.0 基本库（内建 JS 实现）：JSON —— 编译成 JS 原生 JSON.parse / 对象·数组访问；失败返回 None（Optional 包装）
         // jsonParse 解析失败（语法错/非法 JSON）→ None()，不抛异常——与语言"无运行时异常"哲学一致
         // 临时变量名用 __jv + 计数器，避免实参恰叫 v/o 时 TDZ（const v = v）
-        if (name == "jsonParse" && e.args.size == 1)
-            return "(() => { try { return Some(JSON.parse(${expr(e.args[0])})); } catch (x) { return None(); } })()"
+        if (name == "jsonParse" && e.args.size == 1) {   // t58：catch 参数 alpha 改名，避免遮蔽实参里的同名变量
+            val n = subjCounter++
+            return "(() => { try { return Some(JSON.parse(${expr(e.args[0])})); } catch (__e$n) { return None(); } })()"
+        }
         if (name == "jsonGet" && e.args.size == 2) {
-            val j = expr(e.args[0]); val k = expr(e.args[1]); val n = "__jv${subjCounter++}"
-            return "(() => { const $n = $j; const v = ($n == null) ? undefined : $n[$k]; return (v === undefined ? None() : Some(v)); })()"
+            val j = expr(e.args[0]); val k = expr(e.args[1]); val m = subjCounter++; val n = subjCounter++
+            return "(() => { const __js$m = $j; const __jv$n = (__js$m == null) ? undefined : __js$m[$k]; return (__jv$n === undefined ? None() : Some(__jv$n)); })()"
         }
         if (name == "jsonAt" && e.args.size == 2) {
-            val j = expr(e.args[0]); val i = expr(e.args[1]); val n = "__jv${subjCounter++}"
-            return "(() => { const $n = $j; const v = ($n == null) ? undefined : $n[$i]; return (v === undefined ? None() : Some(v)); })()"
+            val j = expr(e.args[0]); val i = expr(e.args[1]); val m = subjCounter++; val n = subjCounter++
+            return "(() => { const __js$m = $j; const __jv$n = (__js$m == null) ? undefined : __js$m[$i]; return (__jv$n === undefined ? None() : Some(__jv$n)); })()"
         }
         if (name == "jsonLen" && e.args.size == 1) {
             val j = expr(e.args[0]); val n = "__jv${subjCounter++}"
@@ -1425,11 +1442,13 @@ private fun needEqPreScan(file: FileAst): Boolean {
                 "size", "listLength" -> if (eArgs.size == 1) return "($xs).length"
                 "isEmpty" -> if (eArgs.size == 1) return "($xs).length === 0"
                 // —— 访问：Optional 包装（缺失键返回 None，无运行时异常）——
-                "head" -> if (eArgs.size == 1) return "(() => { const a = $xs; return a.length ? Some(a[0]) : None(); })()"
-                "last" -> if (eArgs.size == 1) return "(() => { const a = $xs; return a.length ? Some(a[a.length - 1]) : None(); })()"
+                "head" -> if (eArgs.size == 1) { val n = subjCounter++; return "(() => { const __xs$n = $xs; return __xs$n.length ? Some(__xs$n[0]) : None(); })()" }
+                "last" -> if (eArgs.size == 1) { val n = subjCounter++; return "(() => { const __xs$n = $xs; return __xs$n.length ? Some(__xs$n[__xs$n.length - 1]) : None(); })()" }
+                // t54/t58：内层绑定 alpha 改名（__xs/__ix + 计数器）——实参表达式里名为 i 的变量曾生成
+                // `const i = i`（TDZ ReferenceError，SfA 被迫把形参 i 改名 idx 规避）；改名后内外互不遮蔽
                 "elementAt" -> if (eArgs.size == 2) {
-                    val i = expr(eArgs[1])
-                    return "(() => { const a = $xs; const i = $i; return i >= 0 && i < a.length ? Some(a[i]) : None(); })()"
+                    val i = expr(eArgs[1]); val n = subjCounter++
+                    return "(() => { const __xs$n = $xs; const __ix$n = $i; return __ix$n >= 0 && __ix$n < __xs$n.length ? Some(__xs$n[__ix$n]) : None(); })()"
                 }
                 // —— 函数式变换：返回新数组（不可变，无副作用）——
                 "map" -> if (eArgs.size == 2) return "($xs).map(${expr(eArgs[1])})"
@@ -1444,7 +1463,7 @@ private fun needEqPreScan(file: FileAst): Boolean {
                     // 包一层翻转参数序，保持语言 fold 语义不变。f 是 lambda 表达式文本，须包括号后调用 `($f)(...)`，
                     // 否则生成 `(acc, x) => (x, acc) => (acc + x)(x, acc)` 被解析成 lambda 直接调用。
                     val init = expr(eArgs[1]); val f = expr(eArgs[2])
-                    return "($xs).reduce((acc, x) => ($f)(x, acc), $init)"
+                    val n = subjCounter++; return "($xs).reduce((__acc$n, __x$n) => ($f)(__x$n, __acc$n), $init)"
                 }
                 // —— 元素查询/统计：语义直译 ——
                 "contains" -> if (eArgs.size == 2) return "($xs).includes(${expr(eArgs[1])})"
@@ -1453,14 +1472,15 @@ private fun needEqPreScan(file: FileAst): Boolean {
                 "any" -> if (eArgs.size == 2) return "($xs).some(${expr(eArgs[1])})"
                 "all" -> if (eArgs.size == 2) return "($xs).every(${expr(eArgs[1])})"
                 "indexOf" -> if (eArgs.size == 2) {
-                    val x = expr(eArgs[1])
-                    return "(() => { const i = ($xs).indexOf($x); return i === -1 ? None() : Some(i); })()"
+                    // t58：内层 const i 与实参变量 i 互遮（索引表达式引用 i → TDZ）——alpha 改名
+                    val x = expr(eArgs[1]); val n = subjCounter++
+                    return "(() => { const __ix$n = ($xs).indexOf($x); return __ix$n === -1 ? None() : Some(__ix$n); })()"
                 }
                 "slice" -> if (eArgs.size == 3) return "($xs).slice(${expr(eArgs[1])}, ${expr(eArgs[2])})"
-                "sortBy" -> if (eArgs.size == 2) { val f = expr(eArgs[1]); return "($xs).slice().sort((a, b) => ($f)(a, b) ? -1 : 1)" }
+                "sortBy" -> if (eArgs.size == 2) { val f = expr(eArgs[1]); val n = subjCounter++; return "($xs).slice().sort((__a$n, __b$n) => ($f)(__a$n, __b$n) ? -1 : 1)" }
                 "joinToString" -> if (eArgs.size == 2) return "($xs).map(x => String(x)).join(${expr(eArgs[1])})"
                 "sum" -> if (eArgs.size == 1) return "($xs).reduce((a, b) => a + b, 0)"
-                "forEach" -> if (eArgs.size == 2) { val f = expr(eArgs[1]); return "($xs).forEach(x => ($f)(x))" }
+                "forEach" -> if (eArgs.size == 2) { val f = expr(eArgs[1]); val n = subjCounter++; return "($xs).forEach(__x$n => ($f)(__x$n))" }
             }
         }
         // v3.0：setOf（@list 变长实参）→ SetCons 链（core 标准库 Set 是结构枚举：SetCons(h, t)）
