@@ -323,6 +323,31 @@ private var bridgeFnCounter = 0
             line("      return null;")
             line("    };")
         }
+        // V2 安卓视图协议 v2（与 SfA t54 对齐）：
+        //   __dshViewTree——视图树 JSON 规范化：modifier 字段为链（List → JS 数组）时键名改为
+        //   "modifiers"（元素按链顺序），单对象旧形态（{tag:Plain}）原样保留——layout/androidRecompose
+        //   序列化前过一遍，KT 端 has("modifiers") 迭代数组、否则 optJSONObject("modifier") 兜底。
+        //   __dshCb——回调实例 key：词法构造点 id + 运行时实例序号，同一构造点每轮求值（循环/递归
+        //   渲染）都注册独立 __dshFn 槽位；旧协议 key 是纯编译期序号，同款视图实例互相覆盖槽位
+        //   导致点击串行。KT 端按 key 字符串透传回调（不解析结构），新旧 key 都能路由。
+        if (androidUsed || viewFieldsByStruct.isNotEmpty()) {
+            line("function __dshViewTree(x){")
+            line("  if (Array.isArray(x)) return x.map(__dshViewTree);")
+            line("  if (x && typeof x === \"object\") {")
+            line("    var o = {}; for (var k in x) o[k] = __dshViewTree(x[k]);")
+            line("    var m = o[\"modifier\"];")
+            line("    if (Array.isArray(m)) { o[\"modifiers\"] = m; delete o[\"modifier\"]; }")
+            line("    return o;")
+            line("  }")
+            line("  return x;")
+            line("}")
+            line("function __dshCb(base, fn){")
+            line("  __dshCb.n = (__dshCb.n || 0) + 1;")
+            line("  var k = base + \"_\" + __dshCb.n;")
+            line("  globalThis[\"__dshFn_\" + k] = fn;")
+            line("  return k;")
+            line("}")
+        }
         // root doc《副作用与可变性控制》§可变拷贝（修正案四条款）：可变视图深拷贝助手——绑定/赋值触发 __dc(value)。
         // 仅在源码用到可变视图拷贝时注入（编译器按 binderNeedsCopy 留痕 deepCopyHits）。
         // 视图变异（@view 字段赋值）也走 __dc 深拷贝——预扫描留痕晚于注入判定，这里并判。
@@ -1147,12 +1172,12 @@ private fun needEqPreScan(file: FileAst): Boolean {
         if (name == "layout" && e.args.size == 1 && name !in userFns) {
             androidUsed = true
             val f = expr(e.args[0])
-            return "(function(f){ return __dshAndroid(\"layout\", [JSON.stringify(f(null))]); })(" + f + ")"
+            return "(function(f){ return __dshAndroid(\"layout\", [JSON.stringify(__dshViewTree(f(null)))]); })(" + f + ")"
         }
         if (name == "androidRecompose" && e.args.size == 3 && name !in userFns) {
             androidUsed = true
             val a0 = expr(e.args[0]); val a1 = expr(e.args[1]); val a2 = expr(e.args[2])
-            return "__dshAndroid(\"androidRecompose\", [" + a0 + ", " + a1 + ", JSON.stringify(" + a2 + ")])"
+            return "__dshAndroid(\"androidRecompose\", [" + a0 + ", " + a1 + ", JSON.stringify(__dshViewTree(" + a2 + "))])"
         }
         // 安卓内建（android doc/安卓标准库.md）：@android 无体声明的编译期 JS 桥接——
         // 桌面/node 走 __dshAndroid 兜底注入桩；webview 内由 KT 端注入实现。
@@ -1551,8 +1576,12 @@ private fun needEqPreScan(file: FileAst): Boolean {
             val isFnField = ftypes[n] is FunType && n != "body" && n != "recomposion"
             if (isView && isFnField) {
                 viewFnCounter++
-                val key = moduleJsName(currentPrefix, e.struct) + "_" + n + "_" + viewFnCounter
-                js = "(globalThis.__dshFn_" + key + " = (" + js + "), \"" + key + "\")"
+                // V2 协议：key = 构造点词法 id（模块_字段_编译期全局序）+ 运行时实例序号。
+                // 同一构造点在循环/递归里每轮求值都注册独立槽位——旧协议（纯编译期 key）所有
+                // 实例共用一个 __dshFn_<key>，后注册覆盖先注册，同款视图全串到最后一个闭包。
+                // KT 端按 key 字符串透传（globalThis.__dshFn_<key>(...)），不解析其结构。
+                val base = moduleJsName(currentPrefix, e.struct) + "_" + n + "_" + viewFnCounter
+                js = "__dshCb(\"" + base + "\", (" + js + "))"
             }
             given[n] = js
         }

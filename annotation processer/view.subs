@@ -10,6 +10,12 @@
 //
 // 站点清单格式：viewCtorSites(0) 每行一条 "funName|viewName|ordinal"。
 // 幂等性：injectViewStruct 第二轮起字段无变化、addDecl 同名跳过、rewriteViewCtors 第二轮无匹配 —— 多轮引擎收敛。
+//
+// 视图协议 v2（与 SfA DshBridge 对齐）：本脚本重组注入不变；两项 v2 能力落在框架侧（JsCodeGen）
+// —— ① modifier 链：modifier 字段值是 List（JS 数组）时，layout/androidRecompose 序列化前由
+// __dshViewTree 把键名规范为 "modifiers"（按链顺序），单对象旧形态（{tag:Plain}）原样保留；
+// ② 回调实例 key：函数型字段（onClick）注册 __dshCb(构造点词法 id) → 运行时实例序号，
+// 循环/递归渲染的同款视图各得独立 __dshFn 槽位（旧纯编译期 key 串点击 bug 的修法）。
 
 // ---------- 1. @view 结构体重组：body → children + recomposion ----------
 

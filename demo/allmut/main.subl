@@ -1,9 +1,0 @@
-﻿@allMut
-struct Point(x: Nat, y: Nat)
-
-@impure
-fun main() {
-    var p: @mut Point = Point(1, 2)
-    p.x = 5
-    print(toStr(p.x))
-}

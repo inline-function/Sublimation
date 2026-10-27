@@ -1,8 +1,0 @@
-﻿@twice
-fun helper(): Nat = 1
-
-@impure
-fun main(): Null {
-    print(toStr(helper()))
-}
-
