@@ -539,8 +539,13 @@ object ComposeEmitter {
                 }
                 "Text" -> {
                     // SfA Text stdl：text/color/#hex 或主题色名；size（sp）/bold/maxLines 透传。
-                    sb.append(ind).append(fqn).append("(text = ")
-                        .append(exprToKotlin(a["text"] ?: a["label"] ?: a["title"] ?: a["content"]))
+                    // text = <宿主函数>()（CallExpr）→ DshComposeHost.strArg("f")（记录卡等动态文本）。
+                    val rawText = a["text"] ?: a["label"] ?: a["title"] ?: a["content"]
+                    val textKt = if (rawText is CallExpr && rawText.callee is NameRef) {
+                        components += "functor.sublimation.android.DshComposeHost"
+                        stateStrCall(rawText)
+                    } else exprToKotlin(rawText)
+                    sb.append(ind).append(fqn).append("(text = ").append(textKt)
                     sb.append(", modifier = ").append(modifierOr(mod, imports))
                     if (color != null) { sb.append(", color = ").append(color); imports += COLOR_IMPORT }
                     val size = (a["size"] as? FloatLit)?.value?.toDoubleOrNull()
@@ -601,7 +606,8 @@ object ComposeEmitter {
                     }
                     if (title != null) {
                         if (subtitle != null) {
-                            sb.append(ind).append("    androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically) {\n")
+                            sb.append(ind).// 顶栏标题行：显式左对齐（Arrangement.Start）+ 垂直居中；起始 16dp 边距由 M3 TopAppBar 自带
+append("    androidx.compose.foundation.layout.Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Start, verticalAlignment = Alignment.CenterVertically) {\n")
                             imports += ALIGNMENT_IMPORT
                         }
                         sb.append(ind).append("    androidx.compose.material3.Text(text = ").append(exprToKotlin(title))
