@@ -760,9 +760,12 @@ append("    androidx.compose.foundation.layout.Row(horizontalArrangement = andro
                     // 契约 §5：Chart → 宿主工程 Subl_ConcentrationChart（同包 data 类 SublSeries）。
                     // labels: List[Str]；points: List[Rat] → List<Float]（总浓度主线）；
                     // series: List[Series(label, color, points)] → List[SublSeries]；hours 取窗口常量 48。
-                    val labels = strListExpr(a["labels"])
-                    val mainPoints = floatListExpr(a["points"])
-                    val series = seriesListExpr(a["series"], imports)
+                    // 数据槽（契约 §4-补）：labels/points/series = 宿主函数()（CallExpr）时走
+                    // DshComposeHost.chartLabels()/chartTotal()/chartSeries()——ledger 驱动的运行时序列，
+                    // 而非编译期字面量（对齐 Kotlin 原版 records → ConcentrationChart 的运行时重算）。
+                    val labels = hostListCall(a["labels"], components) ?: strListExpr(a["labels"])
+                    val mainPoints = hostListCall(a["points"], components) ?: floatListExpr(a["points"])
+                    val series = hostListCall(a["series"], components) ?: seriesListExpr(a["series"], imports)
                     val showLegend = boolOf(a["legend"]) ?: true
                     val badge = (a["badge"] as? StrLit)?.value
                     val mainColor = colorOrExpr(a["color"]) ?: "MaterialTheme.colorScheme.primary"
@@ -841,6 +844,15 @@ append("    androidx.compose.foundation.layout.Row(horizontalArrangement = andro
         val args = ce.args.joinToString(", ") { exprToKotlin(it) }
         return "functor.sublimation.android.DshComposeHost.boolArg(" + kotlinString(nm) +
             (if (args.isEmpty()) "" else ", " + args) + ")"
+    }
+
+    /** Chart/列表数据槽：chartLabels()/chartTotal()/chartSeries()（CallExpr）→ DshComposeHost.<f>()。
+     *  宿主侧返回 List<String>/List<Float>/List<SublSeries>，由 MutableState 驱动重组。 */
+    private fun hostListCall(e: Expr?, components: MutableSet<String>): String? {
+        val ce = e as? CallExpr ?: return null
+        val nm = (ce.callee as? NameRef)?.name ?: return null
+        components += "functor.sublimation.android.DshComposeHost"
+        return "functor.sublimation.android.DshComposeHost." + nm + "()"
     }
 
     /** TextField 的 text/errText = curDose()（CallExpr）→ DshComposeHost.strArg("curDose")。 */
