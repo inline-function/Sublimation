@@ -73,12 +73,47 @@ fun emitAll(xs: List[Str], dir: Str, pkg: Str, imps: Str, opts: Str): Null =
 // 路径分隔符：宿主是 Windows（SfA 的 Gradle 构建在桌面）用 \\，其余用 /。
 fun sep(): Str = pathSeparator(0)
 
+// 壳的分派入口（契约 §2.1）：写 GeneratedCompose.kt，SublRoot() 跳到 @compose 视图。
+// 单视图 → 该视图；多视图 → 名为 Content 的视图（契约首页名）。无 @compose 视图时不写（壳的 hasGenerated 落空）。
+fun rootSource(entry: Str, pkg: Str): Str =
+    "// 由 Sublimation 编译器 @compose 处理器生成，请勿手改。\n" +
+    "@file:Suppress(\"unused\", \"unused_variable\", \"UNUSED_PARAMETER\", \"UNUSED_VARIABLE\", \"UNUSED_EXPRESSION\", \"UNUSED_VALUE\")\n\n" +
+    (if (pkg == "") "" else "package " + pkg + "\n\n") +
+    "import androidx.compose.runtime.Composable\n\n" +
+    "@Composable\n" +
+    "fun SublRoot() {\n" +
+    "    " + entry + "()\n" +
+    "}\n"
+
+fun pickEntry(xs: List[Str]): Str =
+    when (xs) {
+        Nil => ""
+        is Cons(h, rest) => if (contains(rest, "Content")) "Content" else h
+        else => ""
+    }
+
+fun emitRoot(xs: List[Str], dir: Str, pkg: Str): Null {
+    var entry: Str = pickEntry(xs);
+    if (entry == "") {
+        processorInfo("compose: 无 @compose 视图，跳过 GeneratedCompose.kt");
+        null
+    } else {
+        var path: Str = dir + sep() + "GeneratedCompose.kt";
+        writeFile(path, rootSource(entry, pkg));
+        processorInfo("compose: 分派入口 -> " + path + "（SublRoot -> " + entry + "）");
+        null
+    }
+}
+
 fun runCompose(): Null {
     var dir: Str = optionOr("composeOutDir", projectDir(0) + sep() + "build" + sep() + "generated" + sep() + "compose");
     var pkg: Str = optionOr("composePackage", "app.compose");
-    var imps: Str = optionOr("composeImports", "");
+    // 默认宿主 import：@Composable 注解与 MaterialTheme 主题色引用（发射器写简名，import 由宿主侧兜底）
+    var imps: Str = optionOr("composeImports", "androidx.compose.runtime.Composable,androidx.compose.material3.MaterialTheme");
     var opts: Str = optionOr("composeOptIns", "");
-    emitAll(viewNames(composeViewNames(0)), dir, pkg, imps, opts)
+    var names: List[Str] = viewNames(composeViewNames(0));
+    emitAll(names, dir, pkg, imps, opts);
+    emitRoot(names, dir, pkg)
 }
 
 runCompose()

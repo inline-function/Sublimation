@@ -153,4 +153,22 @@ class TargetCodeGenTest {
         assertFalse(jsWasm.contains("__subl.call(\"readFile\""), "用户 readFile 不应被桥劫持")
         assertFalse(jsWasm.contains("require('fs')"), "用户 readFile 不应直连 fs")
     }
+
+    // ---------- t63（SfW GameDemo 回报）：单行无大括号 if 的赋值体 ----------
+
+    @Test fun `t63 块体 if 赋值生成真赋值语句`() {
+        // 修复前 `if (true) x = 2` 生成 (() => true)()：单行体的 `=` 当命题中缀擦成 true，
+        // 赋值副作用静默丢失。修复后语义层门住 E-ASSIGN-AS-VALUE，块体路径保持真赋值。
+        val src = "@impure fun main() { @mut var x = 1\nif (true) { x = 2 }\nprint(x) }"
+        val js = gen(src, Target.NODE)
+        assertTrue(js.contains("x = 2;"), "块体 if 赋值应生成真赋值语句: $js")
+        assertFalse(js.replace(" ", "").contains("(()=>true)()"),
+            "不应出现 (() => true)() 式擦除: $js")
+    }
+
+    @Test fun `t63 else 块体赋值也生成真赋值语句`() {
+        val src = "@impure fun main() { @mut var x = 1\nif (false) { print(0) } else { x = 3 }\nprint(x) }"
+        val js = gen(src, Target.NODE)
+        assertTrue(js.contains("x = 3;"), "else 块体赋值应生成真赋值语句: $js")
+    }
 }

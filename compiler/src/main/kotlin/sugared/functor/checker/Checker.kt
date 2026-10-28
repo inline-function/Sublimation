@@ -71,6 +71,9 @@ class Checker(
      *  checker 把尾随 lambda 并进唯一未占位的函数型字段，codegen 据此生成合并后的命名构造调用
      *  （否则会生成“结构体值(lambda)”的非法调用） */
     internal val mergedStructCtor = java.util.IdentityHashMap<CallExpr, StructCtorExpr>()
+    /** t63：语句位的赋值型 BinExpr(=) 节点（单行 if/when 分支体被解析层包成 ExprStmt 的那些）——
+     *  codegen 据此改按语句发射，避免 IIFE 值化把 `=` 擦成 true 丢掉副作用。 */
+    internal val flowStmts = java.util.IdentityHashMap<Expr, Boolean>()
     /** v1.1 集合方法糖留痕：`xs.map(f)` → 同名自由函数 `map(xs, f)`（接收者前置）。
      *  键 = 调用点实例，值 = 重排后的实参列表（接收者 + 原实参），codegen 依此生成。 */
     internal val methodSugarArgs = java.util.IdentityHashMap<CallExpr, List<Expr>>()
@@ -977,7 +980,19 @@ class Checker(
             val ot = checkExpr(e.operand, f, pure)
             if (e.op == "-") ot else namedT("Bool", emptyList())   // 负号保数值类型，!/¬ 才是 Bool
         }
-        is BinExpr -> checkBin(e, f, pure)
+        is BinExpr -> {
+            // t63（SfW GameDemo 回报）：单行 `if (c) x = 2` / `pat -> v = 2` 的分支体经解析层
+            // 包成 BinExpr(=)（语句位的 `=` 没有 AssignStmt 形态，= 一律是命题等式中缀）。
+            // flow=true（语句流）时它绝无合法用途：codegen 值化会把 `=` 擦成 true，
+            // 赋值副作用静默丢失。门住并留痕，让 codegen 改按真赋值语句发射。
+            if (flow && e.op == "=") {
+                d.error("E-ASSIGN-AS-VALUE", e.pos,
+                    "单行 if/when 分支体不能是赋值 `=`（表达式位求值会丢掉赋值）。" +
+                    "写赋值请用块体：`if (c) { x = 2 }`")
+                flowStmts[e] = true
+            }
+            checkBin(e, f, pure)
+        }
         is SymbolCallExpr -> { e.args.forEach { checkExpr(it, f, pure) }; namedT("Bool", emptyList()) }
         is TypeTestExpr -> { checkExpr(e.target, f, pure); checkTypeTest(e) }
         is IsPatExpr -> { d.error("E-PARSE", e.pos, "ifis 智能解构条件 `表达式 is 构造模式` 只能作为 if 的整个条件（解析期已脱糖为 when；此节点出现在这说明 AST 状态不合法）"); namedT("Bool", emptyList()) }
@@ -1179,9 +1194,14 @@ class Checker(
             // 决策 75（flow 传播）：本块的语句继承进入时的 flow；块尾表达式是值位（flow=false）。
             // return 是否合法由 ReturnStmt 处 `funRetType≠null && flow` 判定，与 codegen 展平严格对齐。
             val tail = e.stmts.lastOrNull() as? ExprStmt
-            // 尾表达式默认值位（flow=false）；唯一例外：**尾 if 且所有分支都 return**——
+            // 尾表达式默认值位（flow=false）；例外：**尾 if 且所有分支都 return**——
             // 它本质是控制流不是值（codegen 会把它展平成真正的 JS if），其中 return 合法。
-            val tailFlow = flow && tail != null && diverges(tail.expr)   // 与 genBlockBody 同判据
+            // t63：尾语句是赋值型 `=`（单行 if/when 分支体的包装形态）同样按语句流处理——
+            // genBlockBody 经 genStmt 发射它，检查侧不能再按值位 flow=false 放行。
+            // 尾 if/when 亦然：codegen 展平成真 JS 控制语句、值丢弃（genBlockBody 同判据扩展）。
+            val tailE = tail?.expr
+            val tailFlow = flow && tail != null &&
+                (diverges(tail.expr) || tailE is BinExpr || tailE is IfExpr || tailE is WhenExpr)
             var dead = false   // A5：Nothing / 显式 return 之后不可达
             for (s in e.stmts) {
                 if (s === tail) continue

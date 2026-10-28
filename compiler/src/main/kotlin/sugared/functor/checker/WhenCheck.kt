@@ -150,6 +150,7 @@ internal fun Checker.checkWhen(e: WhenExpr, f: Frame, pure: Boolean, flow: Boole
         } else bp0
         if (bp is PTop && g == null) sawCatchAll = true else branchProps += bp
         val bt = checkExpr(arm.body, nf, pure, flow = flow)   // M4：when 分支块按语句流处理（与 IfExpr 一致，允许提前 return）
+        // t63：单行分支体 `pat -> v = 2` 的 `=` 由 checkExpr 的 BinExpr 门统一拦截（flow=true）
         lastT = if (lastT == null) bt else TypeInfer.unify(lastT, bt) ?: lastT
     }
     // 决策 66（用户 2026-10-06 拍板）：**穷尽性不是要求**——判不出穷尽的 when 就按默认值 Null 处理。

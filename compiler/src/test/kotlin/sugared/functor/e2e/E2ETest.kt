@@ -831,4 +831,35 @@ class E2ETest {
             "}"
         assertEquals("x\n9", run(src))
     }
+
+    // ============ t63（SfW GameDemo 回报）：单行无大括号 if 的赋值体 ============
+
+    @Test
+    fun `t63 块体单行 if 赋值语句保留副作用`() {
+        assumeTrue(nodeAvailable())
+        // 修复前：`if (c) x = 2` 的 `=` 被当中缀命题擦成 true（生成 (() => true)()），x 停在 1；
+        // 修复后单行体门住 E-ASSIGN-AS-VALUE（合法形态只剩块体），本测试锁块体端到端语义
+        val src = "@impure fun main() {\n" +
+            "  @mut var x = 1\n" +
+            "  if (true) { x = 2 }\n" +
+            "  if (false) { x = 3 } else { x = 4 }\n" +
+            "  print(x)\n" +
+            "}"
+        assertEquals("4", run(src))
+    }
+
+    @Test
+    fun `t63 块体嵌套 if 赋值与 when 块体赋值`() {
+        assumeTrue(nodeAvailable())
+        // 嵌套单行/块体混合 + when 分支块体赋值——语句位赋值一条都不能丢
+        val src = "enum Flag { On(), Off() }\n" +
+            "@impure fun main() {\n" +
+            "  @mut var x = 0\n" +
+            "  var f = On()\n" +
+            "  if (true) { if (f == On()) { x = 5 } }\n" +
+            "  when (f) { is On() => { x = x + 1 }  is Off() => { x = 0 } }\n" +
+            "  print(x)\n" +
+            "}"
+        assertEquals("6", run(src))
+    }
 }

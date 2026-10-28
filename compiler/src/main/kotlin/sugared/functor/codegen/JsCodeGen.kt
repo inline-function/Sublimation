@@ -51,6 +51,8 @@ class JsCodeGen(val target: Target = Target.NODE) {
     private var namedArgOrders: Map<CallExpr, List<Expr>> = emptyMap()
 /** R5（SfA 契约 §7）：命名构造 + 尾随 lambda 的调用点 → checker 合并后的命名构造节点（call() 顶早退） */
 private var mergedStructCtor: Map<CallExpr, StructCtorExpr> = emptyMap()
+    /** t63：语句位的赋值型 BinExpr(=)（单行 if/when 分支体）→ 按语句发射，不作 IIFE 值化 */
+    private var flowStmts: Map<Expr, Boolean> = emptyMap()
     /** v1.1 集合方法糖留痕：调用点实例 → 重排实参（接收者前置），codegen 直接按此生成 */
     private var sugarArgs: Map<CallExpr, List<Expr>> = emptyMap()
     /** P0（M8）：全局引用的 JS 名留痕（键 = 引用表达式节点；限定方法调用 = MODULE_METHOD_MARKER） */
@@ -155,6 +157,7 @@ private var bridgeFnCounter = 0
         deepCopyHits: Map<Node, Boolean> = emptyMap(),
         listMethodHits: Map<CallExpr, String> = emptyMap(),
         mergedStructCtorHits: Map<CallExpr, StructCtorExpr> = emptyMap(),
+        flowStmtHits: Map<Expr, Boolean> = emptyMap(),
     ): String = generateUnits(listOf("" to file), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, mutexUsed, atomicUsed, flowUsed, rangeHits, rangeUsed, receiveSmartHits, flowEmitHits, hktKindPosHits, funRefTargets, funRefFree, lambdaDestructKeys, delegatedImpls, deepCopyHits, listMethodHits, mergedStructCtorHits)
 
     /** M8：全部模块合成一个 JS（顶层名字带模块前缀，根无前缀） */
@@ -183,6 +186,7 @@ private var bridgeFnCounter = 0
         deepCopyHits: Map<Node, Boolean> = emptyMap(),
         listMethodHits: Map<CallExpr, String> = emptyMap(),
         mergedStructCtorHits: Map<CallExpr, StructCtorExpr> = emptyMap(),
+        flowStmtHits: Map<Expr, Boolean> = emptyMap(),
     ): String {
         dicts = dictHits
         this.moduleHits = moduleHits
@@ -191,6 +195,7 @@ private var bridgeFnCounter = 0
         this.delegatedImpls = delegatedImpls
         namedArgOrders = namedArgHits
         mergedStructCtor = mergedStructCtorHits
+        flowStmts = flowStmtHits
         sugarArgs = sugarHits
         this.awaitHits = awaitHits
         this.channelUsed = channelUsed
@@ -825,6 +830,8 @@ private fun needEqPreScan(file: FileAst): Boolean {
         when {
             tail == null -> if (body.stmts.lastOrNull() !is ReturnStmt) line("return null;")
             diverges(tail.expr) -> genStmt(tail)   // 尾 if 全路径 return：展平，各分支已 return
+            // t63：尾语句是赋值型 `=`（单行 if/when 分支体的包装形态）——按语句发射保留副作用
+            flowStmts[tail.expr] == true -> { genStmt(tail); line("return null;") }
             else -> { genStmt(tail); line("return null;") }   // 尾表达式按语句发射（值丢弃）
         }
     }
@@ -889,6 +896,9 @@ private fun needEqPreScan(file: FileAst): Boolean {
                 val x = s.expr
                 if (x is IfExpr) ifStmtFlatten(x)
                 else if (x is WhenExpr) whenStmtFlatten(x)   // M4 同款：含 ifis 脱糖形态，提前 return 能退出函数
+                // t63：赋值型 `=`（单行 if/when 分支体）按真赋值语句发射，不走 expr 值化
+                else if (x is BinExpr && x.op == "=" && flowStmts[x] == true)
+                    line("${expr(x.left)} = ${expr(x.right)};")
                 else line("${expr(x)};")
             }
             // 第四轮：显式 return 语句发射为真 return（仅在函数体/块体方法的展平语境出现）
@@ -1652,7 +1662,12 @@ private fun needEqPreScan(file: FileAst): Boolean {
             "${if ("mut" in s.annotations) "let" else "const"} [${d.joinToString(", ") { mangle(it) }}] = ${dcWrap(s, expr(s.value))};"
         } ?: "${if ("mut" in s.annotations) "let" else "const"} ${mangle(s.name)} = ${dcWrap(s, expr(s.value))};"
         is AssignStmt -> "${expr(s.target)} = ${dcWrap(s, expr(s.value))};"
-        is ExprStmt -> "${expr(s.expr)};"
+        // t63：赋值型 `=`（单行 if/when 分支体）保留赋值副作用（与 genStmt 同判据）
+        is ExprStmt -> {
+            val x0 = s.expr
+            if (x0 is BinExpr && x0.op == "=" && flowStmts[x0] == true)
+                "${expr(x0.left)} = ${expr(x0.right)};" else "${expr(x0)};"
+        }
         is UncheckedStmt -> stmtStr(s.inner)
         is AxiomStmt, is ByStmt -> ""   // t30：ByStmt 已是编译期错误，此分支仅保穷尽
         // 第四轮：值位块的语句串化——语义层已禁止值位 return（E-RETURN-OUTSIDE），
@@ -1718,7 +1733,13 @@ private fun needEqPreScan(file: FileAst): Boolean {
             }
             is ExprStmt -> if (s.expr is IfExpr) lambdaIfLines(s.expr as IfExpr, out, ind)
                 else if (s.expr is WhenExpr) lambdaWhenLines(s.expr as WhenExpr, out, ind)   // 含 ifis 脱糖形态：return 穿透 lambda
-                else out += "$ind${expr(s.expr)};"
+                // t63：赋值型 `=`（单行 if/when 分支体）按真赋值语句发射
+                else {
+                    val x0 = s.expr
+                    if (x0 is BinExpr && x0.op == "=" && flowStmts[x0] == true)
+                        out += "$ind${expr(x0.left)} = ${expr(x0.right)};"
+                    else out += "$ind${expr(x0)};"
+                }
             is ReturnStmt -> out += "$ind${s.expr?.let { "return ${expr(it)};" } ?: "return;"}"
             is UncheckedStmt -> lambdaStmtToLines(s.inner, out, ind)
             is AxiomStmt, is ByStmt -> {}   // t30：ByStmt 已是编译期错误，此分支仅保穷尽
@@ -1794,7 +1815,11 @@ private fun needEqPreScan(file: FileAst): Boolean {
     private fun armBodyFlat(arm: WhenArm, binds: List<Pair<String, String>>) {
         binds.forEach { line("const ${mangle(it.first)} = ${it.second};") }
         val body = arm.body
-        if (body is BlockExpr) body.stmts.forEach { genStmt(it) } else line("${expr(body)};")
+        if (body is BlockExpr) body.stmts.forEach { genStmt(it) }
+        // t63：单行分支体 `pat -> v = 2`（赋值型 `=`）按真赋值语句发射
+        else if (body is BinExpr && body.op == "=" && flowStmts[body] == true)
+            line("${expr(body.left)} = ${expr(body.right)};")
+        else line("${expr(body)};")
     }
 
     /** lambda 体内语句位 when（含 ifis 脱糖形态）展平为真 JS if 链——lambdaWhenLines 的语句流版本 */
@@ -1842,6 +1867,9 @@ private fun needEqPreScan(file: FileAst): Boolean {
     private fun armBodyLambda(arm: WhenArm, out: MutableList<String>, ind: String) {
         val body = arm.body
         if (body is BlockExpr) body.stmts.forEach { lambdaStmtToLines(it, out, ind) }
+        // t63：单行分支体 `pat -> v = 2`（赋值型 `=`）按真赋值语句发射
+        else if (body is BinExpr && body.op == "=" && flowStmts[body] == true)
+            out += "$ind${expr(body.left)} = ${expr(body.right)};"
         else out += "$ind${expr(body)};"
     }
 

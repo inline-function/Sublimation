@@ -2002,4 +2002,43 @@ class CheckerTest {
         assertTrue(e.isEmpty(), "R5 错误码: " + e.joinToString(", ") +
             " | 全部诊断: " + checkFile(parseSource(src, "t")).diags.joinToString(" | ") { it.render() })
     }
+
+    // ============ t63（SfW GameDemo 回报）：单行无大括号 if 的赋值体被丢弃 ============
+
+    @Test
+    fun `t63 单行 if 赋值体报 E-ASSIGN-AS-VALUE`() {
+        // `if (true) x = 2` 的分支体经 parseBranchBlock 包成 ExprStmt(BinExpr(=))：
+        // 语句位的 `=` 若进值位 codegen 会被擦成 true（丢赋值）——门住并提示改块体
+        val src = "@impure fun main() { @mut var x = 1\nif (true) x = 2\nprint(x) }"
+        val e = errs(src)
+        assertTrue(e.any { it.contains("E-ASSIGN-AS-VALUE") },
+            "应报 E-ASSIGN-AS-VALUE，实际: " + e.joinToString(" | "))
+    }
+
+    @Test
+    fun `t63 块体 if 赋值保持合法`() {
+        // 对照组：`if (true) { x = 2 }` 一直是合法形态（AssignStmt 语句流），修复不得误伤
+        val src = "@impure fun main() { @mut var x = 1\nif (true) { x = 2 }\nprint(x) }"
+        val e = errs(src)
+        assertTrue(e.none { it.contains("E-ASSIGN-AS-VALUE") },
+            "块体赋值不应报 E-ASSIGN-AS-VALUE，实际: " + e.joinToString(" | "))
+    }
+
+    @Test
+    fun `t63 when 单行分支赋值体报 E-ASSIGN-AS-VALUE`() {
+        // when 单行分支体（裸 Expr，不经 ExprStmt 包装）同坑：`is Some(v) -> v = 2`
+        val src = "enum Opt { Some(Nat), None() }\n" +
+            "@impure fun main() { var o = Some(1)\nwhen (o) { is Some(v) => v = 2  None => print(0) } }"
+        val e = errs(src)
+        assertTrue(e.any { it.contains("E-ASSIGN-AS-VALUE") },
+            "应报 E-ASSIGN-AS-VALUE，实际: " + e.joinToString(" | "))
+    }
+
+    @Test
+    fun `t63 else 分支单行赋值体同样报错`() {
+        val src = "@impure fun main() { @mut var x = 1\nif (false) print(0) else x = 2\nprint(x) }"
+        val e = errs(src)
+        assertTrue(e.any { it.contains("E-ASSIGN-AS-VALUE") },
+            "else 单行赋值体也应报错，实际: " + e.joinToString(" | "))
+    }
 }

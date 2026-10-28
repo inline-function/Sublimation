@@ -71,6 +71,7 @@ object ComposeEmitter {
     private const val COLOR_IMPORT = "androidx.compose.ui.graphics.Color"
     private const val DP_IMPORT = "androidx.compose.ui.unit.dp"
     private const val SP_IMPORT = "androidx.compose.ui.unit.sp"
+    private const val ALIGNMENT_IMPORT = "androidx.compose.ui.Alignment"
 
     /** Material3 ColorScheme 槽位名（主题色别名 primary/onSurfaceVariant… 的合法目标）。 */
     private val M3_COLOR_SLOTS = setOf(
@@ -189,11 +190,52 @@ object ComposeEmitter {
         val components = LinkedHashSet<String>()
         val autoImports = LinkedHashSet<String>()
 
+        // 契约 §5「buildBox 的 FAB 抽出规则」：根 Box 的 FloatingButton 子级交给 Scaffold 的
+        // floatingActionButton 槽托管，其余子级原样保留（根 Box 的全部赋值不丢失，内嵌一层 Column）。
+        var scaffoldFab: UiNode? = null
+        var scaffoldTopBar: UiNode? = null
+        if (nodes.size == 1 && nodes[0].name == "Box") {
+            val root = nodes[0]
+            val kids = root.children
+            val fabIdx = kids.indexOfFirst { it.name == "FloatingButton" }
+            val topIdx = kids.indexOfFirst { it.name == "TopAppBar" }
+            if (fabIdx >= 0) scaffoldFab = kids[fabIdx]
+            if (topIdx >= 0) scaffoldTopBar = kids[topIdx]
+            if (fabIdx >= 0 || topIdx >= 0) {
+                nodes[0] = root.copy(children = kids.filterIndexed { i, _ -> i != fabIdx && i != topIdx })
+            }
+        }
+
         // 函数体先行发射（组件全限定名；扩展类 API 简名 + 自动 import 收集），
         // 头部的 import 段才知道该引什么——用到才引，不引没用到的东西。
         val body = StringBuilder()
         if (nodes.isEmpty()) body.append("    // 视图 ").append(st.name).append(" 未声明内容\n")
-        emitNodes(body, "    ", nodes, components, autoImports)
+        if (scaffoldFab != null || scaffoldTopBar != null) {
+            components += "androidx.compose.material3.Scaffold"
+            body.append("    androidx.compose.material3.Scaffold(")
+            if (scaffoldTopBar != null) {
+                body.append("topBar = {\n")
+                emitNodes(body, "        ", listOf(scaffoldTopBar!!), components, autoImports)
+                body.append("    }")
+            }
+            if (scaffoldFab != null) {
+                if (scaffoldTopBar != null) body.append(", ")
+                body.append("floatingActionButton = {\n")
+                emitNodes(body, "        ", listOf(scaffoldFab!!), components, autoImports)
+                body.append("    }")
+            }
+            body.append(") { __sublPadding ->\n")
+            autoImports += MODIFIER_IMPORT
+            autoImports += "androidx.compose.foundation.layout.fillMaxSize"
+            autoImports += "androidx.compose.foundation.layout.padding"
+            body.append("        androidx.compose.foundation.layout.Column(")
+            body.append("modifier = Modifier.fillMaxSize().padding(__sublPadding)) {\n")
+            emitNodes(body, "            ", nodes, components, autoImports)
+            body.append("        }\n")
+            body.append("    }\n")
+        } else {
+            emitNodes(body, "    ", nodes, components, autoImports)
+        }
 
         val sb = StringBuilder()
         sb.append("// 由 Sublimation 编译器 @compose 处理器生成，请勿手改。\n")
@@ -235,6 +277,8 @@ object ComposeEmitter {
             experimentalOptIn(n.name)?.let { out += it }
             if (n.name == "Box" && boolOf(n.assigns.firstOrNull { it.first == "wrap" }?.second) == true)
                 out += FLOW_ROW_OPT_IN
+            // Chart：宿主 Subl_ConcentrationChart 自身 @OptIn(ExperimentalLayoutApi)，调用方需同样 OptIn
+            if (n.name == "Chart") out += FLOW_ROW_OPT_IN
             scanOptIns(n.children, out)
         }
     }
@@ -270,6 +314,9 @@ object ComposeEmitter {
         "BottomSheet" -> "androidx.compose.material3.ModalBottomSheet"
         "Text", "Icon", "Divider", "Button", "TextButton", "OutlinedButton", "Card",
         "LazyColumn", "LazyRow", "AlertDialog", "TopAppBar" -> "androidx.compose.material3." + name
+        // FloatingButton（FAB）→ ExtendedFloatingActionButton；Chart → 宿主工程 Subl_ConcentrationChart（同包直引）
+        "FloatingButton" -> "androidx.compose.material3.ExtendedFloatingActionButton"
+        "Chart" -> "Subl_ConcentrationChart"
         else -> null
     }
 
@@ -332,10 +379,25 @@ object ComposeEmitter {
                         if (bg.startsWith("Color(")) imports += COLOR_IMPORT
                         fullMod = modifierOr(mod, imports) + ".background(" + bg + ")"
                     }
+                    // 契约 §5：scrollable=true 的纵向 Box → Column 加 verticalScroll（内容溢出时可滚）
+                    if (boolOf(a["scrollable"]) == true && fn0 == "Column") {
+                        imports += "androidx.compose.foundation.verticalScroll"
+                        imports += "androidx.compose.foundation.rememberScrollState"
+                        fullMod = modifierOr(fullMod, imports) + ".verticalScroll(rememberScrollState())"
+                    }
+                    // contentAlignment：Row/FlowRow → verticalAlignment，Column → horizontalAlignment
+                    val caName = (a["contentAlignment"] as? CallExpr)?.callee?.let { (it as? NameRef)?.name }
+                        ?: (a["contentAlignment"] as? StrLit)?.value?.trim()
+                    val align = if (horizontal) verticalAlign(caName) else horizontalAlign(caName)
+                    if (align != null) imports += ALIGNMENT_IMPORT
                     sb.append(ind).append(fn).append("(")
                     if (arr != null) sb.append(arr)
-                    if (fullMod != null) {
+                    if (align != null) {
                         if (arr != null) sb.append(", ")
+                        sb.append(if (horizontal) "verticalAlignment = " else "horizontalAlignment = ").append(align)
+                    }
+                    if (fullMod != null) {
+                        if (arr != null || align != null) sb.append(", ")
                         sb.append("modifier = ").append(fullMod)
                     }
                     sb.append(") {\n")
@@ -441,6 +503,108 @@ object ComposeEmitter {
                 "Divider" -> {
                     sb.append(ind).append(fqn).append("(")
                     if (mod != null) sb.append("modifier = ").append(mod)
+                    sb.append(")\n")
+                }
+                "TopAppBar" -> {
+                    // 契约 §5 + 参考原生 HomeScreen：M3 TopAppBar——title（titleLarge 粗体）
+                    // + 同行 labelSmall 版本徽标（6dp 间隔）；children → actions 槽（TextButton…）；
+                    // 容器色 color/backgroundColor（缺省 primaryContainer），titleContentColor 与
+                    // actionIconContentColor 同 primaryContainer 上色（actions 里的 TextButton 继承）。
+                    val title = (a["title"] ?: a["label"]) as? StrLit
+                    val subtitle = (a["subtitle"] ?: a["sub"] ?: a["version"]) as? StrLit
+                    val containerColor = colorOrExpr(a["color"] ?: a["backgroundColor"])
+                        ?: "MaterialTheme.colorScheme.primary"
+                    if (containerColor.startsWith("Color(")) imports += COLOR_IMPORT
+                    // 前景色随容器槽位推导：primary → onPrimary、secondary → onSecondary …
+                    val slot = ((a["color"] ?: a["backgroundColor"]) as? StrLit)?.value?.trim() ?: ""
+                    val onSlot = "on" + slot.replaceFirstChar { it.uppercase() }
+                    val onColor = if (onSlot in M3_COLOR_SLOTS) "MaterialTheme.colorScheme." + onSlot
+                        else "MaterialTheme.colorScheme.onPrimary"
+                    imports += SP_IMPORT
+                    components += "androidx.compose.material3.TopAppBar"
+                    components += "androidx.compose.material3.Text"
+                    val mod = modifierChain(a["modifier"] ?: a["modifiers"], imports)
+                    if (mod != null) {
+                        sb.append(ind).append("androidx.compose.material3.TopAppBar(modifier = ").append(mod).append(", title = {\n")
+                    } else {
+                        sb.append(ind).append("androidx.compose.material3.TopAppBar(title = {\n")
+                    }
+                    if (title != null) {
+                        if (subtitle != null) {
+                            sb.append(ind).append("    androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically) {\n")
+                            imports += ALIGNMENT_IMPORT
+                        }
+                        sb.append(ind).append("    androidx.compose.material3.Text(text = ").append(exprToKotlin(title))
+                            .append(", fontSize = 22.0.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, color = ").append(onColor).append(")\n")
+                        if (subtitle != null) {
+                            imports += DP_IMPORT; imports += MODIFIER_IMPORT
+                            imports += "androidx.compose.foundation.layout.padding"
+                            sb.append(ind).append("    androidx.compose.foundation.layout.Spacer(modifier = Modifier.padding(start = 6.dp))\n")
+                            sb.append(ind).append("    androidx.compose.material3.Text(text = ").append(exprToKotlin(subtitle))
+                            .append(", fontSize = 11.0.sp, color = ").append(onColor).append(")\n")
+                            sb.append(ind).append("    }\n")
+                        }
+                    }
+                    sb.append(ind).append("}, actions = {\n")
+                    if (n.children.isNotEmpty()) emitNodes(sb, ind + "    ", n.children, components, imports)
+                    sb.append(ind).append("}, colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(")
+                        .append("containerColor = ").append(containerColor)
+                        .append(", titleContentColor = ").append(onColor)
+                        .append(", actionIconContentColor = ").append(onColor)
+                        .append("))\n")
+                }
+                "FloatingButton" -> {
+                    // 契约 §5：FloatingButton → ExtendedFloatingActionButton（Extended 形态：icon + text 双槽）；
+                    // label/text 字段是便捷文案；容器色取 color/backgroundColor（主题色名或 #hex）。
+                    val iconName = ((a["icon"] ?: a["imageVector"]) as? StrLit)?.value?.trim()?.ifEmpty { "add" } ?: "add"
+                    val icon = iconName.replaceFirstChar { it.uppercase() }
+                    val textLit = (a["text"] ?: a["label"]) as? StrLit
+                    val containerColor = colorOrExpr(a["color"] ?: a["backgroundColor"])
+                    val onClickKey = (a["onClick"] as? NameRef)?.name?.let { rawKey ->
+                        // 形如 __dshCb("FloatingButton_onClick", fn) 的实例键：编译器给 lambda 分配的
+                        // 常量名；发射侧按原样回传，宿主 DshComposeHost.callJs 按 __dshFn_<key> 路由。
+                        if (rawKey.startsWith("__dshFn_")) rawKey.substring("__dshFn_".length) else rawKey
+                    }
+                    if (onClickKey != null) {
+                        components += "functor.sublimation.android.DshComposeHost"
+                    }
+                    imports += "androidx.compose.material.icons.Icons"
+                    imports += "androidx.compose.material.icons.filled." + icon
+                    if (containerColor?.startsWith("Color(") == true) imports += COLOR_IMPORT
+                    sb.append(ind).append(fqn).append("(onClick = { ")
+                        .append("functor.sublimation.android.DshComposeHost.callJs(\"").append(onClickKey).append("\", \"[]\")")
+                        .append(" }")
+                    if (containerColor != null) sb.append(", containerColor = ").append(containerColor)
+                    if (mod != null) sb.append(", modifier = ").append(mod)
+                    sb.append(", icon = { ").append("androidx.compose.material3.Icon(")
+                        .append("imageVector = androidx.compose.material.icons.Icons.Filled.").append(icon)
+                        .append(", contentDescription = \"").append(icon).append("\"")
+                        .append(") }, text = { ")
+                        .append("androidx.compose.material3.Text(text = ")
+                        .append(if (textLit != null) exprToKotlin(textLit) else "\"\"")
+                        .append(") })\n")
+                    components += "androidx.compose.material3.Icon"
+                    components += "androidx.compose.material3.Text"
+                }
+                "Chart" -> {
+                    // 契约 §5：Chart → 宿主工程 Subl_ConcentrationChart（同包 data 类 SublSeries）。
+                    // labels: List[Str]；points: List[Rat] → List<Float]（总浓度主线）；
+                    // series: List[Series(label, color, points)] → List[SublSeries]；hours 取窗口常量 48。
+                    val labels = strListExpr(a["labels"])
+                    val mainPoints = floatListExpr(a["points"])
+                    val series = seriesListExpr(a["series"], imports)
+                    val showLegend = boolOf(a["legend"]) ?: true
+                    val badge = (a["badge"] as? StrLit)?.value
+                    val mainColor = colorOrExpr(a["color"]) ?: "MaterialTheme.colorScheme.primary"
+                    if (mainColor.startsWith("Color(")) imports += COLOR_IMPORT
+                    sb.append(ind).append(fqn).append("(modifier = ").append(modifierOr(mod, imports))
+                    if (labels != null) sb.append(", labels = ").append(labels)
+                    sb.append(", hours = 48f")
+                    if (series != null) sb.append(", series = ").append(series)
+                    if (mainPoints != null) sb.append(", mainPoints = ").append(mainPoints)
+                    sb.append(", mainColor = ").append(mainColor)
+                    sb.append(", showLegend = ").append(showLegend)
+                    if (badge != null) sb.append(", badge = \"").append(badge).append("\"")
                     sb.append(")\n")
                 }
                 "AlertDialog" -> {
@@ -643,6 +807,71 @@ object ComposeEmitter {
     }
 
     /** 发射结果摘要（供 processorInfo 汇报）：`<view>|<组件数>|<组件 FQN 逗号表>|<依赖逗号表>`。 */
+    /** contentAlignment 值（CenterStart 等）→ Row/FlowRow 的 verticalAlignment 表达式。 */
+    private fun verticalAlign(name: String?): String? = when (name?.trim()) {
+        "Center", "CenterStart", "CenterEnd" -> "Alignment.CenterVertically"
+        "Top", "TopStart", "TopEnd" -> "Alignment.Top"
+        "Bottom", "BottomStart", "BottomEnd" -> "Alignment.Bottom"
+        else -> null
+    }
+
+    /** contentAlignment 值 → Column 的 horizontalAlignment 表达式。 */
+    private fun horizontalAlign(name: String?): String? = when (name?.trim()) {
+        "Start", "CenterStart", "TopStart", "BottomStart" -> "Alignment.Start"
+        "Center", "TopCenter", "BottomCenter" -> "Alignment.CenterHorizontally"
+        "End", "CenterEnd", "TopEnd", "BottomEnd" -> "Alignment.End"
+        else -> null
+    }
+
+    /** listOf(...) 调用的实参表；非 listOf（如 Cons/引用）返回 null。 */
+    private fun listOfArgs(e: Expr?): List<Expr>? {
+        val c = e as? CallExpr ?: return null
+        val nm = (c.callee as? NameRef)?.name ?: return null
+        return if (nm == "listOf") c.args else null
+    }
+
+    /** List[StrLit] → kotlin 字面量表；不是全字面量表则 null。 */
+    private fun strListExpr(e: Expr?): String? {
+        val args = listOfArgs(e) ?: return null
+        if (args.isEmpty()) return null
+        val out = args.map { (it as? StrLit)?.value?.let { v -> "\"" + v + "\"" }
+            ?: return null }
+        return "listOf(" + out.joinToString(", ") + ")"
+    }
+
+    /** Rat/Nat 字面量 → Float 字面量（"50f" / "41.6f"）。 */
+    private fun floatLitOf(e: Expr): String? = when (e) {
+        is IntLit -> e.value + "f"
+        is FloatLit -> e.value + "f"
+        else -> null
+    }
+
+    /** List[Rat] → kotlin List<Float> 字面量；非全字面量表则 null。 */
+    private fun floatListExpr(e: Expr?): String? {
+        val args = listOfArgs(e) ?: return null
+        if (args.isEmpty()) return null
+        val out = args.map { floatLitOf(it) ?: return null }
+        return "listOf(" + out.joinToString(", ") + ")"
+    }
+
+    /** List[Series(...)] → listOf(SublSeries("氟伏沙明", Color(0xFFFFC107), listOf(50f, ...)))。 */
+    private fun seriesListExpr(e: Expr?, imports: MutableSet<String>): String? {
+        val args = listOfArgs(e) ?: return null
+        if (args.isEmpty()) return null
+        val out = args.map { se ->
+            val ctor = se as? StructCtorExpr ?: return null
+            if (ctor.struct != "Series") return null
+            val lab = (ctor.assigns.firstOrNull { it.first == "label" }?.second as? StrLit)?.value
+                ?: return null
+            val pts = floatListExpr(ctor.assigns.firstOrNull { it.first == "points" }?.second)
+                ?: return null
+            val colExpr = colorOrExpr(ctor.assigns.firstOrNull { it.first == "color" }?.second)
+                ?: "Color(0xFFFFC107)"
+            if (colExpr.startsWith("Color(")) imports += COLOR_IMPORT
+            "SublSeries(\"" + lab + "\", " + colExpr + ", " + pts + ")"
+        }
+        return "listOf(" + out.joinToString(", ") + ")"
+    }
     fun describe(r: ComposeEmitResult): String =
         r.view + "|" + r.components.size + "|" + r.components.joinToString(",") + "|" + r.dependencies.joinToString(",")
 }

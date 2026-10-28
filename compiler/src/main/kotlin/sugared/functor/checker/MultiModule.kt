@@ -184,6 +184,8 @@ class MultiModule(
         val listMethodHits = IdentityHashMap<CallExpr, String>()
         // R5（SfA 契约 §7）：命名构造 + 尾随 lambda 的合并构造留痕（generate/generateUnits 末位参数）
         val mergedStructCtorHits = IdentityHashMap<CallExpr, StructCtorExpr>()
+        // t63：语句位赋值型 `=`（单行 if/when 分支体）留痕
+        val flowStmtHits = IdentityHashMap<Expr, Boolean>()
         for (chk in checkers.values) {
             dictHits.putAll(chk.dictHits)
             funRefTargets.putAll(chk.funRefTargets)
@@ -207,9 +209,10 @@ class MultiModule(
             deepCopyHits.putAll(chk.deepCopyHits)
             listMethodHits.putAll(chk.listMethodHits)
             mergedStructCtorHits.putAll(chk.mergedStructCtor)
+            flowStmtHits.putAll(chk.flowStmts)
         }
         // t35：按目标平台分派平台调用（node 保持原样）
-        return JsCodeGen(target).generateUnits(asts.toList(), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, mutexUsed, atomicUsed, flowUsed, rangeHits, rangeUsed, receiveSmarts, flowEmitHits, hktKindHits, funRefTargets, funRefFree.keys, lambdaDestructKeys, emptyMap(), deepCopyHits, listMethodHits, mergedStructCtorHits)
+        return JsCodeGen(target).generateUnits(asts.toList(), dictHits, moduleHits, consHits, dictSubHits, namedArgHits, sugarHits, awaitHits, channelUsed, mutexUsed, atomicUsed, flowUsed, rangeHits, rangeUsed, receiveSmarts, flowEmitHits, hktKindHits, funRefTargets, funRefFree.keys, lambdaDestructKeys, emptyMap(), deepCopyHits, listMethodHits, mergedStructCtorHits, flowStmtHits)
     }
 }
 
@@ -242,4 +245,5 @@ fun generateSingle(chk: Checker, ast: FileAst, target: Target = Target.NODE): St
     deepCopyHits = chk.deepCopyHits,
     listMethodHits = chk.listMethodHits,
     mergedStructCtorHits = chk.mergedStructCtor,
+    flowStmtHits = chk.flowStmts,
 )
