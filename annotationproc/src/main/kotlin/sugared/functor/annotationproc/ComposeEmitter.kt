@@ -190,6 +190,16 @@ object ComposeEmitter {
         val components = LinkedHashSet<String>()
         val autoImports = LinkedHashSet<String>()
 
+        // 交互态预扫描（契约 §4 交互态通路）：visible = <命名态> / TextField(text|errText = <命名态>)
+        // 的节点提升为函数级 val __st_<name>，由 DshComposeHost 的 rememberFlag/rememberText 持有，
+        // onClick → act(...) 改写后真重组——不需要 JS 推状态（§4 状态槽落地前的互操作方案）。
+        val flags = LinkedHashSet<String>()
+        val texts = LinkedHashSet<String>()
+        collectStateRefs(nodes, flags, texts)
+        if (flags.isNotEmpty() || texts.isNotEmpty()) {
+            components += "functor.sublimation.android.DshComposeHost"
+        }
+
         // 契约 §5「buildBox 的 FAB 抽出规则」：根 Box 的 FloatingButton 子级交给 Scaffold 的
         // floatingActionButton 槽托管，其余子级原样保留（根 Box 的全部赋值不丢失，内嵌一层 Column）。
         var scaffoldFab: UiNode? = null
@@ -209,6 +219,13 @@ object ComposeEmitter {
         // 函数体先行发射（组件全限定名；扩展类 API 简名 + 自动 import 收集），
         // 头部的 import 段才知道该引什么——用到才引，不引没用到的东西。
         val body = StringBuilder()
+        if (flags.isNotEmpty() || texts.isNotEmpty()) {
+            body.append("    // 交互态（DshComposeHost 本地状态槽：act/rememberFlag/rememberText）\n")
+            for (f in flags) body.append("    val __st_").append(f)
+                .append(" = functor.sublimation.android.DshComposeHost.rememberFlag(\"").append(f).append("\")\n")
+            for (x in texts) body.append("    val __st_").append(x)
+                .append(" = functor.sublimation.android.DshComposeHost.rememberText(\"").append(x).append("\")\n")
+        }
         if (nodes.isEmpty()) body.append("    // 视图 ").append(st.name).append(" 未声明内容\n")
         if (scaffoldFab != null || scaffoldTopBar != null) {
             components += "androidx.compose.material3.Scaffold"
@@ -313,7 +330,7 @@ object ComposeEmitter {
         // BottomSheet 的 Material3 组件名是 ModalBottomSheet（BottomSheet 只是 Sublimation 侧的视图名）
         "BottomSheet" -> "androidx.compose.material3.ModalBottomSheet"
         "Text", "Icon", "Divider", "Button", "TextButton", "OutlinedButton", "Card",
-        "LazyColumn", "LazyRow", "AlertDialog", "TopAppBar" -> "androidx.compose.material3." + name
+        "LazyColumn", "LazyRow", "AlertDialog", "TopAppBar", "TextField" -> "androidx.compose.material3." + name
         // FloatingButton（FAB）→ ExtendedFloatingActionButton；Chart → 宿主工程 Subl_ConcentrationChart（同包直引）
         "FloatingButton" -> "androidx.compose.material3.ExtendedFloatingActionButton"
         "Chart" -> "Subl_ConcentrationChart"
@@ -364,7 +381,14 @@ object ComposeEmitter {
                 "Box" -> {
                     // SfA Box stdl：orientation vertical→Column / horizontal→Row（缺省 vertical）；
                     // wrap=true → FlowRow（流式换行）；spacing→Arrangement.spacedBy；arrangement→Arrangement.X；
-                    // backgroundColor → 链尾 .background(Color)。
+                    // backgroundColor → 链尾 .background(Color)；
+                    // 契约 §4 交互态：visible = <命名态> → 整节点条件渲染；onClick lambda → .clickable { act }。
+                    val visFlag = stateFlagName(a["visible"])
+                    val visCall = stateFlagCall(a["visible"])
+                    val out = if (visFlag != null || visCall != null) StringBuilder() else sb
+                    // 契约 §3 修正：padding 放最后——background/clip/clickable 都画在 padding 外，
+                    // 底色铺满整块（否则背景只涂到 padding 后，视觉=「内边距不足」）。
+                    val padTail = ArrayList<String>()
                     val o = ((a["orientation"] as? StrLit)?.value ?: "vertical").trim().lowercase()
                     val wrap = boolOf(a["wrap"]) == true
                     val fn0 = if (wrap) "FlowRow" else if (o.startsWith("h") || o == "row") "Row" else "Column"
@@ -373,37 +397,60 @@ object ComposeEmitter {
                     val horizontal = fn0 == "Row" || fn0 == "FlowRow"
                     val arr = arrangementArg((a["arrangement"] as? StrLit)?.value ?: "", a["spacing"], horizontal)
                     val bg = colorOrExpr(a["backgroundColor"])
-                    var fullMod = mod
-                    if (bg != null) {
+                    var fullMod: String? = null
+                    // background/scrollable/padding 顺序见下方重算段（clip→background→clickable→padding）
+                    // 契约 §4 交互态：onClick = { unchecked f(k) } → Modifier.clickable { act("f", "[k]") }
+                    // （ripple 来自 clickable 本身——用户反馈「点按钮有反应」）
+                    // Box 的链重算：padding 挑出到 padTail（见上），链尾按 clip→background→clickable→padding 补齐
+                    var boxMod = modifierChain(a["modifier"] ?: a["modifiers"], imports, padTail)
+                    if (boxMod != null) imports += MODIFIER_IMPORT
+                    if (bg != null && boxMod != null) {
                         imports += "androidx.compose.foundation.background"
                         if (bg.startsWith("Color(")) imports += COLOR_IMPORT
-                        fullMod = modifierOr(mod, imports) + ".background(" + bg + ")"
+                        boxMod = boxMod + ".background(" + bg + ")"
                     }
-                    // 契约 §5：scrollable=true 的纵向 Box → Column 加 verticalScroll（内容溢出时可滚）
+                    val route = onClickRoute(a["onClick"])
+                    if (route != null) {
+                        components += "functor.sublimation.android.DshComposeHost"
+                        imports += "androidx.compose.foundation.clickable"
+                        boxMod = modifierOr(boxMod, imports) + ".clickable { " + actCall(route) + " }"
+                    }
                     if (boolOf(a["scrollable"]) == true && fn0 == "Column") {
                         imports += "androidx.compose.foundation.verticalScroll"
                         imports += "androidx.compose.foundation.rememberScrollState"
-                        fullMod = modifierOr(fullMod, imports) + ".verticalScroll(rememberScrollState())"
+                        boxMod = modifierOr(boxMod, imports) + ".verticalScroll(rememberScrollState())"
                     }
-                    // contentAlignment：Row/FlowRow → verticalAlignment，Column → horizontalAlignment
+                    for (p0 in padTail) boxMod = modifierOr(boxMod, imports) + "." + p0
+                    fullMod = boxMod
                     val caName = (a["contentAlignment"] as? CallExpr)?.callee?.let { (it as? NameRef)?.name }
                         ?: (a["contentAlignment"] as? StrLit)?.value?.trim()
                     val align = if (horizontal) verticalAlign(caName) else horizontalAlign(caName)
                     if (align != null) imports += ALIGNMENT_IMPORT
-                    sb.append(ind).append(fn).append("(")
-                    if (arr != null) sb.append(arr)
+                    out.append(ind).append(fn).append("(")
+                    if (arr != null) out.append(arr)
                     if (align != null) {
-                        if (arr != null) sb.append(", ")
-                        sb.append(if (horizontal) "verticalAlignment = " else "horizontalAlignment = ").append(align)
+                        if (arr != null) out.append(", ")
+                        out.append(if (horizontal) "verticalAlignment = " else "horizontalAlignment = ").append(align)
                     }
                     if (fullMod != null) {
-                        if (arr != null || align != null) sb.append(", ")
-                        sb.append("modifier = ").append(fullMod)
+                        if (arr != null || align != null) out.append(", ")
+                        out.append("modifier = ").append(fullMod)
                     }
-                    sb.append(") {\n")
-                    if (n.children.isEmpty()) sb.append(ind).append("    // 空容器\n")
-                    else emitNodes(sb, ind + "    ", n.children, components, imports)
-                    sb.append(ind).append("}\n")
+                    out.append(") {\n")
+                    if (n.children.isEmpty()) out.append(ind).append("    // 空容器\n")
+                    else emitNodes(out, ind + "    ", n.children, components, imports)
+                    out.append(ind).append("}\n")
+                    if (visFlag != null) {
+                        components += "functor.sublimation.android.DshComposeHost"
+                        sb.append(ind).append("if (__st_").append(visFlag).append(".value) {\n")
+                        sb.append(out)
+                        sb.append(ind).append("}\n")
+                    } else if (visCall != null) {
+                        components += "functor.sublimation.android.DshComposeHost"
+                        sb.append(ind).append("if (").append(visCall).append(") {\n")
+                        sb.append(out)
+                        sb.append(ind).append("}\n")
+                    }
                 }
                 "Card" -> {
                     // 契约 §5：圆角/阴影/背景色真值——shape/elevation/colors 走命名实参（CardDefaults 是对象，FQN 直引）。
@@ -434,7 +481,11 @@ object ComposeEmitter {
                     }
                     if (fn != fqn) components += fn
                     val label = (a["label"] ?: a["text"]) as? StrLit
-                    sb.append(ind).append(fn).append("(onClick = { }")
+                    val route = onClickRoute(a["onClick"])
+                    if (route != null) components += "functor.sublimation.android.DshComposeHost"
+                    sb.append(ind).append(fn).append("(onClick = { ")
+                        .append(if (route != null) actCall(route) else "")
+                        .append(" }")
                     if (mod != null) sb.append(", modifier = ").append(mod)
                     if (boolOf(a["enabled"]) == false) sb.append(", enabled = false")
                     sb.append(") {\n")
@@ -447,15 +498,34 @@ object ComposeEmitter {
                     sb.append(ind).append("}\n")
                 }
                 "BottomSheet" -> {
-                    // 契约 §5：ModalBottomSheet + skipPartiallyExpanded 的 sheetState；visible 字面 false → 不生成。
+                    // 契约 §5：ModalBottomSheet + skipPartiallyExpanded 的 sheetState；
+                    // 契约 §4 交互态：visible = <命名态> → if (__st_x.value) 包裹；字面 false 不生成。
                     if (visibleSkip(a, sb, ind)) continue
-                    sb.append(ind).append(fqn)
-                        .append("(onDismissRequest = { }, sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)")
-                    if (mod != null) sb.append(", modifier = ").append(mod)
-                    sb.append(") {\n")
-                    if (n.children.isEmpty()) sb.append(ind).append("    // 空抽屉\n")
-                    else emitNodes(sb, ind + "    ", n.children, components, imports)
-                    sb.append(ind).append("}\n")
+                    val visFlag = stateFlagName(a["visible"])
+                    val visCall = stateFlagCall(a["visible"])
+                    val out = if (visFlag != null || visCall != null) StringBuilder() else sb
+                    val dismissRoute = onClickRoute(a["onDismiss"])
+                    if (dismissRoute != null) components += "functor.sublimation.android.DshComposeHost"
+                    out.append(ind).append(fqn)
+                        .append("(onDismissRequest = { ")
+                        .append(if (dismissRoute != null) actCall(dismissRoute) else "")
+                        .append(" }, sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)")
+                    if (mod != null) out.append(", modifier = ").append(mod)
+                    out.append(") {\n")
+                    if (n.children.isEmpty()) out.append(ind).append("    // 空抽屉\n")
+                    else emitNodes(out, ind + "    ", n.children, components, imports)
+                    out.append(ind).append("}\n")
+                    if (visFlag != null) {
+                        components += "functor.sublimation.android.DshComposeHost"
+                        sb.append(ind).append("if (__st_").append(visFlag).append(".value) {\n")
+                        sb.append(out)
+                        sb.append(ind).append("}\n")
+                    } else if (visCall != null) {
+                        components += "functor.sublimation.android.DshComposeHost"
+                        sb.append(ind).append("if (").append(visCall).append(") {\n")
+                        sb.append(out)
+                        sb.append(ind).append("}\n")
+                    }
                 }
                 "LazyColumn", "LazyRow" -> {
                     // LazyListScope 的位是 `item { }` / `items(n) { }`，不能直接放兄弟组件；
@@ -568,11 +638,16 @@ object ComposeEmitter {
                     if (onClickKey != null) {
                         components += "functor.sublimation.android.DshComposeHost"
                     }
+                    val fabRoute = onClickRoute(a["onClick"])
+                    if (fabRoute != null) components += "functor.sublimation.android.DshComposeHost"
                     imports += "androidx.compose.material.icons.Icons"
                     imports += "androidx.compose.material.icons.filled." + icon
                     if (containerColor?.startsWith("Color(") == true) imports += COLOR_IMPORT
                     sb.append(ind).append(fqn).append("(onClick = { ")
-                        .append("functor.sublimation.android.DshComposeHost.callJs(\"").append(onClickKey).append("\", \"[]\")")
+                        .append(if (onClickKey != null)
+                            "functor.sublimation.android.DshComposeHost.callJs(\"" + onClickKey + "\", \"[]\")"
+                        else if (fabRoute != null) actCall(fabRoute)
+                        else "")
                         .append(" }")
                     if (containerColor != null) sb.append(", containerColor = ").append(containerColor)
                     if (mod != null) sb.append(", modifier = ").append(mod)
@@ -585,6 +660,95 @@ object ComposeEmitter {
                         .append(") })\n")
                     components += "androidx.compose.material3.Icon"
                     components += "androidx.compose.material3.Text"
+                }
+                "AlertDialog" -> {
+                    // 契约 §5/§4 交互态：M3 AlertDialog——visible = <命名态> → if 包裹；
+                    // onConfirm/onDismiss lambda → act(...)；body children → text 槽。
+                    if (visibleSkip(a, sb, ind)) continue
+                    val visFlag = stateFlagName(a["visible"])
+                    val visCall = stateFlagCall(a["visible"])
+                    val out = if (visFlag != null || visCall != null) StringBuilder() else sb
+                    val title = (a["title"] as? StrLit)?.value
+                    val confirmTxt = (a["confirmText"] as? StrLit)?.value
+                    val dismissTxt = (a["dismissText"] as? StrLit)?.value
+                    val confirmRoute = onClickRoute(a["onConfirm"])
+                    val dismissRoute = onClickRoute(a["onDismiss"])
+                    if (confirmRoute != null || dismissRoute != null) components += "functor.sublimation.android.DshComposeHost"
+                    components += "androidx.compose.material3.Text"
+                    components += "androidx.compose.material3.TextButton"
+                    out.append(ind).append(fqn).append("(")
+                    out.append("onDismissRequest = { ").append(if (dismissRoute != null) actCall(dismissRoute) else "").append(" }")
+                    out.append(", confirmButton = { androidx.compose.material3.TextButton(onClick = { ")
+                        .append(if (confirmRoute != null) actCall(confirmRoute) else "").append(" }) { ")
+                        .append("androidx.compose.material3.Text(text = ").append(kotlinString(confirmTxt ?: "确定")).append(") } }")
+                    if (dismissTxt != null) {
+                        out.append(", dismissButton = { androidx.compose.material3.TextButton(onClick = { ")
+                            .append(if (dismissRoute != null) actCall(dismissRoute) else "").append(" }) { ")
+                            .append("androidx.compose.material3.Text(text = ").append(kotlinString(dismissTxt)).append(") } }")
+                    }
+                    if (title != null) {
+                        out.append(", title = { androidx.compose.material3.Text(text = ").append(kotlinString(title)).append(") }")
+                    }
+                    if (n.children.isNotEmpty()) {
+                        out.append(", text = {\n")
+                        emitNodes(out, ind + "    ", n.children, components, imports)
+                        out.append(ind).append("    }\n")
+                    }
+                    out.append(ind).append(")\n")
+                    if (visFlag != null) {
+                        components += "functor.sublimation.android.DshComposeHost"
+                        sb.append(ind).append("if (__st_").append(visFlag).append(".value) {\n")
+                        sb.append(out)
+                        sb.append(ind).append("}\n")
+                    } else if (visCall != null) {
+                        components += "functor.sublimation.android.DshComposeHost"
+                        sb.append(ind).append("if (").append(visCall).append(") {\n")
+                        sb.append(out)
+                        sb.append(ind).append("}\n")
+                    }
+                }
+                "TextField" -> {
+                    // SfA TextField stdl → M3 TextField（label 槽 + isError/supportingText）。
+                    // 契约 §4 交互态：text/errText = <命名态>（NameRef → __st_x.value；CallExpr curDose()
+                    // → DshComposeHost.strArg）；onChange lambda → onValueChange = { v -> actText("setDose", v) }。
+                    val label = (a["label"] ?: a["placeholder"]) as? StrLit
+                    val valueRef = (a["text"] as? NameRef)?.name
+                    val errRef = (a["errText"] as? NameRef)?.name
+                    val changeRoute = onClickRoute(a["onChange"])
+                    if (valueRef != null || errRef != null || changeRoute != null) components += "functor.sublimation.android.DshComposeHost"
+                    val valueCall = stateStrCall(a["text"])
+                    val errCall = stateStrCall(a["errText"])
+                    if (valueCall != null || errCall != null) components += "functor.sublimation.android.DshComposeHost"
+                    components += "androidx.compose.material3.Text"
+                    val valueExpr = when {
+                        valueRef != null -> "__st_" + valueRef + ".value"
+                        valueCall != null -> valueCall
+                        else -> kotlinString("")
+                    }
+                    val errExpr = when {
+                        errRef != null -> "__st_" + errRef + ".value"
+                        errCall != null -> errCall
+                        else -> null
+                    }
+                    val out = sb
+                    out.append(ind).append(fqn).append("(value = ").append(valueExpr)
+                        .append(", onValueChange = { v -> ")
+                        .append(if (changeRoute != null) actTextCall(changeRoute) else "v.toString()").append(" }")
+                    if (label != null) {
+                        out.append(", label = { androidx.compose.material3.Text(text = ").append(kotlinString(label.value)).append(") }")
+                    }
+                    if ((a["keyboard"] as? StrLit)?.value == "number") {
+                        imports += "androidx.compose.foundation.text.KeyboardOptions"
+                        imports += "androidx.compose.ui.text.input.KeyboardType"
+                        out.append(", keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)")
+                    }
+                    out.append(", singleLine = true")
+                    if (errExpr != null) {
+                        out.append(", isError = ").append(errExpr).append(".isNotEmpty()")
+                        out.append(", supportingText = { if (").append(errExpr).append(".isNotEmpty()) ")
+                            .append("androidx.compose.material3.Text(text = ").append(errExpr).append(") }")
+                    }
+                    out.append(")\n")
                 }
                 "Chart" -> {
                     // 契约 §5：Chart → 宿主工程 Subl_ConcentrationChart（同包 data 类 SublSeries）。
@@ -641,6 +805,71 @@ object ComposeEmitter {
         }
     }
 
+
+    /** 契约 §4 交互态：onClick lambda（unchecked f(args) 形）→ 宿主 act 路由名 + 实参列表。 */
+    private fun onClickRoute(e: Expr?): Pair<String, List<Expr>>? {
+        val body = (e as? LambdaExpr)?.body ?: return null
+        val stmts = when (body) {
+            is BlockExpr -> body.stmts
+            else -> return null
+        }
+        for (s in stmts) {
+            var st: Stmt? = s
+            while (st is UncheckedStmt) st = st.inner
+            val ce = (st as? ExprStmt)?.expr as? CallExpr ?: continue
+            val nm = (ce.callee as? NameRef)?.name ?: continue
+            return nm to ce.args
+        }
+        return null
+    }
+
+    /** visible = <命名态>（NameRef）→ 状态名；不识别 true/false。 */
+    private fun stateFlagName(e: Expr?): String? = (e as? NameRef)?.name?.let {
+        if (it == "true" || it == "false") null else it
+    }
+
+    /** visible = isSel(k)（CallExpr）→ DshComposeHost.boolArg("isSel", k)。 */
+    private fun stateFlagCall(e: Expr?): String? {
+        val ce = e as? CallExpr ?: return null
+        val nm = (ce.callee as? NameRef)?.name ?: return null
+        val args = ce.args.joinToString(", ") { exprToKotlin(it) }
+        return "functor.sublimation.android.DshComposeHost.boolArg(" + kotlinString(nm) +
+            (if (args.isEmpty()) "" else ", " + args) + ")"
+    }
+
+    /** TextField 的 text/errText = curDose()（CallExpr）→ DshComposeHost.strArg("curDose")。 */
+    private fun stateStrCall(e: Expr?): String? {
+        val ce = e as? CallExpr ?: return null
+        val nm = (ce.callee as? NameRef)?.name ?: return null
+        return "functor.sublimation.android.DshComposeHost.strArg(" + kotlinString(nm) + ")"
+    }
+
+    /** act 调用串：f(a, b) → DshComposeHost.act("f", listOf(a, b))。 */
+    private fun actCall(route: Pair<String, List<Expr>>): String {
+        val args = if (route.second.isEmpty()) "" else ", listOf(" +
+            route.second.joinToString(", ") { exprToKotlin(it) } + ")"
+        return "functor.sublimation.android.DshComposeHost.act(" + kotlinString(route.first) + args + ")"
+    }
+
+    /** TextField onChange lambda（t => setDose(t)）→ onValueChange = { v -> act("setDose", v) }。 */
+    private fun actTextCall(route: Pair<String, List<Expr>>): String {
+        return "functor.sublimation.android.DshComposeHost.actText(" + kotlinString(route.first) + ", v)"
+    }
+
+    /** 递归扫描交互态引用：visible 的命名态 → flags；TextField 的 text/errText 命名态 → texts。 */
+    private fun collectStateRefs(nodes: List<UiNode>, flags: MutableSet<String>, texts: MutableSet<String>) {
+        for (n in nodes) {
+            val a = LinkedHashMap<String, Expr>()
+            for ((k, v) in n.assigns) a[k] = v
+            stateFlagName(a["visible"])?.let { flags += it }
+            if (n.name == "TextField") {
+                (a["text"] as? NameRef)?.name?.let { texts += it }
+                (a["errText"] as? NameRef)?.name?.let { texts += it }
+            }
+            if (n.children.isNotEmpty()) collectStateRefs(n.children, flags, texts)
+        }
+    }
+
     /** visible 字面 false → 节点不生成（数据驱动显隐，契约 §5）；动态值注释提示（状态槽待桥侧细化）。 */
     private fun visibleSkip(a: Map<String, Expr>, sb: StringBuilder, ind: String): Boolean {
         val v = a["visible"] ?: return false
@@ -649,8 +878,12 @@ object ComposeEmitter {
             sb.append(ind).append("// 隐藏（visible = false，数据驱动显隐）\n")
             return true
         }
-        if (b == null) sb.append(ind).append("// visible 为动态值（").append(exprToKotlin(v))
-            .append("）：显隐待 DshComposeHost.stateOf 桥细化\n")
+        if (b == null) {
+            // 动态 visible：boolArg 形（isFormOpen()）由调用方 if-包裹发射；否则记录待桥细化
+            val call = (v as? CallExpr)?.let { (it.callee as? NameRef)?.name }
+            if (call == null) sb.append(ind).append("// visible 为动态值（").append(exprToKotlin(v))
+                .append("）：显隐待 DshComposeHost.stateOf 桥细化\n")
+        }
         return false
     }
 
@@ -684,11 +917,15 @@ object ComposeEmitter {
      *
      * 链元素全是 Modifier 的**扩展函数**，用到的 import 记进 [imports]（缺 import 不能编译）。
      */
-    internal fun modifierChain(e: Expr?, imports: MutableSet<String>? = null): String? {
+    internal fun modifierChain(e: Expr?, imports: MutableSet<String>? = null, paddingTail: MutableList<String>? = null): String? {
         if (e == null) return null
         val parts = ArrayList<String>()
         fun elem(name: String, args: List<Expr>) {
-            modElemToKotlin(name, args, imports)?.let { parts += it }
+            val kt = modElemToKotlin(name, args, imports) ?: return
+            // padding 需在 background/clickable 之后（Compose 顺序语义：先铺底再内缩内容）；
+            // 调用方传 paddingTail 时把 padding 元素挑出，由它在链尾补画（契约 §3 修正）。
+            if (paddingTail != null && kt.startsWith("padding")) { paddingTail += kt; return }
+            parts += kt
         }
         fun one(x: Expr) {
             when (x) {
