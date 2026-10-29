@@ -1,0 +1,20 @@
+// geo.subl —— 矢量地图数据（game doc/游戏库.md §矢量地图数据）
+//
+// 省级行政区划这类「凹多边形 + 多环」形状：rect 拼接难看、area() 的 rect 命中
+// 对狭长省会误触，故单独给一组 op。数据由预处理脚本（见各 demo）从行政区划 GeoJSON
+// 生成紧凑文本表，由 mapLoad 一次性烘焙为精灵。
+
+// 载入省份表：t 为紧凑文本（"省名:环;环;...|省名:..."，环="x y,x y,..."，
+// 世界坐标像素）。每省烘焙为白底黑边精灵（canvas2d 填充，凹多边形/多环天然正确，
+// 边缘抗锯齿），返回地图句柄。
+@game @host @impure fun mapLoad(t: Str): Any
+// 省份数量。
+@game @host @impure fun mapProvCount(m: Any): Nat
+// 省份名称（按下标）。
+@game @host @impure fun mapProvName(m: Any, i: Nat): Str
+// 创建省份精灵对象（位置已按烘焙 bbox 左上角对齐），hex 为填充 tint。
+// 高亮换色：objUse(o, compColorHex(新色))（use 按组件 id 替换，白底×tint=填充色）。
+@game @host @impure fun mapProvObj(m: Any, i: Nat, hex: Str): Any
+// 命中判定：射线法点在多边形内。返回省份下标，未命中返回 -1（Int）。
+// 多边形形状不能用 area() 的 rect 命中（甘肃/内蒙古等狭长省会误触）。
+@game @host @impure fun mapHitProv(m: Any, x: Rat, y: Rat): Int

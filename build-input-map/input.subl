@@ -1,0 +1,21 @@
+// input.subl —— 输入（game doc/游戏库.md §输入）
+//
+// 键盘/鼠标事件经 KAPLAY 注册；回调体在事件发生时执行。
+// 键名用 KAPLAY 约定："left"/"right"/"up"/"down"/"space"/"a".."z"/"0".."9"/"enter"/"escape" 等。
+// onKeyDown 按住期间每帧触发；onKeyPress 只在按下瞬间触发一次；onKeyRelease 松开时触发。
+
+// 按住某键：每帧触发。
+@game @host @impure fun onKeyDown(key: Str, body: (Any) => Null): Null
+// 按下某键：触发一次。
+@game @host @impure fun onKeyPress(key: Str, body: (Any) => Null): Null
+// 松开某键：触发一次。
+@game @host @impure fun onKeyRelease(key: Str, body: (Any) => Null): Null
+// 按下鼠标键："left"/"right"/"middle"。
+@game @host @impure fun onMouseDown(btn: Str, body: (Any) => Null): Null
+// 松开鼠标键："left"/"right"/"middle"（触屏语义同：手指抬起）。
+@game @host @impure fun onMouseRelease(btn: Str, body: (Any) => Null): Null
+// 鼠标移动（按住与否都触发；回调参数为位置句柄）。
+@game @host @impure fun onMouseMove(body: (Any) => Null): Null
+// 鼠标位置（像素）。
+@game @host @impure fun mousePosX(): Rat
+@game @host @impure fun mousePosY(): Rat

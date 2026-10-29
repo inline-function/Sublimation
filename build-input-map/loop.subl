@@ -1,0 +1,13 @@
+// loop.subl —— 循环与计时（game doc/游戏库.md §循环与计时）
+//
+// 游戏主循环 onUpdate 每帧执行一次；dt 为距上一帧的秒数（Rat），用于帧率无关的位移。
+// every/after 是定时器：every 周期触发（刷怪/计分），after 延迟触发一次。
+
+// 主循环：每帧调用，参数为帧间隔（秒）。
+@game @host @impure fun onUpdate(body: (Rat) => Null): Null
+// 当前帧间隔（秒）。onUpdate 回调内取 dt 的另一途径。
+@game @host @impure fun frameDt(): Rat
+// 周期定时器：每 secs 秒触发一次。
+@game @host @impure fun every(secs: Rat, body: (Any) => Null): Null
+// 延迟定时器：secs 秒后触发一次。
+@game @host @impure fun after(secs: Rat, body: (Any) => Null): Null

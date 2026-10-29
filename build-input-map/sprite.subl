@@ -1,0 +1,116 @@
+// sprite.subl —— 精灵与游戏对象（game doc/游戏库.md §精灵与游戏对象）
+//
+// KAPLAY 是「组件模型」：对象 = add([]) + 若干组件（pos/sprite/area/body/...）。
+// 本文件分三层：组件构造（comp*，返回不透明句柄 Any）、对象操作（obj*，桥接）、
+// 友好封装（spriteAdd/rectAdd/textAdd 等用 Sublimation 组合组件，供 demo 直接用）。
+
+// ---------- 资源 ----------
+// 载入精灵：name 为引用名，src 为相对页面的图片路径（如 "assets/bean.png"）。
+@game @host @impure fun spriteLoad(name: Str, src: Str): Null
+
+// ---------- 组件（构造后经 objUse 挂到对象上） ----------
+// 精灵组件：引用已载入的精灵名。
+@game @host @impure fun compSprite(name: Str): Any
+// 位置组件：坐标（像素，左上角原点，x 向右 y 向下）。
+@game @host @impure fun compPos(x: Rat, y: Rat): Any
+// 缩放组件：整体倍率。
+@game @host @impure fun compScale(s: Rat): Any
+// 矩形组件：宽/高（像素）。常与 compColorHex 搭配做色块。
+@game @host @impure fun compRect(w: Rat, h: Rat): Any
+// 圆组件：半径（像素）。
+@game @host @impure fun compCircle(r: Rat): Any
+// 文本组件：内容 + 字号（像素）。weight=字重（400/600/700）；width>0 触发 KAPLAY 原生折行
+// （按真实字体量宽，app 层无需自建宽度模型）；lineSpacing=行附加间距（行距= size + lineSpacing）。
+@game @host @impure fun compText(t: Str, size: Rat, weight: Nat, width: Rat = 0.0, lineSpacing: Rat = 0.0): Any
+// 颜色组件：接受 "#rrggbb" 或 "#rgb" 或颜色名（red/green/blue/yellow/white/black/gray/orange/purple/pink）。
+@game @host @impure fun compColorHex(hex: Str): Any
+// 碰撞区域组件：使对象参与碰撞检测（isColliding/onCollide 均需双方带 area）。
+@game @host @impure fun compArea(): Any
+// 物理体组件：受重力影响（需 gameGravity > 0）。
+@game @host @impure fun compBody(): Any
+// 实体组件：与 area 搭配阻止穿透。
+@game @host @impure fun compSolid(): Any
+// 标签组件：给对象打标签（碰撞查询与批量操作用）。
+@game @host @impure fun compTag(t: Str): Any
+// 锚点组件：绘制原点（"topleft"/"center"/"left"/... 等 KAPLAY 锚点名）。
+@game @host @impure fun compAnchor(a: Str): Any
+
+// ---------- 对象操作 ----------
+// 新建空对象（随后 objUse 挂组件）。
+@game @host @impure fun objAdd(): Any
+// 给对象挂组件（或标签）。
+@game @host @impure fun objUse(o: Any, c: Any): Null
+// 销毁对象。
+@game @host @impure fun objDestroy(o: Any): Null
+// 对象是否仍在场景中。
+@game @host @impure fun objExists(o: Any): Bool
+// 相对移动（像素/帧；常置于 onUpdate 内按 dt 缩放）。
+@game @host @impure fun objMove(o: Any, dx: Rat, dy: Rat): Null
+// 设置坐标。
+@game @host @impure fun objSetPos(o: Any, x: Rat, y: Rat): Null
+// 设置整体缩放。
+@game @host @impure fun objSetScale(o: Any, s: Rat): Null
+// 取坐标向量（不透明；经 vecX/vecY 取分量）。
+@game @host @impure fun objPos(o: Any): Any
+// 设置文本对象的内容（用于分数等动态文字）。
+@game @host @impure fun objTextSet(o: Any, t: Str): Null
+// 给已有对象补打标签。
+@game @host @impure fun objTag(o: Any, t: Str): Null
+
+// ---------- 向量取值 ----------
+@game @host @impure fun vecX(v: Any): Rat
+@game @host @impure fun vecY(v: Any): Rat
+
+// ---------- 友好封装：一行造一个常见对象 ----------
+// 精灵对象：已载入的精灵 + 位置。
+@impure
+fun spriteAdd(name: Str, x: Rat, y: Rat): Any {
+    var o = objAdd()
+    objUse(o, compSprite(name))
+    objUse(o, compPos(x, y))
+    return o
+}
+
+// 无形状基对象：只有位置（供后续挂任意组件）。
+@impure
+fun shapeAdd(x: Rat, y: Rat): Any {
+    var o = objAdd()
+    objUse(o, compPos(x, y))
+    return o
+}
+
+// 色块矩形：位置 + 矩形 + 颜色。hex 形如 "#ff4444"。
+@impure
+fun rectAdd(w: Rat, h: Rat, x: Rat, y: Rat, hex: Str): Any {
+    var o = shapeAdd(x, y)
+    objUse(o, compRect(w, h))
+    objUse(o, compColorHex(hex))
+    return o
+}
+
+// 色块圆。
+@impure
+fun circleAdd(r: Rat, x: Rat, y: Rat, hex: Str): Any {
+    var o = shapeAdd(x, y)
+    objUse(o, compCircle(r))
+    objUse(o, compColorHex(hex))
+    return o
+}
+
+// 文本对象：位置 + 内容 + 字号。
+@impure
+fun textAdd(t: Str, x: Rat, y: Rat, size: Rat): Any {
+    var o = shapeAdd(x, y)
+    objUse(o, compText(t, size, 400))
+    return o
+}
+
+// 给对象补碰撞区域（collision.subl 的便捷入口）。
+@impure
+fun objAddArea(o: Any): Null = objUse(o, compArea())
+
+// 取对象左上角 x/y（像素）。
+@impure
+fun objLeft(o: Any): Rat = vecX(objPos(o))
+@impure
+fun objTop(o: Any): Rat = vecY(objPos(o))

@@ -1,0 +1,24 @@
+// camera.subl —— 相机与手势（game doc/游戏库.md §相机与手势）
+//
+// 相机变换（camPos/camScale）把世界对象整体缩放平移；鼠标/触屏坐标仍是
+// 无相机世界系，命中判定（如 mapHitProv）须由 SfG 自算逆变换：
+//   世界 = (屏幕 - 视口中心) / 缩放 + 相机位置
+// fixed 组件让对象脱离相机（顶栏 UI 固定屏幕坐标）。
+
+// 滚轮缩放：回调参数为 deltaY（向下为正，正值通常缩小）。
+@game @host @impure fun onScroll(body: (Rat) => Null): Null
+// 相机位置（视口中心的世界坐标）与缩放（x/y 等值时 camScale(s, s)）。
+@game @host @impure fun camPos(x: Rat, y: Rat): Null
+@game @host @impure fun camScale(sx: Rat, sy: Rat): Null
+// fixed 组件：对象不随相机变换，固定在屏幕坐标（顶栏/计分栏用）。
+@game @host @impure fun compFixed(): Any
+// 触屏开始/移动/结束（零信息回调；活跃触点坐标用 touchX/touchY 读）。
+@game @host @impure fun onTouchStart(body: (Any) => Null): Null
+@game @host @impure fun onTouchMove(body: (Any) => Null): Null
+@game @host @impure fun onTouchEnd(body: (Any) => Null): Null
+// 活跃触点数（捏合用前两个），坐标为无相机世界系。
+@game @host @impure fun touchCount(): Nat
+@game @host @impure fun touchX(i: Nat): Rat
+@game @host @impure fun touchY(i: Nat): Rat
+// z 层级组件：同场景按 z 升序绘制（默认 0），顶栏 UI 用高 z 盖住地图。
+@game @host @impure fun compZ(z: Rat): Any

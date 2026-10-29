@@ -1,0 +1,29 @@
+// game.subl —— 引擎与场景（game doc/游戏库.md §引擎与场景）
+//
+// 游戏目标的标准库底层是「桥接声明」：@game（处理器白名单门）+ @host（无体合法性：
+// 体不在此处，由壳工程 game-app/js/game-runtime.js 用 KAPLAY 实现）+ @impure（桥接有副作用）。
+// 编译后产物 app.js 以裸名调用同名全局 JS 函数，故每个 @host 名必须与桥运行时一一对应。
+
+// ---------- 引擎 ----------
+// 初始化 KAPLAY 画布（固定逻辑画布，默认拉伸铺满窗口——线性插值放大可能模糊）。
+// 其余一切调用之前必须先 gameStart。
+@game @host @impure fun gameStart(width: Nat, height: Nat): Null
+// 自适配窗口：stretch 恒开（画布跟随窗口尺寸）；letterbox=true 保持宽高比（留黑边不变形）；
+// crisp=true 关平滑插值（image-rendering: pixelated，像素风锐利）。
+// 逻辑坐标体系不变——游戏里仍按 width×height 写坐标，缩放由 KAPLAY 外层完成。
+@game @host @impure fun gameStartFit(width: Nat, height: Nat, letterbox: Bool, crisp: Bool): Null
+// 设置重力（像素/秒²，用于带 body() 组件的对象）。默认 0。
+@game @host @impure fun gameGravity(g: Rat): Null
+// 画布宽/高（像素，逻辑画布尺寸——stretch 下不随窗口变）。
+@game @host @impure fun viewWidth(): Nat
+@game @host @impure fun viewHeight(): Nat
+// 真实窗口宽/高（CSS 像素；无窗口环境回落为画布逻辑尺寸）。
+@game @host @impure fun winWidth(): Nat
+@game @host @impure fun winHeight(): Nat
+
+// ---------- 场景 ----------
+// 注册场景：名字 + 构建闭包（场景切换时执行）。
+// 用法：sceneAdd("main") { _e => <构建场景> }
+@game @host @impure fun sceneAdd(name: Str, body: (Any) => Null): Null
+// 切到已注册场景（重新执行其构建闭包，旧对象随之销毁）。
+@game @host @impure fun sceneGo(name: Str): Null

@@ -1,0 +1,230 @@
+// map-main.subl —— 中国地图 Demo（SfG）：35 省级行政区划，点击高亮 + 显示省名，
+// 滚轮/双指自由缩放（指针/双指中心为锚）+ 单指/鼠标拖拽平移镜头（软钳制）。
+// 数据 map-data.subl（DataV.GeoAtlas 预处理）-> 桥 mapLoad 烘焙硬边像素精灵
+// （整数扫描线填充 + Bresenham 1px 描边，无 AA；放大 NEAREST 保持锐利）
+// -> 渲染期 compColorHex tint 换色；命中走桥 mapHitProv 射线法（吃世界坐标，
+// 缩放/平移后由 worldXOf/worldYOf 自算逆变换——t65 的教训）。顶栏 fixed+z 固定。
+
+// 带颜色的文本对象（与剧本列表 demo 同款助手：组件组合而非封装函数）。
+@impure
+fun addTextT(t: Str, x: Rat, y: Rat, size: Rat, hex: Str, tag: Str, fixed: Bool): Any {
+    unchecked var o = objAdd()
+    unchecked objUse(o, compPos(x, y))
+    unchecked objUse(o, compText(t, size, 400))
+    unchecked objUse(o, compColorHex(hex))
+    unchecked if (fixed) { objUse(o, compFixed()); objUse(o, compZ(10.0)) }
+    unchecked objTag(o, tag)
+    return o
+}
+
+@impure
+fun renderProvsLoop(geo: Any, n: Nat, i: Nat, sel: Int): Null =
+    if (i >= n) null
+    else {
+        var hex: Str = if (i == sel) FILL_SEL() else FILL_NORMAL()
+        var o: Any = mapProvObj(geo, i, hex)
+        objTag(o, "prov")
+        renderProvsLoop(geo, n, i + 1, sel)
+    }
+
+@impure
+fun renderProvs(geo: Any, n: Nat, sel: Int): Null = renderProvsLoop(geo, n, 0, sel)
+
+// 相机只改 camPos/camScale（渲染期变换），不重建省份——平移/缩放全程零重建。
+@impure
+fun applyView(viewS: Rat, viewX: Rat, viewY: Rat): Null {
+    camPos(viewX, viewY)
+    camScale(viewS, viewS)
+    null
+}
+
+// 点击选中：命中 -> 换高亮 + 更新标签（未命中/同省保持原选中）。世界坐标由调用方换算。
+@impure
+fun selectAt(geo: Any, n: Nat, label: Any, sel: Int, wx: Rat, wy: Rat): Int {
+    var hit: Int = mapHitProv(geo, wx, wy)
+    var nx: Int = nextSel(hit, sel)
+    @mut var r: Int = sel
+    if (nx != sel) {
+        objsDestroyTag("prov")
+        r = nx
+        renderProvs(geo, n, nx)
+        objTextSet(label, selLabel(mapProvName(geo, nx)))
+    }
+    return r
+}
+
+// 缩放：以世界点 (waX, waY) 为锚，新视位钳制到平移边界。
+@impure
+fun zoomOnce(geo: Any, viewS: Rat, viewX: Rat, viewY: Rat, waX: Rat, waY: Rat, factor: Rat): Rat {
+    var ns: Rat = clampS((viewS * factor), ZOOM_MIN(), ZOOM_MAX())
+    @mut var r: Rat = viewS
+    if (ns != viewS) {
+        var nX: Rat = zoomViewXAt(viewS, viewX, waX, ns)
+        var nY: Rat = zoomViewYAt(viewS, viewY, waY, ns)
+        nX = clampP(nX, panMinX(ns), panMaxX(ns))
+        nY = clampP(nY, panMinY(ns), panMaxY(ns))
+        r = ns
+    }
+    return r
+}
+
+// 屏幕坐标（无相机系）-> 世界，命中判定用。
+fun hitWorldX(viewS: Rat, viewX: Rat, s: Rat): Rat = worldXOf(viewS, viewX, s)
+fun hitWorldY(viewS: Rat, viewY: Rat, s: Rat): Rat = worldYOf(viewS, viewY, s)
+
+// 捏合距离/中点（前两个活跃触点；touch* 是桥 op，故为 @impure）。
+@impure
+fun pinchDist(): Rat = distAbs(touchX(0), touchX(1)) + distAbs(touchY(0), touchY(1))
+@impure
+fun pinchMidX(): Rat = (touchX(0) + touchX(1)) / 2.0
+@impure
+fun pinchMidY(): Rat = (touchY(0) + touchY(1)) / 2.0
+
+@impure
+fun runMap(): Null {
+    var geo: Any = mapLoad(mapGeoJson())
+    var n: Nat = mapProvCount(geo)
+    var bg: Any = rectAdd(VIEW_W(), VIEW_H(), 0.0, 0.0, COL_BG())
+    objTag(bg, "ui")
+    // 顶栏：fixed + z=10 固定屏幕坐标、盖在省份之上，底色条挡住放大后探入的地图
+    var tbar: Any = objAdd()
+    unchecked objUse(tbar, compRect(VIEW_W(), TITLE_H()))
+    unchecked objUse(tbar, compPos(0.0, 0.0))
+    unchecked objUse(tbar, compColorHex(COL_BG()))
+    unchecked objUse(tbar, compFixed())
+    unchecked objUse(tbar, compZ(10.0))
+    unchecked objTag(tbar, "ui")
+    var title: Any = addTextT(titleText(), 14.0, 8.0, 18.0, COL_TITLE(), "ui", true)
+    var label: Any = addTextT(hintLabel(), 300.0, 13.0, 15.0, COL_SUB(), "ui", true)
+    @mut var sel: Int = -1
+    @mut var viewS: Rat = 1.0
+    @mut var viewX: Rat = CTR_X()
+    @mut var viewY: Rat = CTR_Y()
+    @mut var pressX: Rat = 0.0
+    @mut var pressY: Rat = 0.0
+    @mut var pressed: Bool = false
+    @mut var moved: Bool = false
+    @mut var lastX: Rat = 0.0
+    @mut var lastY: Rat = 0.0
+    @mut var tAnchorX: Rat = 0.0
+    @mut var tAnchorY: Rat = 0.0
+    @mut var tLastX: Rat = 0.0
+    @mut var tLastY: Rat = 0.0
+    @mut var tMoved: Bool = false
+    @mut var tActive: Bool = false
+    @mut var pinPrev: Rat = 0.0
+    renderProvs(geo, n, -1)
+    applyView(viewS, viewX, viewY)
+    // 滚轮缩放（以指针为锚；deltaY 正=缩小），缩放后钳制视位。
+    onScroll { dy =>
+        var f: Rat = if (dy > 0.0) (1.0 / ZOOM_STEP()) else ZOOM_STEP()
+        var gx: Rat = hitWorldX(viewS, viewX, mousePosX())
+        var gy: Rat = hitWorldY(viewS, viewY, mousePosY())
+        var ns: Rat = zoomOnce(geo, viewS, viewX, viewY, gx, gy, f)
+        if (ns != viewS) {
+            viewS = ns
+            viewX = clampP(viewX, panMinX(ns), panMaxX(ns))
+            viewY = clampP(viewY, panMinY(ns), panMaxY(ns))
+            applyView(ns, viewX, viewY)
+        }
+    }
+    // 触屏：单指拖拽平移、单指轻点选中、双指捏合缩放（锚=双指中点）。
+    onTouchStart { _e => if (touchCount() == 1) {
+        tAnchorX = touchX(0)
+        tAnchorY = touchY(0)
+        tLastX = tAnchorX
+        tLastY = tAnchorY
+        tMoved = false
+        tActive = true
+    } else if (touchCount() == 2) { pinPrev = pinchDist() } }
+    onTouchMove { _e => if (touchCount() == 2) {
+        if (pinPrev > 0.0) {
+            var d: Rat = pinchDist()
+            if (d > 0.0) {
+                var mx: Rat = hitWorldX(viewS, viewX, pinchMidX())
+                var my: Rat = hitWorldY(viewS, viewY, pinchMidY())
+                var ns2: Rat = clampS((viewS * (d / pinPrev)), ZOOM_MIN(), ZOOM_MAX())
+                if (ns2 != viewS) {
+                    viewX = zoomViewXAt(viewS, viewX, mx, ns2)
+                    viewY = zoomViewYAt(viewS, viewY, my, ns2)
+                    viewX = clampP(viewX, panMinX(ns2), panMaxX(ns2))
+                    viewY = clampP(viewY, panMinY(ns2), panMaxY(ns2))
+                    viewS = ns2
+                    applyView(ns2, viewX, viewY)
+                }
+            }
+            pinPrev = d
+        }
+    } else if (touchCount() == 1) {
+        var tx: Rat = touchX(0)
+        var ty: Rat = touchY(0)
+        var dx: Rat = distAbs(tx, tAnchorX)
+        var dy2: Rat = distAbs(ty, tAnchorY)
+        if ((!tMoved) && ((dx > DRAG_THRESHOLD()) || (dy2 > DRAG_THRESHOLD()))) { tMoved = true }
+        if (tMoved) {
+            viewX = panXOf(viewS, viewX, (tx - tLastX))
+            viewY = panYOf(viewS, viewY, (ty - tLastY))
+            applyView(viewS, viewX, viewY)
+        }
+        tLastX = tx
+        tLastY = ty
+    } }
+    onTouchEnd { _e => {
+        if (touchCount() < 2) { pinPrev = 0.0 }
+        if (touchCount() == 1) {
+            // 双指松开一只：剩余手指重置锚点，继续单指平移
+            tAnchorX = touchX(0)
+            tAnchorY = touchY(0)
+            tLastX = tAnchorX
+            tLastY = tAnchorY
+            tMoved = false
+            tActive = true
+        }
+        if (touchCount() == 0) {
+            if (tActive && (!tMoved)) {
+                sel = selectAt(geo, n, label, sel, hitWorldX(viewS, viewX, tAnchorX), hitWorldY(viewS, viewY, tAnchorY))
+            }
+            tActive = false
+        }
+    } }
+    // 鼠标：按下记起点；移动过阈值改平移镜头；松手未移动才算点击选中。
+    onMouseDown("left") { _e => if (!pressed) {
+        pressed = true
+        moved = false
+        pressX = mousePosX()
+        pressY = mousePosY()
+        lastX = pressX
+        lastY = pressY
+    } }
+    onMouseMove { _m => if (pressed) {
+        var mx: Rat = mousePosX()
+        var my: Rat = mousePosY()
+        var dx: Rat = distAbs(mx, pressX)
+        var dy3: Rat = distAbs(my, pressY)
+        if ((!moved) && ((dx > DRAG_THRESHOLD()) || (dy3 > DRAG_THRESHOLD()))) { moved = true }
+        if (moved) {
+            viewX = panXOf(viewS, viewX, (mx - lastX))
+            viewY = panYOf(viewS, viewY, (my - lastY))
+            applyView(viewS, viewX, viewY)
+        }
+        lastX = mx
+        lastY = my
+    } }
+    onMouseRelease("left") { _e => if (pressed) {
+        if (!moved) {
+            sel = selectAt(geo, n, label, sel, hitWorldX(viewS, viewX, pressX), hitWorldY(viewS, viewY, pressY))
+        }
+        pressed = false
+    } }
+    null
+}
+
+@impure
+fun main(): Null {
+    // 与剧本列表 demo 同布局策略：横屏 letterbox 保比例，竖屏 stretch 铺满（CSS 旋转）。
+    var lb: Bool = winWidth() >= winHeight()
+    gameStartFit(960, 540, lb, false)
+    sceneAdd("main") { _e => runMap() }
+    sceneGo("main")
+    null
+}

@@ -1,0 +1,70 @@
+// map-logic.subl —— 中国地图 Demo 纯逻辑层（几何/颜色/文案常量 + 派生计算）
+// 运行侧见 map-main.subl；数据见 map-data.subl（经纬度已映射到 960x540 世界）。
+
+// ---------- 画布与布局 ----------
+fun VIEW_W(): Rat = 960.0
+fun VIEW_H(): Rat = 540.0
+fun TITLE_H(): Rat = 36.0
+
+// ---------- 颜色 ----------
+// 省份填充：亮冷灰（tint 乘在白底精灵上即得该灰；黑边在任何 tint 下保持黑）。
+// 取亮灰而非蓝色：深底（#101820）上对比清晰、与选中琥珀金（暖色）拉开色相。
+fun FILL_NORMAL(): Str = "#8A92A0"
+fun FILL_SEL(): Str = "#FFC107"
+fun COL_BG(): Str = "#101820"
+fun COL_TITLE(): Str = "#F0F4F8"
+fun COL_SUB(): Str = "#8FA3B8"
+
+// ---------- 相机（自由缩放） ----------
+// 视口中心（逻辑画布坐标）与缩放上下限：下限=fit 初始（1.0，整图入屏），
+// 上限让港澳这种 ~3px 小地块放到 ~36px 可点。
+fun CTR_X(): Rat = 480.0
+fun CTR_Y(): Rat = 270.0
+fun ZOOM_MIN(): Rat = 1.0
+fun ZOOM_MAX(): Rat = 12.0
+fun ZOOM_STEP(): Rat = 1.15
+
+// ---------- 交互阈值 ----------
+// 按下后位移超过该值视为拖拽，不算点击（与剧本列表 demo 同一套路）。
+fun DRAG_THRESHOLD(): Rat = 8.0
+
+// ---------- 文案 ----------
+fun titleText(): Str = "中国行政区划"
+fun hintLabel(): Str = "点击任一省份查看名称"
+fun selLabel(name: Str): Str = concat("已选：", name)
+
+// ---------- 相机数学（纯） ----------
+// 注意：SfG 的 `-` 与 `/` 混排优先级非直觉（a-b/c 会编译为 (a-b)/c），全部显式括号。
+fun screenXOf(viewS: Rat, viewX: Rat, w: Rat): Rat = (((w - viewX) * viewS) + CTR_X())
+fun screenYOf(viewS: Rat, viewY: Rat, w: Rat): Rat = (((w - viewY) * viewS) + CTR_Y())
+// 屏幕 -> 世界（命中判定用：mapHitProv 吃世界坐标）。
+fun worldXOf(viewS: Rat, viewX: Rat, s: Rat): Rat = (((s - CTR_X()) / viewS) + viewX)
+fun worldYOf(viewS: Rat, viewY: Rat, s: Rat): Rat = (((s - CTR_Y()) / viewS) + viewY)
+// 锚点缩放：世界点 wa 在缩放后保持原屏幕位置。
+fun zoomViewXAt(viewS: Rat, viewX: Rat, wa: Rat, ns: Rat): Rat = (wa - ((screenXOf(viewS, viewX, wa) - CTR_X()) / ns))
+fun zoomViewYAt(viewS: Rat, viewY: Rat, wa: Rat, ns: Rat): Rat = (wa - ((screenYOf(viewS, viewY, wa) - CTR_Y()) / ns))
+// 钳制（SfG 无内建 clamp：上下两支）。
+fun clampS(v: Rat, lo: Rat, hi: Rat): Rat = if (v < lo) lo else (if (v > hi) hi else v)
+
+// ---------- 平移（拖拽镜头；bbox 常量来自 map-data.subl） ----------
+fun MAP_W(): Rat = (MAP_X1() - MAP_X0())
+fun MAP_H(): Rat = (MAP_Y1() - MAP_Y0())
+// 视口可见世界宽高 = 画布宽高 / 缩放（显式括号：SfG 优先级坑）
+fun visW(viewS: Rat): Rat = (VIEW_W() / viewS)
+fun visH(viewS: Rat): Rat = (VIEW_H() / viewS)
+// 软钳制：地图至少 30% 留在视口内（即最多滑出 70%）
+fun panMinX(viewS: Rat): Rat = ((MAP_X0() + (MAP_W() * 0.3)) - (visW(viewS) / 2.0))
+fun panMaxX(viewS: Rat): Rat = ((MAP_X1() - (MAP_W() * 0.3)) + (visW(viewS) / 2.0))
+fun panMinY(viewS: Rat): Rat = ((MAP_Y0() + (MAP_H() * 0.3)) - (visH(viewS) / 2.0))
+fun panMaxY(viewS: Rat): Rat = ((MAP_Y1() - (MAP_H() * 0.3)) + (visH(viewS) / 2.0))
+fun clampP(v: Rat, lo: Rat, hi: Rat): Rat = if (v < lo) lo else (if (v > hi) hi else v)
+// 屏幕位移 -> 世界位移（除以当前缩放）再钳制
+fun panXOf(viewS: Rat, viewX: Rat, dx: Rat): Rat = clampP((viewX - (dx / viewS)), panMinX(viewS), panMaxX(viewS))
+fun panYOf(viewS: Rat, viewY: Rat, dy: Rat): Rat = clampP((viewY - (dy / viewS)), panMinY(viewS), panMaxY(viewS))
+
+// ---------- 数值派生 ----------
+// 取两数差的绝对值（Rat 无内建 abs 时避免负数比较分支）。
+fun distAbs(a: Rat, b: Rat): Rat = if (a > b) (a - b) else (b - a)
+
+// 点击命中 → 新选中下标（Int，-1 保持原选中）。
+fun nextSel(hit: Int, sel: Int): Int = if (hit < 0) sel else hit

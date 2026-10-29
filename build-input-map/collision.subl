@@ -1,0 +1,13 @@
+// collision.subl —— 碰撞（game doc/游戏库.md §碰撞）
+//
+// 碰撞基于 area 组件：参与检测的双方都必须带 area（可用 sprite.subl 的 objAddArea 补上）。
+// 标签（tag）是碰撞查询的主键：对象 Constructor 里 compTag("enemy") 或事后 objTag(o, "enemy")。
+
+// 对象与带某标签的对象碰撞时触发（每次接触开始）。回调参数为对方对象（Any）。
+@game @host @impure fun objOnCollide(o: Any, tag: Str, body: (Any) => Null): Null
+// 瞬时判定：两对象当前是否重叠（均需 area）。
+@game @host @impure fun objIsColliding(a: Any, b: Any): Bool
+// 按标签查全部对象（返回数组化 List：JS 数组，元素为对象 Any）。
+@game @host @impure fun objsByTag(t: Str): List[Any]
+// 按标签批量销毁。
+@game @host @impure fun objsDestroyTag(t: Str): Null
