@@ -144,6 +144,17 @@ fun builtinimpure(name: String): FunDecl? = when (name) {
         listOf(Param("src", namedT("Channel", listOf(namedT("T")))),
                Param("dst", namedT("Channel", listOf(namedT("T"))))), emptyList(),
         namedT("Null"), emptyList(), null)
+    // t84（语言服务&解释器协作）：脚本求值内建——@root 无体声明，宿主 Kotlin 解释器经 __subl.call 桥实现。
+    // sublEval 求值表达式/脚本片段并返回值（泛型 T 由调用点反推期望类型，宿主按 JS 值形态装回）；
+    // sublRun 装载声明并执行 main。两者 @impure（宿主副作用）且会失败——按 readFile 先例包
+    // Result[_, Str]（语言错误处理哲学：显式错误值，不把异常抛进宿主边界）。
+    // ⚠ 签名须与 core/script/script.subl 的 @root 声明严格一致（挂载时用户声明优先于本表回退）。
+    "sublEval" -> FunDecl("sublEval", listOf("impure"), listOf(TypeParam("T", null)),
+        listOf(Param("source", namedT("Str"))), emptyList(),
+        namedT("Result", listOf(namedT("T"), namedT("Str"))), emptyList(), null)
+    "sublRun" -> FunDecl("sublRun", listOf("impure"), emptyList(),
+        listOf(Param("source", namedT("Str"))), emptyList(),
+        namedT("Result", listOf(namedT("Null"), namedT("Str"))), emptyList(), null)
     else -> null
 }
 
@@ -291,6 +302,8 @@ val ROOT_WHITELIST: Set<String> = setOf(
     "collectToList", "collectCount", "collectAll",
     "withMutex", "bumpCounter", "bumpPair",
     "channelFromList", "sendAll", "channelDrain", "channelPipe",
+    // t84：脚本求值内建（sublEval/sublRun）——@root 无体，宿主 Kotlin 解释器经 __subl.call 桥实现（全 target）
+    "sublEval", "sublRun",
     // builtinPure：元组 / 字符串（P1 + v2.0 补全）/ 浮点（P10）/ Math（v2.0 补全）/ JSON（v2.0）
     "emptyTuple", "singleTuple",
     "concat", "length", "charAt", "substring", "strCmp", "toStr", "parseNat",

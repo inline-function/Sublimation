@@ -270,4 +270,11 @@ class DiagCoverageTest {
         assertTrue(has("@root @impure @async fun sendAll[T](ch: Channel[T], xs: List[T]): Null", "H-ROOT-BUILTIN"))
         assertTrue(has("@root @impure @async fun channelPipe[T](src: Channel[T], dst: Channel[T]): Null", "H-ROOT-BUILTIN"))
     }
+
+    // ---------- t84（语言服务&解释器协作）：脚本求值内建白名单 ----------
+
+    @Test fun `H-ROOT-BUILTIN t84 脚本求值内建白名单（sublEval sublRun）`() {
+        assertTrue(has("@root @impure fun sublEval[T](source: Str): Result[T, Str]", "H-ROOT-BUILTIN"))
+        assertTrue(has("@root @impure fun sublRun(source: Str): Result[Null, Str]", "H-ROOT-BUILTIN"))
+    }
 }

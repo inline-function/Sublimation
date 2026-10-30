@@ -322,6 +322,8 @@ private var bridgeFnCounter = 0
         // 视图变异预扫描：AssignStmt 的字段命中任一 @view 结构体 → 登记深拷贝留痕，
         // 保证下方 __dc 助手注入（生成阶段的 viewMutation 留痕晚于注入判定）。
         val viewMutationUsed = units.any { (_, fa) -> viewMutationPreScan(fa) }
+        // t84：脚本求值内建（sublEval/sublRun）调用点预扫描——决定是否注入 __subl.call 兜底桩
+        val scriptEvalUsed = units.any { (_, fa) -> scriptEvalPreScan(fa) }
                 // 安卓桥接兜底（android doc/安卓标准库.md）：仅在用到 @android 内建时注入。
         // node/桌面：log 打到 console，其余空操作；webview 内由原生注入的 __dshAndroid 接管。
         if (androidUsed) {
@@ -370,6 +372,16 @@ private var bridgeFnCounter = 0
             line("  const o = {};")
             line("  for (const k in v) o[k] = __dc(v[k]);")
             line("  return o;")
+            line("};")
+        }
+        // t84：脚本求值内建（sublEval/sublRun）宿主桥兜底桩——全 target 生效（宿主已注册 __subl.call
+        // 则自动让位：typeof 判定在前）。node 目标默认无 Kotlin 宿主，未注册时给清晰报错而非
+        // ReferenceError/TypeError（"undefined.call" 对用户毫无信息量）。
+        if (scriptEvalUsed) {
+            line("if (!globalThis.__subl) globalThis.__subl = {};")
+            line("if (typeof globalThis.__subl.call !== \"function\") globalThis.__subl.call = (op, args) => {")
+            line("  throw new Error(\"[Sublimation] 宿主未注册 __subl.call（op=\" + op + \"）：\" +")
+            line("    \"sublEval/sublRun 需要 Kotlin 宿主解释器桥——CLI runner 或 IDE 注册 __subl.call 后可用\");")
             line("};")
         }
         // v2.0 异步（异步 §5.4）：Channel 小运行时——唯一运行时组件（缓冲/握手/关闭状态）。
@@ -632,6 +644,65 @@ private fun needEqPreScan(file: FileAst): Boolean {
             is FunDecl -> walkExprEq(d.body)
             is ClassDecl -> d.members.forEach { walkExprEq(it.body) }
             is ImplDecl -> d.members.forEach { walkExprEq(it.body) }
+            else -> {}
+        }
+    }
+
+    // ---------- t84：脚本求值调用点预扫描（镜像 needEqPreScan 的走法，命中 Platform.EVAL_OPS 名字） ----------
+    private var scriptEvalHit = false
+    private fun scriptEvalPreScan(file: FileAst): Boolean {
+        scriptEvalHit = false
+        for (e in file.entries) when (e) {
+            is DeclEntry -> walkDeclScriptEval(e.decl)
+            is StmtEntry -> walkStmtScriptEval(e.stmt)
+        }
+        return scriptEvalHit
+    }
+
+    private fun walkExprScriptEval(e: Expr?) {
+        if (e == null || scriptEvalHit) return
+        when (e) {
+            is CallExpr -> {
+                val cn = (e.callee as? NameRef)?.name
+                if (cn != null && cn in Platform.EVAL_OPS) scriptEvalHit = true
+                walkExprScriptEval(e.callee); e.args.forEach { walkExprScriptEval(it) }
+                e.namedArgs.values.forEach { walkExprScriptEval(it) }
+            }
+            is InstExpr -> { walkExprScriptEval(e.target); e.terms.forEach { walkExprScriptEval(it) } }
+            is SymbolCallExpr -> e.args.forEach { walkExprScriptEval(it) }
+            is BinExpr -> { walkExprScriptEval(e.left); walkExprScriptEval(e.right) }
+            is UniExpr -> walkExprScriptEval(e.operand)
+            is FieldExpr -> walkExprScriptEval(e.target)
+            is LambdaExpr -> walkExprScriptEval(e.body)
+            is AnonFunExpr -> walkExprScriptEval(e.body)
+            is BlockExpr -> e.stmts.forEach { walkStmtScriptEval(it) }
+            is IfExpr -> { walkExprScriptEval(e.cond); walkExprScriptEval(e.thenBlock); e.elseBlock?.let { walkExprScriptEval(it) } }
+            is WhenExpr -> { e.subject?.let { walkExprScriptEval(it) }; e.arms.forEach { walkExprScriptEval(it.body); walkExprScriptEval(it.guard); it.cond?.let { c -> walkExprScriptEval(c) } } }
+            is TupleExpr -> e.items.forEach { walkExprScriptEval(it) }
+            is QuantExpr -> walkExprScriptEval(e.body)
+            is VarExpr -> walkExprScriptEval(e.value)
+            is ByExpr -> { walkExprScriptEval(e.target); e.props.forEach { walkExprScriptEval(it) } }
+            is StructCtorExpr -> e.assigns.forEach { walkExprScriptEval(it.second) }
+            else -> {}
+        }
+    }
+
+    private fun walkStmtScriptEval(s: Stmt) {
+        when (s) {
+            is VarStmt -> walkExprScriptEval(s.value)
+            is AssignStmt -> { walkExprScriptEval(s.target); walkExprScriptEval(s.value) }
+            is ExprStmt -> walkExprScriptEval(s.expr)
+            is UncheckedStmt -> walkStmtScriptEval(s.inner)
+            is ReturnStmt -> walkExprScriptEval(s.expr)
+            else -> {}
+        }
+    }
+
+    private fun walkDeclScriptEval(d: Decl) {
+        when (d) {
+            is FunDecl -> walkExprScriptEval(d.body)
+            is ClassDecl -> d.members.forEach { walkExprScriptEval(it.body) }
+            is ImplDecl -> d.members.forEach { walkExprScriptEval(it.body) }
             else -> {}
         }
     }
@@ -1230,6 +1301,12 @@ private fun needEqPreScan(file: FileAst): Boolean {
                 else -> call
             }
         }
+        // t84（语言服务&解释器协作）：脚本求值内建（sublEval/sublRun，@root 无体声明）——
+        // 实现是 Kotlin 宿主解释器、JS 产物里不存在（node 亦无法内联：解释器不在产物中），故与
+        // BRIDGE_OPS 不同：**全 target** 一律走宿主桥 __subl.call(op, args)；node 未注册宿主时由
+        // 预扫描注入的兜底桩给出清晰报错。用户同名带体函数照例让位（与 platformOp/@host 同约）。
+        if (name != null && name in Platform.EVAL_OPS && name !in userFns)
+            return bridgeCall(e, name)
         // t35（SfW Phase 1）：平台分派——非 node 目标的平台调用走宿主桥或（wasm）编译期拒绝。
         // node 分支（require('fs') 直连、process.argv、setTimeout 等）一律保持不变，向后兼容。
         // 宿主桥单入口：globalThis.__subl.call("<op>", [args...])——宿主按 op 实现（op 表见 Target.kt 的 Platform）。

@@ -53,6 +53,12 @@ object Platform {
         "readDir", "fileExists", "getArgs", "sleep",
     )
 
+    /** t84（语言服务&解释器协作）：脚本求值内建（sublEval/sublRun）——实现是 Kotlin 宿主解释器，
+     *  JS 产物里不存在（node 亦无法内联：解释器不在产物中），故与 BRIDGE_OPS 不同：
+     *  **全 target 统一**走宿主桥 __subl.call(op, args)。node 目标默认无宿主注册，
+     *  JsCodeGen 注入兜底桩给出清晰报错（而非 ReferenceError）。 */
+    val EVAL_OPS: Set<String> = setOf("sublEval", "sublRun")
+
     /** wasm 编译期拒绝的平台调用——无同步宿主调用通道。与 MODULE_AVAILABILITY 的 core/io 一致。 */
     val WASM_REJECTED: Set<String> = setOf(
         "readLine", "readFile", "writeFile", "appendFile", "readDir", "fileExists",

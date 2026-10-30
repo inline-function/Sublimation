@@ -171,4 +171,38 @@ class TargetCodeGenTest {
         val js = gen(src, Target.NODE)
         assertTrue(js.contains("x = 3;"), "else 块体赋值应生成真赋值语句: $js")
     }
+
+    // ---------- t84（语言服务&解释器协作）：脚本求值内建 sublEval/sublRun 走宿主桥 ----------
+
+    @Test fun `t84 sublEval 调用全 target 一律走宿主桥并注入兜底桩`() {
+        val src = "@impure fun main() { var r = sublEval(\"1+2\")\nprint(r) }"
+        for (t in Target.entries) {
+            val js = gen(src, t)
+            assertTrue(js.contains("globalThis.__subl.call(\"sublEval\", [\"1+2\"])"),
+                "sublEval 应经宿主桥调用（target=$t）: $js")
+            assertTrue(js.contains("宿主未注册 __subl.call"),
+                "应注入未注册宿主的兜底桩（target=$t）: $js")
+        }
+    }
+
+    @Test fun `t84 sublRun 调用经宿主桥`() {
+        val src = "@impure fun main() { var r = sublRun(\"@impure fun main() { print(1) }\")\nprint(r) }"
+        val js = gen(src, Target.NODE)
+        assertTrue(js.contains("globalThis.__subl.call(\"sublRun\", ["),
+            "sublRun 应经宿主桥调用: $js")
+        assertFalse(js.contains("require('fs')"), "sublRun 与 node fs 直连无关: $js")
+    }
+
+    @Test fun `t84 无脚本求值调用不注入兜底桩`() {
+        val src = "@impure fun main() { print(1) }"
+        val js = gen(src, Target.NODE)
+        assertFalse(js.contains("宿主未注册 __subl.call"), "未用到 sublEval/sublRun 不应注入桩: $js")
+    }
+
+    @Test fun `t84 用户同名带体函数让位不走桥`() {
+        val src = "@impure fun main() { var r = sublEval(\"x\")\nprint(r) }\nfun sublEval(source: Str): Str = source"
+        val js = gen(src, Target.NODE)
+        assertFalse(js.contains("__subl.call(\"sublEval\""), "用户带体函数优先，不应走宿主桥: $js")
+        assertTrue(js.contains("sublEval("), "用户函数调用应直发: $js")
+    }
 }
