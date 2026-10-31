@@ -1,0 +1,17 @@
+// core.script —— 脚本求值内建声明（t84：Subs 解释器宿主桥）
+// 依赖：core.collection（Result）。
+// 实现为 Kotlin 宿主解释器（interpreter 模块 SubsInterpreter）：编译产物在调用点经
+// globalThis.__subl.call("sublEval"/"sublRun", [source]) 桥接宿主；未注册桥的环境回落
+// 到代码生成的兜底桩（Err）。与 Types.kt builtinImpure 表签名严格一致。
+// 两者 @impure：宿主副作用（求值/装载可 print）且会失败——按 readFile 先例包 Result，
+// 显式错误值，不把异常抛进宿主边界。
+
+// ---------- 表达式/脚本片段求值 ----------
+// 泛型 T 由调用点反推期望类型：sublEval("1 + 2") 当 Nat 用；宿主按编译侧值形态装回。
+@impure
+@root fun sublEval[T](source: Str): Result[T, Str]
+
+// ---------- 装载声明并执行 main ----------
+// 装载 source 声明并执行 main()；无 main 时返回 Ok(Null)。
+@impure
+@root fun sublRun(source: Str): Result[Null, Str]

@@ -1,5 +1,7 @@
 package sugared.functor.subs
 
+import kotlin.math.pow
+
 // =====================================================================================
 // SubsInterpreter —— Sublimation 单文件解释器（t84）
 // =====================================================================================
@@ -288,8 +290,7 @@ internal class Lexer(private val src: String, private val fileName: String) {
             '[' -> K.LBRACKET; ']' -> K.RBRACKET
             '{' -> K.LBRACE; '}' -> K.RBRACE
             ',' -> K.COMMA; ';' -> K.SEMI; ':' -> K.COLON; '.' -> K.DOT
-            '@' -> K.AT; '\\' -> K.BACKSLASH; '
- -> K.DOLLAR; '#' -> K.HASH
+            '@' -> K.AT; '\\' -> K.BACKSLASH; '$' -> K.DOLLAR; '#' -> K.HASH
             '+' -> K.PLUS; '-' -> K.MINUS; '*' -> K.STAR; '/' -> K.SLASH; '%' -> K.PERCENT; '^' -> K.POW
             '=' -> K.ASSIGN; '<' -> K.LT; '>' -> K.GT
             '&' -> K.AMP; '|' -> K.PIPE; '!' -> K.BANG
@@ -306,8 +307,7 @@ internal class Lexer(private val src: String, private val fileName: String) {
         }
         adv()
         // $n 参数引用（决策 65）：$ 紧贴数字粘连为一个 token
-        if (c == '
- && i < src.length && src[i] in '0'..'9') {
+        if (c == '$' && i < src.length && src[i] in '0'..'9') {
             val sb = StringBuilder("$")
             while (i < src.length && src[i] in '0'..'9') { sb.append(src[i]); adv() }
             return K.DOLLAR to sb.toString()
@@ -368,13 +368,11 @@ internal class Lexer(private val src: String, private val fileName: String) {
         val sb = StringBuilder()
         while (i < src.length && (src[i].isLetterOrDigit() || src[i] == '_')) { sb.append(src[i]); adv() }
         // $ 段粘连（注解处理器合成名 recomposion$Box$1）：内部 $ 后随字母/_ 续读为同 token
-        while (i < src.length && src[i] == '
- && i + 1 < src.length &&
+        while (i < src.length && src[i] == '$' && i + 1 < src.length &&
             (src[i + 1].isLetter() || src[i + 1] == '_')) {
             sb.append(src[i]); adv()
             while (i < src.length && (src[i].isLetterOrDigit() || src[i] == '_')) { sb.append(src[i]); adv() }
-            if (i < src.length && src[i] == '
- && i + 1 < src.length && src[i + 1] in '0'..'9') {
+            if (i < src.length && src[i] == '$' && i + 1 < src.length && src[i + 1] in '0'..'9') {
                 sb.append(src[i]); adv()
                 while (i < src.length && src[i] in '0'..'9') { sb.append(src[i]); adv() }
             }
@@ -465,7 +463,9 @@ internal sealed class P {
 internal class Arm(val pattern: P, val guard: E?, val body: E, val cond: E?)
 
 internal class ParseFailure(fileName: String, line: Int, col: Int, message: String) :
-    RuntimeException("[语法][$fileName:$line:$col] $message")
+    RuntimeException("[语法][$fileName:$line:$col] $message") {
+    constructor(fileName: String, t: Tk, message: String) : this(fileName, t.line, t.col, message)
+}
 
 internal class Parser(private val toks: List<Tk>, private val fileName: String, private val scriptMode: Boolean = false) {
     private var pos = 0
@@ -489,7 +489,7 @@ internal class Parser(private val toks: List<Tk>, private val fileName: String, 
             K.IDENT, K.SYMBOL,
             K.PLUS, K.MINUS, K.STAR, K.SLASH, K.PERCENT,
             K.EQ, K.NEQ, K.LE, K.GE, K.AMP, K.PIPE,
-            K.IFF, K.LT, K.GT, K.IN,
+            K.IFF, K.LT, K.GT,
             -> next().text
             else -> throw ParseFailure(fileName, t, "标识符")
         }
@@ -557,7 +557,7 @@ internal class Parser(private val toks: List<Tk>, private val fileName: String, 
         val params = if (peek(K.LPAREN)) parseParams() else emptyList()
         var preps: List<E> = emptyList()
         if (peek(K.LT)) {
-            preps = if (constraintListAhead()) emptyList().also { parseConstraintList() } else parseAngleList()
+            preps = if (constraintListAhead()) { parseConstraintList(); emptyList() } else parseAngleList()
         }
         var ret: Ty? = null
         var posts: List<E> = emptyList()
@@ -570,7 +570,7 @@ internal class Parser(private val toks: List<Tk>, private val fileName: String, 
             peek(K.ASSIGN) && toks.getOrNull(pos + 1)?.kind == K.LBRACE ->
                 throw ParseFailure(fileName, toks[pos + 1], "函数体不能 = 后接花括号混写：单表达式去掉花括号，块体去掉等号")
             peek(K.ASSIGN) -> { pos++; parseExpr(angle = false) }
-            peek(K.LBRACE) -> E.Block(parseBlock())
+            peek(K.LBRACE) -> parseBlock()
             else -> null
         }
         return D.Fun(name, anns, params, preps, ret, posts, body)
@@ -780,7 +780,7 @@ internal class Parser(private val toks: List<Tk>, private val fileName: String, 
         if (peek(K.LBRACKET)) parseTheory()
         if (peek(K.COLON)) {   // 父类型类列表
             pos++
-            while (true) { parseNamedType(); if (peek(K.COMMA)) { pos++; if (isCloserNext()) break; continue } break }
+            while (true) { parseNamedType(); if (peek(K.COMMA)) { pos++; if (isCloserNext()) break; continue }; break }
         }
         if (!peek(K.LBRACE)) return D.PropDef(name)
         at(K.LBRACE)
@@ -802,7 +802,7 @@ internal class Parser(private val toks: List<Tk>, private val fileName: String, 
             throw ParseFailure(fileName, cur(), "struct 体是参数列表，请改写为 $name(字段: 类型 = 默认值)")
         if (!peek(K.LPAREN)) {
             if (isCompose && peek(K.LBRACE)) return parseComposeBlock(name, anns, emptyList())
-            if (isCompose && cur().kind == K.ASSIGN) { pos++; if (exprStarts()) return D.Struct(name, anns, emptyList(), emptyList(), parseExpr(angle = false)) ; pos-- }
+            if (isCompose && cur().kind == K.ASSIGN) { pos++; if (exprStarts()) { parseExpr(angle = false); return D.Struct(name, anns, emptyList(), emptyList()) }; pos-- }
             val props = if (peek(K.LT)) parseAngleList() else emptyList()
             return D.Struct(name, anns, emptyList(), props)
         }
@@ -811,7 +811,7 @@ internal class Parser(private val toks: List<Tk>, private val fileName: String, 
         if (isCompose && peek(K.LBRACE)) return parseComposeBlock(name, anns, fields)
         if (isCompose && cur().kind == K.ASSIGN) {
             val save = pos; next()
-            if (exprStarts()) return D.Struct(name, anns, fields, props, parseExpr(angle = false))
+            if (exprStarts()) { parseExpr(angle = false); return D.Struct(name, anns, fields, props) }
             pos = save
         }
         return D.Struct(name, anns, fields, props)
@@ -854,7 +854,7 @@ internal class Parser(private val toks: List<Tk>, private val fileName: String, 
         at(K.LPAREN)
         var n = 0
         if (!peek(K.RPAREN)) {
-            while (true) { parseType(); n++; if (peek(K.COMMA)) { pos++; if (peek(K.RPAREN)) break; continue } break }
+            while (true) { parseType(); n++; if (peek(K.COMMA)) { pos++; if (peek(K.RPAREN)) break; continue }; break }
         }
         at(K.RPAREN)
         return n
@@ -1053,8 +1053,8 @@ internal class Parser(private val toks: List<Tk>, private val fileName: String, 
                 if (isCtorForm(pos + 1)) {
                     if (ifIsCond) {
                         // ifis 智能解构哨兵：条件位的 a is Ctor(...) 记为 pending，
-                        // 由 parseIf 脱糖为 when（S-11：复用全套模式匹配）
-                        pos++
+                        // 由 parseIf 脱糖为 when（S-11：复用全套模式匹配）；
+                        // parsePattern 自身消费 is，此处不可前移 pos
                         val pat = parsePattern()
                         ifIsPending = left to pat
                         return left
@@ -1130,8 +1130,7 @@ internal class Parser(private val toks: List<Tk>, private val fileName: String, 
                     e = if (e is E.Name && e.name.first().isUpperCase())
                         E.Name(e.name + "::" + member) else E.FunRef(e, member)
                 }
-                // 字段访问：点前无空格（a.b），或点在行首（换行链 
- .map）
+                // 字段访问：点前无空格（a.b），或点在行首的换行链式调用（a\n .map）
                 t.kind == K.DOT && (!t.space || toks.getOrNull(pos - 1)?.line != t.line) -> {
                     pos++
                     e = E.Field(e, nameToken())
@@ -1184,19 +1183,13 @@ internal class Parser(private val toks: List<Tk>, private val fileName: String, 
     private fun parseStringLit(): E {
         val t = cur(); pos++
         val raw = t.text
-        if ('
-
-
- !in raw) return E.StrL(raw)
+        if ('$' !in raw) return E.StrL(raw)
         val parts = ArrayList<E>()
         val sb = StringBuilder()
         var i = 0
         while (i < raw.length) {
             val c = raw[i]
-            if (c == '
-
-
- && i + 1 < raw.length) {
+            if (c == '$' && i + 1 < raw.length) {
                 val nx = raw[i + 1]
                 if (nx == '{') {
                     val j = matchInterpBrace(raw, i + 1)
@@ -1248,7 +1241,7 @@ internal class Parser(private val toks: List<Tk>, private val fileName: String, 
             t.kind == K.STR -> parseStringLit()
             t.kind == K.DOLLAR -> {
                 pos++
-                if (t.text.length > 1) throw ParseFailure(fileName, t, "参数引用 $n 只能在前后件/不变量中使用")
+                if (t.text.length > 1) throw ParseFailure(fileName, t, "参数引用 \$n 只能在前后件/不变量中使用")
                 E.NoopE
             }
             t.kind == K.TOP -> { pos++; E.NoopE }
@@ -1325,7 +1318,7 @@ internal class Parser(private val toks: List<Tk>, private val fileName: String, 
         if (peek(K.LT)) parseAngleList()
         val body: E? = when {
             peek(K.ASSIGN) -> { pos++; parseExpr(angle = false) }
-            peek(K.LBRACE) -> E.Block(parseBlock())
+            peek(K.LBRACE) -> parseBlock()
             else -> null
         }
         // 匿名函数（运行时按 Lambda 通道求值）
@@ -1349,9 +1342,9 @@ internal class Parser(private val toks: List<Tk>, private val fileName: String, 
                 ifIsPending = savedPending
                 val arms = ArrayList<Arm>()
                 val thenB = parseBranchBlock()
-                arms += Arm(pat, null, thenB, "")
-                if (peek(K.ELSE)) { pos++; arms += Arm(P.Else, null, parseBranchBlock(), "") }
-                return E.When(subj, null, arms, "")
+                arms += Arm(pat, null, thenB, null)
+                if (peek(K.ELSE)) { pos++; arms += Arm(P.Else, null, parseBranchBlock(), null) }
+                return E.When(subj, null, arms)
             }
             ifIsPending = savedPending
             val thenB = parseBranchBlock()
@@ -1428,12 +1421,12 @@ internal class Parser(private val toks: List<Tk>, private val fileName: String, 
                 guard = if (peek(K.IF)) { pos++; parseExpr(angle = false, stopArrow = true) } else null
             }
             at(K.DARROW)
-            arms += Arm(pat, guard, parseBranchBody(stopArrow = templateBase != null), "$al:$ac", cond)
+            arms += Arm(pat, guard, parseBranchBody(stopArrow = templateBase != null), cond)
             skipSemis()
             if (peek(K.COMMA)) pos++
         }
         at(K.RBRACE)
-        return E.When(subject, binding, arms, "$sl:$sc")
+        return E.When(subject, binding, arms)
     }
 
     /** 模式：is T [as x] / _ / else / 构造子解构 / 字面量 / 名字（绑定 or 零参构造）。 */
@@ -1701,7 +1694,7 @@ internal class StructMeta(val name: String, val fieldNames: List<String>,
 internal class MethodImpl(val selfTag: String, val trait: String?, val fn: D.Fun, val declFrame: Frame)
 
 /** 尾调用重定向：callFunction 抛出、invokeFunDecl 的蹦床循环捕获（防深递归栈溢出）。 */
-internal class TailCall(val fn: D.Fun, val args: List<V>) : RuntimeException()
+internal class TailCall(val fn: D.Fun, val args: List<V>, val declFrame: Frame) : RuntimeException()
 
 /** 函数体内的 return：最近的函数/lambda 边界捕获并作为返回值。 */
 internal class ReturnEx(val value: V) : RuntimeException()
@@ -1818,8 +1811,10 @@ internal class Interp(val out: (String) -> Unit = ::println) {
         val entry = frame.lookupFunEntry(name)
         if (entry != null) {
             val (fn, declFrame) = entry
-            val applied = bindParams(declFrame, fn.params, args, named)
-            if (tail && fn.body != null) throw TailCall(fn, applied)
+            // 实参补全（默认值/具名）须在与调用无关的草稿帧完成——bindParams 会把形参
+            // declareVar 进目标帧；直接写 declFrame 会污染共享根帧（后续调用覆盖形参）。
+            val applied = bindParams(Frame(null), fn.params, args, named)
+            if (tail && fn.body != null) throw TailCall(fn, applied, declFrame)
             return invokeFunDecl(fn, applied, declFrame)
         }
         // 内建/宿主函数（@root 名）：用户无同名定义时走内建
@@ -1834,7 +1829,7 @@ internal class Interp(val out: (String) -> Unit = ::println) {
             if (m != null) return invokeImplMethod(m, rec, args.drop(1), frame)
         }
         // 结构体构造子（位置实参形态：Point(1, 2)）
-        if (name in structs) return structCtor(name, emptyMap(), args, frame, pos)
+        if (name in structs) return structCtorValues(name, args)
         throw InterpError(pos, "未定义的函数「$name」")
     }
 
@@ -1848,18 +1843,33 @@ internal class Interp(val out: (String) -> Unit = ::println) {
         return ms.lastOrNull { it.selfTag == selfTag }
     }
 
-    private fun invokeImplMethod(m: MethodImpl, receiver: V, args: List<V>, frame: Frame): V {
-        val child = Frame(m.declFrame)
-        val ps = m.fn.params
-        child.declareVar(ps[0].name, receiver, "mut" in ps[0].anns, "ref" in ps[0].anns)
-        bindParams(child, ps.drop(1), args)
-        child.declareFun(m.fn)
-        return try { m.fn.body?.let { evalExpr(it, child, tail = false) } ?: V.Null }
-        catch (e: ReturnEx) { e.value }
+    private fun invokeImplMethod(m: MethodImpl, receiver0: V, args: List<V>, frame: Frame): V {
+        var recv = receiver0
+        var curArgs = args
+        while (true) {
+            val child = Frame(m.declFrame)
+            val ps = m.fn.params
+            child.declareVar(ps[0].name, recv, "mut" in ps[0].anns, "ref" in ps[0].anns)
+            bindParams(child, ps.drop(1), curArgs)
+            child.declareFun(m.fn, m.declFrame)   // 体内自递归（自由形态：接收子占首位）
+            try {
+                return m.fn.body?.let { evalExpr(it, child, tail = true) } ?: V.Null
+            } catch (tc: TailCall) {
+                if (tc.fn === m.fn) {
+                    // 尾调用实参含接收子（bindParams(fn.params, …) 的产物）：重排接收子与余参
+                    if (tc.args.isNotEmpty()) { recv = tc.args[0]; curArgs = tc.args.drop(1) } else curArgs = emptyList()
+                    continue
+                }
+                // 跨函数/跨方法尾调用：本帧丢弃直调（实参已含接收子位，invokeFunDecl 按全参数表绑定）
+                return invokeFunDecl(tc.fn, tc.args, tc.declFrame)
+            } catch (e: ReturnEx) {
+                return e.value
+            }
+        }
     }
 
     /** 执行函数体（蹦床：尾调用复用本帧，防栈爆）。 */
-    private fun invokeFunDecl(fn: D.Fun, args: List<V>, definingFrame: Frame): V {
+    internal fun invokeFunDecl(fn: D.Fun, args: List<V>, definingFrame: Frame): V {
         var cur = args
         while (true) {
             val child = Frame(definingFrame)
@@ -1869,7 +1879,7 @@ internal class Interp(val out: (String) -> Unit = ::println) {
                 return fn.body?.let { evalExpr(it, child, tail = true) } ?: V.Null
             } catch (tc: TailCall) {
                 if (tc.fn === fn) { cur = tc.args; continue }
-                throw tc
+                return invokeFunDecl(tc.fn, tc.args, tc.declFrame)
             } catch (e: ReturnEx) {
                 return e.value
             }
@@ -1894,7 +1904,6 @@ internal class Interp(val out: (String) -> Unit = ::println) {
         is V.Obj -> V.Obj(v.typeName, v.fields.mapValuesTo(LinkedHashMap()) { deepCopy(it.value) })
         else -> v   // Num/Str/Bool/Null/Fun/HostFn/HostObj/Range：透传
     }
-}
 
     // ==================== 求值 ====================
 
@@ -1903,7 +1912,7 @@ internal class Interp(val out: (String) -> Unit = ::println) {
             val v = evalExpr(s.value, frame, tail = false)
             val mutable = "mut" in s.anns
             val ref = "ref" in s.anns
-            val bound = bindCopy(v, ref, sourceIsRef(s.value, frame), ref, mutable, sourceIsMut(s.value, frame))
+            val bound = bindCopy(v, ref, sourceIsRef(s.value, frame), mutable, sourceIsMut(s.value, frame))
             if (s.destruct != null) {
                 // 元组解构 var (a, b) = e：分量绑定（编译侧 const [x, y] = e 同构）
                 val items = (bound as? V.Arr)?.items
@@ -1982,7 +1991,7 @@ internal class Interp(val out: (String) -> Unit = ::println) {
         }
         is E.VarE -> {
             val v = evalExpr(e.value, frame, tail = false)
-            val bound = bindCopy(v, "ref" in e.anns, sourceIsRef(e.value, frame), "ref" in e.anns, "mut" in e.anns, sourceIsMut(e.value, frame))
+            val bound = bindCopy(v, "ref" in e.anns, sourceIsRef(e.value, frame), "mut" in e.anns, sourceIsMut(e.value, frame))
             frame.declareVar(e.name, bound, "mut" in e.anns, "ref" in e.anns)
             bound
         }
@@ -1992,16 +2001,16 @@ internal class Interp(val out: (String) -> Unit = ::println) {
         "true" -> V.Bool(true)
         "false" -> V.Bool(false)
         "null" -> V.Null
-        else -> {
-            frame.lookupVar(name) ?: hostObjs[name]?.let { V.HostObj(name, it) }
-                ?: E.Name(name).let { ne ->
-                    val entry = frame.lookupFunEntry(name)
-                    if (entry != null) V.Fun { args -> invokeFunDecl(entry.first, args, entry.second) }
-                    else if (listCtorSet.contains(name) && name == "Nil") V.Arr(ArrayList())
-                    else throw InterpError("", "未定义的名字「$name」")
-                }
-        }
+        "Nil" -> if (name in listCtorSet) V.Arr(ArrayList()) else lookupOrFail(name, frame)
+        else -> lookupOrFail(name, frame)
     }
+
+    private fun lookupOrFail(name: String, frame: Frame): V =
+        frame.lookupVar(name) ?: hostObjs[name]?.let { V.HostObj(name, it) }
+            ?: frame.lookupFunEntry(name)?.let { (fn, declFrame) -> V.Fun { args -> invokeFunDecl(fn, args, declFrame) } }
+            ?: BUILTINS[name]?.let { V.Fun { args -> it(this, args, "<builtin:$name>") } }
+            ?: hostFns[name]?.let { V.Fun { args -> it(args) } }
+            ?: throw InterpError("", "未定义的名字「$name」")
 
     private fun invokeLambda(e: E.Lambda, args: List<V>, env: Frame): V {
         val child = Frame(env)
@@ -2021,7 +2030,7 @@ internal class Interp(val out: (String) -> Unit = ::println) {
         }
     }
 
-    private fun evalBlock(b: E.Block, frame: Frame, tail: Boolean): V? {
+    private fun evalBlock(b: E.Block, frame: Frame, tail: Boolean): V {
         var last: V? = null
         for ((i, s) in b.stmts.withIndex()) {
             last = evalStmt(s, frame, tail && i == b.stmts.lastIndex)
@@ -2047,15 +2056,17 @@ internal class Interp(val out: (String) -> Unit = ::println) {
                 val (a, b) = nums(l, r, op, pos)
                 V.Bool(when (op) { "<" -> a < b; "≤" -> a <= b; ">" -> a > b; else -> a >= b })
             }
-            "&", "∧" -> V.Bool(truthy(l) && truthy(r))
-            "|", "∨" -> V.Bool(truthy(l) || truthy(r))
+            "&", "∧" -> if (truthy(l)) r else l   // JS &&：左真得右值
+            "|", "∨" -> if (truthy(l)) l else r   // JS ||：左真得左值
+            // 命题位算符（编译侧 bin() 擦除为 true）：= : → ↔ <-> 等
+            "=", ":", "→", "↔", "<->", "->" -> V.Bool(true)
             "∈", "in" -> evalIn(l, r, pos)
             ".." -> {
                 val lo = num(l) ?: throw InterpError(pos, "区间下界需为数字")
                 val hi = num(r) ?: throw InterpError(pos, "区间上界需为数字")
                 V.Range(lo, hi)
             }
-            "^" -> { val (a, b) = nums(l, r, op, pos); V.Num(kotlin.math.pow(a, b)) }
+            "^" -> { val (a, b) = nums(l, r, op, pos); V.Num(a.pow(b)) }
             else -> throw InterpError(pos, "不支持中缀运算符「$op」（= / → / ↔ 是命题位运算，不参与运行时求值）")
         }
     }
@@ -2168,10 +2179,19 @@ internal class Interp(val out: (String) -> Unit = ::println) {
                 val meta = structs[name]!!
                 val cand = meta.funFields.firstOrNull()
                 if (cand != null)
-                    return structCtor(name, mapOf(cand to E.Block(emptyList())), argVals, frame, "", cand, argVals[0])
+                    return structCtorWithValue(name, cand, argVals[0])
+            }
+            // 值位名字优先：局部/全局变量遮蔽同名函数（JS 语义）
+            val local = frame.lookupVar(name)
+            if (local != null) {
+                return when (local) {
+                    is V.Fun -> local.fn(argVals)
+                    is V.HostFn -> local.fn(argVals)
+                    else -> throw InterpError("", "不可调用的值：$name")
+                }
             }
             // 结构体位置构造
-            if (name in structs) return structCtor(name, emptyMap(), argVals, frame, "")
+            if (name in structs) return structCtorValues(name, argVals)
             return callFunction(name, argVals, frame, "", namedVals, tail)
         }
         // lambda/函数值直接调用
@@ -2183,6 +2203,28 @@ internal class Interp(val out: (String) -> Unit = ::println) {
     }
 
     private val preludeCtors = setOf("Some", "None", "Ok", "Err")
+
+    /** 结构体构造（命名域注入 R5 尾随 lambda：唯一 funField 置给定值，其余按默认值）。 */
+    private fun structCtorWithValue(name: String, field: String, value: V): V {
+        val meta = structs[name] ?: throw InterpError("", "未定义的结构体/构造子「$name」")
+        val fields = LinkedHashMap<String, V>()
+        for (fn0 in meta.fieldNames) {
+            fields[fn0] = if (fn0 == field) value
+                else meta.defaults[fn0]?.let { evalExpr(it, root, tail = false) } ?: V.Null
+        }
+        return V.Obj(name, fields)
+    }
+
+    /** 结构体构造（实参已是值：callFunction 结构体名分支用；默认值在根帧求值）。 */
+    private fun structCtorValues(name: String, args: List<V>): V {
+        val meta = structs[name] ?: throw InterpError("", "未定义的结构体/构造子「$name」")
+        val fields = LinkedHashMap<String, V>()
+        args.forEachIndexed { i, v -> if (i < meta.fieldNames.size) fields[meta.fieldNames[i]] = v }
+        for (fn0 in meta.fieldNames) {
+            if (fn0 !in fields) fields[fn0] = meta.defaults[fn0]?.let { evalExpr(it, root, tail = false) } ?: V.Null
+        }
+        return V.Obj(name, fields)
+    }
 
     /** 结构体构造：命名赋值 + 位置实参 + 默认值 + props 忽略（编译侧工厂同构）。 */
     private fun structCtor(name: String, named: Map<String, E>, posArgs: List<E>, frame: Frame, pos: String,
@@ -2257,6 +2299,7 @@ internal class Interp(val out: (String) -> Unit = ::println) {
                 val sf = stringMethod(receiver, name, argVals)
                 if (sf != null) return sf
             }
+            else -> {}
         }
         val m = lookupTraitMethod(name, typeTag(receiver))
         if (m != null) return invokeImplMethod(m, receiver, argVals, frame)
@@ -2265,7 +2308,7 @@ internal class Interp(val out: (String) -> Unit = ::println) {
 
     // ---- when 模式匹配（matchJs 语义同构） ----
 
-    private fun evalWhen(w: E.When, frame: Frame, tail: Boolean): V? {
+    private fun evalWhen(w: E.When, frame: Frame, tail: Boolean): V {
         var subjectVal: V? = null
         var subjFrame = frame
         if (w.subject != null) {
@@ -2378,10 +2421,486 @@ internal class Interp(val out: (String) -> Unit = ::println) {
         else -> false
     }
 
-// __MAGIC_PLACEHOLDER__
+    // ---- Range 内建方法（对齐 __range 小运行时：闭区间 [lo, hi]） ----
+
+    private fun rangeField(r: V.Range, name: String, frame: Frame, pos: String): V = when (name) {
+        "lo" -> V.Num(r.lo)
+        "hi" -> V.Num(r.hi)
+        "length", "size", "contains", "toList", "map", "fold" ->
+            V.Fun { args -> rangeMethod(r, name, args, frame) }
+        else -> throw InterpError(pos, "Range 不支持字段 $name")
+    }
+
+    private fun rangeMethod(r: V.Range, name: String, args: List<V>, frame: Frame): V = when (name) {
+        "contains" -> { val x = args.getOrNull(0); V.Bool(x is V.Num && x.v >= r.lo && x.v <= r.hi) }
+        "length", "size" -> V.Num(kotlin.math.floor(r.hi - r.lo + 1))
+        "toList" -> {
+            val items = ArrayList<V>()
+            var i = kotlin.math.ceil(r.lo)
+            while (i <= r.hi) { items += V.Num(i); i += 1.0 }
+            V.Arr(items)
+        }
+        "map" -> {
+            val f = args.getOrNull(0) ?: throw InterpError("", "Range.map 需要函数实参")
+            val items = ArrayList<V>()
+            var i = kotlin.math.ceil(r.lo)
+            while (i <= r.hi) { items += callFn(f, listOf(V.Num(i)), frame); i += 1.0 }
+            V.Arr(items)
+        }
+        "fold" -> {
+            val init = args.getOrNull(0) ?: throw InterpError("", "Range.fold 需要初值")
+            val f = args.getOrNull(1) ?: throw InterpError("", "Range.fold 需要函数实参")
+            var acc = init
+            var i = kotlin.math.ceil(r.lo)
+            while (i <= r.hi) { acc = callFn(f, listOf(V.Num(i), acc), frame); i += 1.0 }
+            acc
+        }
+        else -> throw InterpError("", "Range 不支持方法 $name")
+    }
+
+    /** 函数值统一调用通道（V.Fun / V.HostFn；lambda 与宿主函数同构）。 */
+    internal fun callFn(fn: V, args: List<V>, frame: Frame): V = when (fn) {
+        is V.Fun -> fn.fn(args)
+        is V.HostFn -> fn.fn(args)
+        else -> throw InterpError("", "不可调用: $fn")
+    }
+
+    private fun stringField(s: V.Str, name: String, frame: Frame, pos: String): V =
+        methodPathValue(name, s, frame) ?: throw InterpError(pos, "字符串不支持字段/方法 $name")
+
+    private fun stringMethod(s: V.Str, name: String, args: List<V>): V? = null   // 一律走自由函数分派
+}
+
+// =====================================================================================
+// §4 内建表（@root 白名单的纯函数子集——IO/异步/网络由宿主侧实现；签名对齐 core/*.subl 声明）
+// =====================================================================================
+
+internal typealias BuiltinFn = (Interp, List<V>, String) -> V
+
+@Suppress("unused")
+internal val BUILTINS: Map<String, BuiltinFn> = mapOf(
+    // ---- 标准输出 ----
+    "print" to { i, a, _ -> i.out(a.joinToString(" ") { dshStr(it) }); V.Null },
+    "println" to { i, a, _ -> i.out(a.joinToString(" ") { dshStr(it) } + "\n"); V.Null },
+
+    // ---- 元组 ----
+    "emptyTuple" to { _, _, _ -> V.Arr(ArrayList()) },
+    "singleTuple" to { _, a, _ -> V.Arr(arrayListOf(a.getOrElse(0) { V.Null })) },
+
+    // ---- 字符串 ----
+    "concat" to { _, a, p -> V.Str(a.joinToString("") { dshStr(it) }) },
+    "in" to { _, a, p ->
+        val v = arg(a, 0, p)
+        val r = arg(a, 1, p)
+        when (r) {
+            is V.Range -> { val x = (v as? V.Num)?.v ?: throw InterpError(p, "in 左操作数需为数字"); V.Bool(r.lo <= x && x <= r.hi) }
+            else -> V.Bool(true)   // 语义层已拦；编译侧兜底 true
+        }
+    },
+    "length" to { _, a, p ->
+        val v = arg(a, 0, p)
+        V.Num(when (v) { is V.Str -> v.v.length.toDouble(); is V.Arr -> v.items.size.toDouble(); else -> throw InterpError(p, "length 需要 Str 或 List") })
+    },
+    "charAt" to { _, a, p ->
+        val s = strArg(a, 0, p); val k = intArg(a, 1, p)
+        V.Str(if (k in s.indices) s[k].toString() else "")
+    },
+    "substring" to { _, a, p ->
+        val s = strArg(a, 0, p); val x = intArg(a, 1, p); val y = intArg(a, 2, p)
+        V.Str(s.substring(x.coerceIn(0, s.length), y.coerceIn(0, s.length)))
+    },
+    "strCmp" to { _, a, p ->
+        val x = strArg(a, 0, p); val y = strArg(a, 1, p)
+        V.Num(if (x < y) -1.0 else if (x > y) 1.0 else 0.0)
+    },
+    "toStr" to { _, a, p -> V.Str(dshStr(arg(a, 0, p))) },
+    "parseNat" to { _, a, p -> parseOpt(strArg(a, 0, p)) { it.toDoubleOrNull()?.let { d -> if (d == kotlin.math.floor(d)) d else null } } },
+    "strUpper" to { _, a, p -> V.Str(strArg(a, 0, p).uppercase()) },
+    "strLower" to { _, a, p -> V.Str(strArg(a, 0, p).lowercase()) },
+    "strTrim" to { _, a, p -> V.Str(strArg(a, 0, p).trim()) },
+    "startsWith" to { _, a, p -> V.Bool(strArg(a, 0, p).startsWith(strArg(a, 1, p))) },
+    "endsWith" to { _, a, p -> V.Bool(strArg(a, 0, p).endsWith(strArg(a, 1, p))) },
+    "strReplace" to { _, a, p -> V.Str(strArg(a, 0, p).replace(strArg(a, 1, p), strArg(a, 2, p))) },
+    "strSplit" to { _, a, p -> V.Arr(strArg(a, 0, p).split(strArg(a, 1, p)).map { V.Str(it) }.toMutableList()) },
+    "strIndexOf" to { _, a, p ->
+        val k = strArg(a, 0, p).indexOf(strArg(a, 1, p))
+        if (k >= 0) V.TagCtor("Some", listOf(V.Num(k.toDouble()))) else V.TagCtor("None", emptyList())
+    },
+
+    // ---- 数值转换（Nat/Rat 运行时同为 float64，转换恒等） ----
+    "toReal" to { _, a, p -> numOrArg(a, 0, p) },
+    "toRat" to { _, a, p -> numOrArg(a, 0, p) },
+    "toNat" to { _, a, p -> V.Num(kotlin.math.floor(numOrArg(a, 0, p).v)) },
+    "parseRat" to { _, a, p -> parseOpt(strArg(a, 0, p)) { it.toDoubleOrNull() } },
+
+    // ---- 浮点（P10）----
+    "abs" to { _, a, p -> V.Num(kotlin.math.abs(numOrArg(a, 0, p).v)) },
+    "floor" to { _, a, p -> V.Num(kotlin.math.floor(numOrArg(a, 0, p).v)) },
+    "ceil" to { _, a, p -> V.Num(kotlin.math.ceil(numOrArg(a, 0, p).v)) },
+    "pow" to { _, a, p -> V.Num(numOrArg(a, 0, p).v.pow(numOrArg(a, 1, p).v)) },
+
+    // ---- Math（v2.0）----
+    "mathMin" to { _, a, p -> V.Num(kotlin.math.min(numOrArg(a, 0, p).v, numOrArg(a, 1, p).v)) },
+    "mathMax" to { _, a, p -> V.Num(kotlin.math.max(numOrArg(a, 0, p).v, numOrArg(a, 1, p).v)) },
+    "mathClamp" to { _, a, p ->
+        val x = numOrArg(a, 0, p).v; val lo = numOrArg(a, 1, p).v; val hi = numOrArg(a, 2, p).v
+        V.Num(kotlin.math.min(kotlin.math.max(x, lo), hi))
+    },
+    "mathRound" to { _, a, p -> V.Num(kotlin.math.floor(numOrArg(a, 0, p).v + 0.5)) },
+    "mathSin" to { _, a, p -> V.Num(kotlin.math.sin(numOrArg(a, 0, p).v)) },
+    "mathCos" to { _, a, p -> V.Num(kotlin.math.cos(numOrArg(a, 0, p).v)) },
+    "mathTan" to { _, a, p -> V.Num(kotlin.math.tan(numOrArg(a, 0, p).v)) },
+
+    // ---- 伪随机（@impure 侧；宿主可覆盖） ----
+    "rand" to { _, a, p -> V.Num(kotlin.math.floor(kotlin.random.Random.nextDouble() * numOrArg(a, 0, p).v)) },
+
+    // ---- JSON（V 表示：对象 → V.Obj("Json", 字段)；数组 → V.Arr；标量 → Num/Str/Bool/Null） ----
+    "jsonParse" to { _, a, p -> JsonSupport.parse(strArg(a, 0, p), p) },
+    "jsonToStr" to { _, a, p -> V.Str(JsonSupport.stringify(arg(a, 0, p))) },
+    "jsonGet" to { _, a, p ->
+        val j = arg(a, 0, p); val key = strArg(a, 1, p)
+        optOf((j as? V.Obj)?.fields?.get(key))
+    },
+    "jsonAt" to { _, a, p ->
+        val j = arg(a, 0, p); val k = intArg(a, 1, p)
+        optOf((j as? V.Arr)?.items?.getOrNull(k))
+    },
+    "jsonLen" to { _, a, p ->
+        val j = arg(a, 0, p)
+        V.Num(when (j) { is V.Arr -> j.items.size.toDouble(); is V.Obj -> j.fields.size.toDouble(); else -> 0.0 })
+    },
+    "jsonStr" to { _, a, p -> strArgOf(arg(a, 0, p), "jsonStr", p) },
+    "jsonNum" to { _, a, p -> numOrArg(a, 0, p) },
+    "jsonBool" to { _, a, p -> V.Bool(arg(a, 0, p) is V.Bool && (arg(a, 0, p) as V.Bool).v) },
+    "jsonIsNull" to { _, a, p -> V.Bool(arg(a, 0, p) === V.Null) },
+    "jsonIsArr" to { _, a, p -> V.Bool(arg(a, 0, p) is V.Arr) },
+    "jsonToList" to { _, a, p ->
+        val j = arg(a, 0, p)
+        if (j is V.Arr) V.TagCtor("Some", listOf(j)) else V.TagCtor("None", emptyList())
+    },
+)
+
+internal fun arg(args: List<V>, i: Int, pos: String): V =
+    args.getOrNull(i) ?: throw InterpError(pos, "第 ${i + 1} 个实参缺失")
+internal fun strArg(args: List<V>, i: Int, pos: String): String =
+    (args.getOrNull(i) as? V.Str)?.v ?: throw InterpError(pos, "第 ${i + 1} 个实参需要 Str，实际 ${args.getOrNull(i)}")
+internal fun intArg(args: List<V>, i: Int, pos: String): Int =
+    (args.getOrNull(i) as? V.Num)?.v?.toInt()
+        ?: throw InterpError(pos, "第 ${i + 1} 个实参需要 Nat，实际 ${args.getOrNull(i)}")
+internal fun numOrArg(args: List<V>, i: Int, pos: String): V.Num =
+    (args.getOrNull(i) as? V.Num) ?: throw InterpError(pos, "第 ${i + 1} 个实参需要数值，实际 ${args.getOrNull(i)}")
+internal fun strArgOf(v: V, name: String, pos: String): V.Str =
+    (v as? V.Str) ?: throw InterpError(pos, "$name 需要 JSON 字符串值，实际 $v")
+
+internal fun parseOpt(s: String, f: (String) -> Double?): V {
+    val d = f(s)
+    return if (d != null) V.TagCtor("Some", listOf(V.Num(d))) else V.TagCtor("None", emptyList())
+}
+
+internal fun optOf(v: V?): V =
+    if (v != null) V.TagCtor("Some", listOf(v)) else V.TagCtor("None", emptyList())
+
+/** 最小 JSON 解析器（零依赖；与 JS JSON.parse 的标量/数组/对象结构一一对应）。 */
+internal object JsonSupport {
+    fun parse(s: String, pos: String): V {
+        val p = JsonParser(s)
+        return try {
+            p.skipWs(); p.parseValue()
+        } catch (e: Exception) {
+            throw InterpError(pos, "jsonParse 失败：${e.message}")
+        }
+    }
+
+    fun stringify(v: V): String = StringBuilder().also { write(it, v) }.toString()
+
+    private fun write(sb: StringBuilder, v: V) {
+        when (v) {
+            is V.Num -> sb.append(jsNum(v.v))
+            is V.Str -> sb.append(jsonEscape(v.v))
+            is V.Bool -> sb.append(if (v.v) "true" else "false")
+            V.Null -> sb.append("null")
+            is V.Arr -> {
+                sb.append('[')
+                v.items.forEachIndexed { i, it -> if (i > 0) sb.append(','); write(sb, it) }
+                sb.append(']')
+            }
+            is V.Obj -> {
+                sb.append('{')
+                v.fields.entries.forEachIndexed { i, (k, it) ->
+                    if (i > 0) sb.append(',')
+                    sb.append(jsonEscape(k)); sb.append(':'); write(sb, it)
+                }
+                sb.append('}')
+            }
+            else -> sb.append("null")   // 函数/宿主对象/区间不可序列化：与 JSON.stringify 一致（降级 null）
+        }
+    }
+
+    private fun jsonEscape(s: String): String {
+        val sb = StringBuilder("\"")
+        for (c in s) when (c) {
+            '"' -> sb.append("\\\"")
+            '\\' -> sb.append("\\\\")
+            '\n' -> sb.append("\\n")
+            '\t' -> sb.append("\\t")
+            '\r' -> sb.append("\\r")
+            else -> if (c.code < 0x20) sb.append("\\u" + c.code.toString(16).padStart(4, '0')) else sb.append(c)
+        }
+        return sb.append('\"').toString()
+    }
+}
+
+internal class JsonParser(private val s: String) {
+    private var i = 0
+
+    fun skipWs() { while (i < s.length && s[i].isWhitespace()) i++ }
+
+    fun parseValue(): V {
+        skipWs()
+        if (i >= s.length) throw IllegalStateException("意外的输入结束")
+        return when (val c = s[i]) {
+            '{' -> parseObject()
+            '[' -> parseArray()
+            '"' -> parseString()
+            't' -> { expect("true"); V.Bool(true) }
+            'f' -> { expect("false"); V.Bool(false) }
+            'n' -> { expect("null"); V.Null }
+            else -> parseNumber()
+        }
+    }
+
+    private fun parseObject(): V {
+        i++
+        val fields = LinkedHashMap<String, V>()
+        skipWs()
+        if (i < s.length && s[i] == '}') { i++; return V.Obj("Json", fields) }
+        while (true) {
+            skipWs()
+            if (i >= s.length || s[i] != '"') throw IllegalStateException("JSON 对象需要字符串键")
+            val key = parseString().v
+            skipWs()
+            if (i >= s.length || s[i] != ':') throw IllegalStateException("JSON 对象需要冒号")
+            i++
+            fields[key] = parseValue()
+            skipWs()
+            if (i < s.length && s[i] == ',') { i++; continue }
+            if (i < s.length && s[i] == '}') { i++; return V.Obj("Json", fields) }
+            throw IllegalStateException("JSON 对象需要逗号或闭花括号")
+        }
+    }
+
+    private fun parseArray(): V {
+        i++
+        val items = ArrayList<V>()
+        skipWs()
+        if (i < s.length && s[i] == ']') { i++; return V.Arr(items) }
+        while (true) {
+            items += parseValue()
+            skipWs()
+            if (i < s.length && s[i] == ',') { i++; continue }
+            if (i < s.length && s[i] == ']') { i++; return V.Arr(items) }
+            throw IllegalStateException("JSON 数组需要逗号或闭方括号")
+        }
+    }
+
+    private fun parseString(): V.Str {
+        i++
+        val sb = StringBuilder()
+        while (i < s.length) {
+            when (val c = s[i++]) {
+                '"' -> return V.Str(sb.toString())
+                '\\' -> {
+                    if (i >= s.length) throw IllegalStateException("JSON 字符串转义未闭合")
+                    val e = s[i++]
+                    sb.append(when (e) {
+                        'n' -> '\n'; 't' -> '\t'; 'r' -> '\r'; 'b' -> '\b'; 'f' -> 12.toChar()
+                        '"' -> '"'; '\\' -> '\\'; '/' -> '/'
+                        'u' -> {
+                            if (i + 4 > s.length) throw IllegalStateException("JSON unicode 转义不完整")
+                            val code = s.substring(i, i + 4).toInt(16); i += 4
+                            code.toChar()
+                        }
+                        else -> throw IllegalStateException("非法 JSON 转义 \\$e")
+                    })
+                }
+                else -> sb.append(c)
+            }
+        }
+        throw IllegalStateException("JSON 字符串未闭合")
+    }
+
+    private fun parseNumber(): V {
+        val start = i
+        if (i < s.length && (s[i] == '-' || s[i] == '+')) i++
+        while (i < s.length && (s[i].isDigit() || s[i] == '.' || s[i] == 'e' || s[i] == 'E' || s[i] == '+' || s[i] == '-')) i++
+        if (i == start) throw IllegalStateException("非法 JSON 值")
+        return V.Num(s.substring(start, i).toDouble()
+            ?: throw IllegalStateException("非法 JSON 数字"))
+    }
+
+    private fun expect(w: String) {
+        if (s.substring(i, minOf(i + w.length, s.length)) != w) throw IllegalStateException("期望 $w")
+        i += w.length
+    }
+}
 
 
+// =====================================================================================
+// §5 预置标准库（最小集，内嵌；宿主可用 loadModule 载入完整 core/ 覆盖或扩展）
+// 与 core/collection 同构：数组化 List、Optional/Result、Functor/Foldable 方法糖。
+// =====================================================================================
 
+internal const val PRELUDE = """// ---- 预置标准库（SubsInterpreter 内嵌； @@ 插值符转义） ----
+enum List[T] { Nil() Cons(T, List[T]) }
+enum Optional[T] { None() Some(T) }
+enum Result[T, E] { Ok(T) Err(E) }
 
+class Functor[f[_]] { fun map(fa: f[a], f: (a) => b): f[b] }
+class Foldable[t[_]] { fun fold(fa: t[a], init: b, f: (b, a) => b): b }
 
+fun size(xs: List[a]): Nat = when (xs) {
+  Nil => 0
+  is Cons(h, t) => 1 + size(t)
+}
 
+fun head(xs: List[a]): a = when (xs) { is Cons(h, _) => h }
+
+fun tail(xs: List[a]): List[a] = when (xs) { is Cons(_, t) => t }
+
+fun emptyList[a](): List[a] = Nil()
+
+fun append(xs: List[a], ys: List[a]): List[a] = when (xs) {
+  Nil => ys
+  is Cons(h, t) => Cons(h, append(t, ys))
+}
+
+fun reverse(xs: List[a]): List[a] = when (xs) {
+  Nil => Nil()
+  is Cons(h, t) => append(reverse(t), Cons(h, Nil()))
+}
+
+fun filter(xs: List[a], p: (a) => Bool): List[a] = when (xs) {
+  Nil => Nil()
+  is Cons(h, t) => if (p(h)) Cons(h, filter(t, p)) else filter(t, p)
+}
+
+fun flatMap(xs: List[a], f: (a) => List[b]): List[b] = when (xs) {
+  Nil => Nil()
+  is Cons(h, t) => append(f(h), flatMap(t, f))
+}
+
+fun forall(xs: List[a], p: (a) => Bool): Bool = when (xs) {
+  Nil => true
+  is Cons(h, t) => if (p(h)) forall(t, p) else false
+}
+
+fun exists(xs: List[a], p: (a) => Bool): Bool = when (xs) {
+  Nil => false
+  is Cons(h, t) => if (p(h)) true else exists(t, p)
+}
+
+impl Functor for List[a] {
+  fun map(fa: List[a], f: (a) => b): List[b] = when (fa) { Nil => Nil() is Cons(h, t) => Cons(f(h), t.map(f)) }
+}
+
+impl Foldable for List[a] {
+  fun fold(fa: List[a], init: b, f: (b, a) => b): b = when (fa) { Nil => init is Cons(h, t) => fold(t, f(init, h), f) }
+}
+"""
+
+// =====================================================================================
+// §6 对外 API
+// =====================================================================================
+
+/**
+ * Subs 解释器（Sublimation 脚本运行时）。
+ *
+ * 使用：
+ *   val subs = SubsInterpreter()                       // 内嵌最小标准库已就绪
+ *   subs.loadModule(sourceOfCoreFile)                  // 可选：装载更多 .subl 模块
+ *   subs.injectObject("world", gameWorldHostObject)     // 可选：注入宿主游戏状态对象
+ *   subs.registerHostFunction("queryData") { args -> … } // 可选：注册宿主函数
+ *   val v = subs.eval("1 + 2 * 3")                     // 脚本模式：求值片段
+ *   subs.run(programSource)                            // 程序模式：声明 + main()
+ *
+ * 与编译执行的一致性：值表示/模式匹配/@mut/算术/插值按编译侧运行时语义（见文件头注）。
+ *
+ * @param output print 输出通道（默认 stdout；Kotlin/JS 编译时映射 console.log）。
+ */
+class SubsInterpreter(private val output: (String) -> Unit = ::println) {
+
+    internal val interp = Interp(output)
+
+    init {
+        // 内嵌预置标准库：List/Optional/Result + Functor/Foldable 方法糖
+        loadModule(PRELUDE.replace("@@", "$"))
+    }
+
+    /** 装载模块（仅声明：fun/struct/enum/impl/type）。同一解释器实例可累积多个模块。 */
+    fun loadModule(source: String) {
+        val toks = Lexer(source, "<module>").tokenize()
+        val entries = Parser(toks, "<module>", scriptMode = false).parseFile()
+        interp.loadEntries(entries, interp.root)
+    }
+
+    /** 脚本模式：解析 .subs/.subl 片段，执行顶层语句，返回最后一条表达式的值。 */
+    fun eval(source: String): V? {
+        val toks = Lexer(source, "<eval>").tokenize()
+        val entries = Parser(toks, "<eval>", scriptMode = true).parseFile()
+        return interp.runScript(entries, interp.root)
+    }
+
+    /** 程序模式：装载声明并执行 main()（不存在的脚本/无 main 返回 null）。 */
+    fun run(source: String): V? {
+        val toks = Lexer(source, "<run>").tokenize()
+        val entries = Parser(toks, "<run>", scriptMode = false).parseFile()
+        return interp.runProgram(entries)
+    }
+
+    /** 调用已声明的函数（按名 + 实参表）。 */
+    fun callFunction(name: String, vararg args: V): V? {
+        val entry = interp.root.lookupFunEntry(name) ?: return null
+        return interp.let { it.invokeFunDeclPublic(entry.first, args.toList(), entry.second) }
+    }
+
+    /** 注册宿主函数：.subl 按名调用，实参按编译侧表示传入。 */
+    fun registerHostFunction(name: String, fn: (List<V>) -> V) =
+        interp.registerHostFunction(name, fn)
+
+    /** 注入宿主对象：模组逻辑按名直接访问字段/调方法（无白名单 op）。 */
+    fun injectObject(name: String, obj: SubsHostObject) =
+        interp.injectObject(name, obj)
+
+    /**
+     * 安装 sublEval/sublRun 宿主桥自回路（演示/自测用）：
+     * 把本解释器自身注册为 @root 内建 sublEval/sublRun 的实现，返回值按编译器内建表签名
+     * 包 Result（Ok(value) / Err(msg)，与 core/script/script.subl 声明一致）。
+     * 真实部署时宿主（Android WebView / CandyIDE）实现 __subl.call 注册桥。
+     */
+    fun installSublEvalBridge() {
+        registerHostFunction("sublEval") { args ->
+            val src = (args.getOrNull(0) as? V.Str)?.v
+                ?: return@registerHostFunction V.TagCtor("Err", listOf(V.Str("sublEval 需要 Str 源码")))
+            try {
+                val child = SubsInterpreter(output)
+                V.TagCtor("Ok", listOf(child.eval(src) ?: V.Null))
+            } catch (e: Throwable) {
+                V.TagCtor("Err", listOf(V.Str(e.message ?: e.toString())))
+            }
+        }
+        registerHostFunction("sublRun") { args ->
+            val src = (args.getOrNull(0) as? V.Str)?.v
+                ?: return@registerHostFunction V.TagCtor("Err", listOf(V.Str("sublRun 需要 Str 源码")))
+            try {
+                val child = SubsInterpreter(output)
+                V.TagCtor("Ok", listOf(child.run(src) ?: V.Null))
+            } catch (e: Throwable) {
+                V.TagCtor("Err", listOf(V.Str(e.message ?: e.toString())))
+            }
+        }
+    }
+}
+
+/** Parity：invokeFunDecl 的公开包装（callFunction 用）。 */
+internal fun Interp.invokeFunDeclPublic(fn: D.Fun, args: List<V>, declFrame: Frame): V =
+    invokeFunDecl(fn, args, declFrame)

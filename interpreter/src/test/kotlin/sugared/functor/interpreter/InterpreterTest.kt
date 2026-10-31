@@ -410,15 +410,15 @@ class InterpreterTest {
 
     @Test
     fun testPlaygroundScriptsOutput() {
-        // 跑 playground/ 目录（6 份日常脚本），对关键特性输出做 golden 快照断言
-        val interp = Interpreter()
+        // 跑 show/解释器/ 目录（6 份日常脚本，仓库内），goldens 同源；推导版脚本开推导闸门
+        val interp = Interpreter(globalInference = true)
         val buf = ByteArrayOutputStream()
         val ps = PrintStream(buf, true, "UTF-8")
         val orig = System.out
         System.setOut(ps)
         try {
             // 脚本模式：目录下每个 .subs 独立运行（互不共享声明）
-            interp.runScriptDir(File("playground"))
+            interp.runScriptDir(File("show/解释器"))
         } finally {
             System.setOut(orig)
         }
