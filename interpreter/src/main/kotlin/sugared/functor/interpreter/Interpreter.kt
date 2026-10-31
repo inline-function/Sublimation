@@ -286,8 +286,11 @@ class Interpreter(
 
     private fun registerStdlib() {
 
-                // 打印——已在内建表（Types.kt: builtinimpure），Checker 自行解析；解释器兜底
-        register("print") { args ->
+                // 打印——已在内建表（Types.kt: builtinimpure），Checker 自行解析；解释器兜底。
+        // retType 必须显式给 Null：register(name, fn) 单参重载默认 Any，注入的 @host FunDecl 会以
+        // syms.funs 优先级遮蔽内建 print（Null），使 print 调用被类型化为 Any——lambda 体位
+        // （forEach 期望 (T)=>Null）即报「体类型 Any 与期望返回 Null 不符」（t88）。
+        register("print", retType = ScriptType.Null) { args ->
             println(args.joinToString(" ") { it?.toString() ?: "null" })
             null
         }
